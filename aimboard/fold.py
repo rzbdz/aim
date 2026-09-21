@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from .const import TERMINAL
 from .const import PLAN_FIELDS
-from .primitives import as_list
+from .primitives import as_list, day_of
 
 
 def fold_tasks(events):

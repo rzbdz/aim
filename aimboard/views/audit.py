@@ -7,7 +7,7 @@ def render_barrier(state, viewer, labels):
     blocks = []
     for ch in state["channels"]:
         phase = ch["phase"]
-        secrets = may_see_peer_secrets(ch, viewer)
+        secrets = may_see_peer_secrets(state, ch, viewer)
         sealed = ""
         for who in ch["participants"]:
             seal = ch["seals"].get(who)

@@ -2,11 +2,35 @@
 from .const import DIVERGENCE
 
 
-def may_see_peer_secrets(channel, viewer):
-    """Participants in a divergence phase may not see peers' sealed claims."""
+def walled_off(state, channel, viewer):
+    """Is this viewer shut out of the channel's un-published material?
+
+    There are two ways to be shut out, and for a long time this file implemented
+    one of them:
+
+      * the **barrier**: you are a participant and the channel is in a divergence
+        phase, so you may not read a peer's drafts or claims yet;
+      * being a **stranger**: you are a registered agent and not a participant of
+        the channel that governs the record. `aim` refuses that caller outright -
+        `aim task list` returns rc=2 and records the refusal, `aim seal` says "not
+        a participant" - so a renderer that serves them the bytes is the route
+        around a refusal, which is the failure this project exists to catch.
+
+    T-0041 measured the second case: every gate branch tested membership of
+    `participants`, so for a registered non-participant all three of them took the
+    else. The leader is exempt from both, because the leader is the audience and
+    not a participant.
+    """
+    if (state.get("registry", {}).get(viewer) or {}).get("kind") == "human":
+        return False
     if viewer not in channel.get("participants", []):
         return True
-    return channel.get("phase") not in DIVERGENCE
+    return channel.get("phase") in DIVERGENCE
+
+
+def may_see_peer_secrets(state, channel, viewer):
+    """A sealed channel's claims, and a stranger's, are both out of reach."""
+    return not walled_off(state, channel, viewer)
 
 
 def gate_channel(state, viewer, fallback):
@@ -41,20 +65,18 @@ def visible_tasks(state, viewer, fallback):
     out, hidden = {}, 0
     for tid, task in state["tasks"].items():
         channel = by_id.get(task.get("channel"), default)
-        parts = channel.get("participants", [])
         draft = (task.get("visibility") or "draft") == "draft"
-        if draft and viewer in parts and channel.get("phase") in DIVERGENCE and task.get("owner") != viewer:
+        if draft and walled_off(state, channel, viewer) and task.get("owner") != viewer:
             hidden += 1
             continue
         out[tid] = task
     return out, hidden
 
 
-def visible_rooms(channel, viewer):
+def visible_rooms(state, channel, viewer):
     out, hidden = [], 0
     for room in channel.get("rooms", []):
-        if (room["visibility"] != "published" and viewer in channel.get("participants", [])
-                and channel.get("phase") in DIVERGENCE):
+        if room["visibility"] != "published" and walled_off(state, channel, viewer):
             hidden += 1
             continue
         out.append(room)
@@ -80,7 +102,7 @@ def conversation_view(state, viewer):
     channels, rooms_out, mail_out = [], [], []
 
     for ch in state["channels"]:
-        gated = viewer in ch.get("participants", []) and ch.get("phase") in DIVERGENCE
+        gated = walled_off(state, ch, viewer)
         messages = []
         for m in ch["log"]:
             if gated and m.get("from") != viewer:
@@ -91,9 +113,9 @@ def conversation_view(state, viewer):
                              "body": m.get("body", ""), "hash": m.get("hash", "")})
         channels.append({"id": ch["id"], "phase": ch["phase"], "gated": gated,
                          "messages": messages,
-                         "rule": ("you are a participant and the channel is sealed, so peer "
-                                  "messages are absent" if gated else "everything in this phase")})
-        visible, hidden = visible_rooms(ch, viewer)
+                         "rule": ("the channel is sealed to you, so peer messages are absent"
+                                  if gated else "everything in this phase")})
+        visible, hidden = visible_rooms(state, ch, viewer)
         withheld += hidden
         for room in visible:
             rooms_out.append({

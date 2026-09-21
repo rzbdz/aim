@@ -78,7 +78,7 @@ a refusal. It works, and it is not a package. The layer becomes real when:
   * dogfooding is visible in it: the first thing the skill says is how this
     project is managed *with the tool it documents*.
 
-## 5. What stops, and what does not
+## 5. What stops, and what does not - and the one argument that changed this section
 
 The leader stopped all in-flight work. Concretely, the tasks marked `blocked` in
 `plan/plan.json` with a `move_reason` naming this note: the task store's remaining
@@ -86,6 +86,27 @@ scope (it may be re-specified once D14 decides where a delegation record lives),
 and the adversarial review of a renderer that is being replaced. Their *evidence*
 is not thrown away - T-0080/81/88/90 are fixed and verified, and the contract
 suite that found them stays.
+
+The implementing agent disagreed with a first version of this section, and the
+disagreement was specific enough to change it. Its argument, in substance: A2A's
+`TaskStatusUpdateEvent` and `TaskArtifactUpdateEvent` are a *stream of state
+changes*, and a server that publishes that stream needs a durable, ordered,
+per-task history that can answer who moved it, when, and whether the move was
+legitimate. Ours answers all three, is hash-chained, and is phase-gated - which is
+to say the store is not adjacent to the A2A work, it is the substrate most of the
+eleven operations read or transition. Re-specifying a wire format is not the same
+act as throwing away a store, and "may be re-specified" was read - reasonably - as
+the second.
+
+So, recorded as a decision rather than as a footnote: **the task store is kept as
+the reference implementation of the state model while design/07 and this note are
+finished.** It is not frozen (nothing extends it until D14 lands), and it is not
+discarded. The falsifier is written down, in the form the implementing agent gave
+it: if the store cannot answer who moved an item, when, and whether the move was
+legitimate, then it is the wrong store and the rebuild is real work rather than a
+re-cut. If it can - and the contract suite exercises exactly those three questions
+- then the stop cost a re-cut, and this section records why we believed that
+before we spent anything on it.
 
 What does not stop: the barrier, the ledger, the gate, and the rule that an
 interface change lands in a note before it lands in code. The pivot changes the

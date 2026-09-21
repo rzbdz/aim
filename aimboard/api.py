@@ -7,14 +7,14 @@ enforced somewhere else.
 """
 from datetime import datetime, timezone
 
-from .const import TERMINAL
+from .const import STATUSES, TERMINAL
 from .fold import drift, report_data, task_history, fold_tasks, merge_plan
 from .gate import (conversation_view, gate_channel, may_see_peer_secrets,
                    visible_tasks)
 
 
-def channel_payload(ch, viewer):
-    secrets = may_see_peer_secrets(ch, viewer)
+def channel_payload(state, ch, viewer):
+    secrets = may_see_peer_secrets(state, ch, viewer)
     sealed = []
     for who in ch.get("participants", []):
         seal = ch["seals"].get(who)
@@ -49,20 +49,28 @@ def channel_payload(ch, viewer):
     }
 
 
-def payload(state, viewer, register, generated_at=None, as_of=None):
+def payload(state, viewer, register, generated_at=None, as_of=None, digest=None):
     generated_at = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     channel = gate_channel(state, viewer, {})
     tasks, hidden = visible_tasks(state, viewer, channel)
     as_of_date = as_of or state["as_of"]
     return {
         "generated_at": generated_at,
+        # the fingerprint the front-end polls, so the page can say "the record
+        # moved" without reloading itself under the reader's hands
+        "digest": digest or "",
         "as_of": as_of_date,
+        # the state machine is the server's, not the browser's: a front-end that
+        # hard-codes the status list is a second copy of the contract, and this
+        # project has measured what a second copy costs (design/05, T-0086)
+        "statuses": STATUSES,
+        "terminal": sorted(TERMINAL),
         "root": state["root"],
         "viewer": viewer,
         "viewer_kind": (state["registry"].get(viewer) or {}).get("kind", ""),
         "phase": channel.get("phase", "-"),
         "withheld_tasks": hidden,
-        "channels": [channel_payload(ch, viewer) for ch in state["channels"]],
+        "channels": [channel_payload(state, ch, viewer) for ch in state["channels"]],
         "tasks": tasks,
         "milestones": state["milestones"],
         "reports": report_data(tasks, state["milestones"],

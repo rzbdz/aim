@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 from .const import LABELS
+from .api import payload as json_state
 from .exporters import export_csv, export_ical, json_payload
 from .fabric import fabric_digest, load_fabric
 from .fold import drift
@@ -105,12 +106,46 @@ def cmd_serve(args):
 
     Bound to 127.0.0.1 by default and it writes nothing: it is the same renderer
     behind a socket.
+
+    It also serves the built front-end (web/dist) when there is one, and the JSON
+    that front-end reads at /api/state. The gate is applied on the server, before
+    serialisation: a browser is not trusted to hide what it was sent.
     """
     import http.server
+    from pathlib import Path as _Path
+
+    # web/dist lives beside the package, not under --root: --root is the fabric,
+    # this is the application, and conflating them is how a dashboard ends up
+    # looking for its own assets inside someone's project directory.
+    web = _Path(__file__).resolve().parent.parent / "web" / "dist"
+    content_types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                     ".css": "text/css; charset=utf-8", ".json": "application/json",
+                     ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
+                     ".woff2": "font/woff2", ".map": "application/json"}
     root = Path(args.root)
     as_of = parse_day(args.as_of)
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def _state(self):
+            """One load per request, shared by every endpoint that needs it."""
+            now = datetime.now(timezone.utc).date()
+            state = load_fabric(root, args.plan or ["plan/*.json"], as_of or now)
+            if args.channel:
+                state["channels"] = [c for c in state["channels"] if c["id"] in set(args.channel)]
+            return state
+
+        def _risks(self):
+            risks = {}
+            for path in sorted(root.glob("plan/*.json")):
+                doc = read_json(path)
+                if isinstance(doc, dict):
+                    for key, value in doc.items():
+                        if isinstance(value, list) and key not in ("tasks", "milestones"):
+                            risks.setdefault(key, []).extend(value)
+                        elif isinstance(value, dict) and key not in ("tasks", "milestones"):
+                            risks.setdefault(key, value)
+            return risks
+
         def _render(self, viewer, refresh):
             now = datetime.now(timezone.utc).date()
             state = load_fabric(root, args.plan or ["plan/*.json"], as_of or now)
@@ -137,9 +172,51 @@ def cmd_serve(args):
                 return parse_qs(self.path.split("?", 1)[1]).get("as", [args.viewer or ""])[0]
             return args.viewer or (load_fabric(root, [], datetime.now(timezone.utc).date())["channels"][0]["leader"])
 
+        def _send(self, body, ctype):
+            raw = body if isinstance(body, bytes) else body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _asset(self, path):
+            """A file from the built front-end, or None. No path escapes it."""
+            if not web.exists():
+                return None
+            target = (web / path.lstrip("/")).resolve()
+            if web.resolve() not in target.parents and target != web.resolve():
+                return None
+            if target.is_dir():
+                target = target / "index.html"
+            if not target.is_file():
+                return None
+            mime = content_types.get(target.suffix, "application/octet-stream")
+            return target.read_bytes(), mime
+
         def do_GET(self):
             path = (self.path or "/").split("?")[0]
             try:
+                if path == "/api/state":
+                    state = self._state()
+                    body = json.dumps(json_state(state, self._viewer(), self._risks(), now_iso(),
+                                                 digest=fabric_digest(root)),
+                                      ensure_ascii=False)
+                    self._send(body, "application/json; charset=utf-8")
+                    return
+                if path == "/api/digest":
+                    self._send(json.dumps({"digest": fabric_digest(root), "generated_at": now_iso()}),
+                               "application/json")
+                    return
+                if path == "/api/agents":
+                    state = self._state()
+                    self._send(json.dumps({"viewer": self._viewer(),
+                                           "agents": {k: {"kind": v.get("kind", ""),
+                                                          "model": v.get("model", "")}
+                                                      for k, v in state["registry"].items()}},
+                                          ensure_ascii=False), "application/json; charset=utf-8")
+                    return
                 if path == "/state.json":
                     payload = json.dumps({"digest": fabric_digest(root), "generated_at": now_iso()})
                     raw = payload.encode("utf-8")
@@ -151,8 +228,11 @@ def cmd_serve(args):
                     self.wfile.write(raw)
                     return
                 if path in ("/", "/index.html", "/board.html"):
-                    body = self._render(self._viewer(), args.refresh)
-                    ctype = "text/html; charset=utf-8"
+                    asset = self._asset("index.html")
+                    if asset:
+                        body, ctype = asset[0], asset[1]
+                    else:
+                        body, ctype = self._render(self._viewer(), args.refresh), "text/html; charset=utf-8"
                 elif path == "/board.json":
                     state = load_fabric(root, args.plan or ["plan/*.json"],
                                         as_of or datetime.now(timezone.utc).date())
@@ -168,15 +248,16 @@ def cmd_serve(args):
                     tasks, _ = visible_tasks(state, self._viewer(), gate_channel(state, self._viewer(), {}))
                     body, ctype = export_ical(tasks, state["milestones"], now_iso()), "text/calendar"
                 else:
-                    self.send_error(404)
-                    return
-                raw = body.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(raw)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(raw)
+                    asset = self._asset(path)
+                    if not asset:
+                        # a single-page app answers its own routes; anything that
+                        # is not an asset and not an API path is the app's
+                        asset = self._asset("index.html")
+                    if not asset:
+                        self.send_error(404)
+                        return
+                    body, ctype = asset[0], asset[1]
+                self._send(body, ctype)
             except BrokenPipeError:
                 pass
             except Exception as exc:                      # a broken render is a 500, not a dead server
@@ -191,7 +272,9 @@ def cmd_serve(args):
     print(f"aimboard: serving {root} on http://{host}:{port}/  as {args.viewer or 'the channel leader'}"
           + (f", polling for change every {args.refresh}s and offering a refresh rather than"
              f" forcing one" if args.refresh else ""))
-    print("aimboard: ctrl-c to stop. Views: /#kanban /#gantt /#chat /#reports /#barrier /#plan")
+    print(f"aimboard: front-end {'web/dist (vue)' if (web / 'index.html').exists() else 'server-rendered html (no web/dist; run npm --prefix web run build)'}"
+          f"; json at /api/state; ?as=<agent> for that agent's view")
+    print("aimboard: ctrl-c to stop. Views: /#/kanban /#/gantt /#/chat /#/reports /#/barrier /#/plan")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

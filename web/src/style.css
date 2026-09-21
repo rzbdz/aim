@@ -1,0 +1,101 @@
+/* Only two kinds of rule live in here: layout, and the board's own visual
+   language. Everything that has a component - menus, tables, drawers, tags,
+   timelines, selects, progress - is Element Plus, configured rather than
+   reimplemented. Telling those apart is the difference between a theme and a
+   rewrite. */
+:root {
+  --aim-dim: #8b9cb6;
+  --aim-line: rgba(148, 163, 184, .16);
+  --aim-line-soft: rgba(148, 163, 184, .09);
+  --aim-radius: 12px;
+  --aim-accent: #38bdf8;
+}
+html, body, #app { height: 100%; margin: 0; }
+body {
+  font: 13px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.el-card { --el-card-border-color: var(--aim-line); border-radius: var(--aim-radius); }
+.el-card__header { padding: 11px 16px; font-size: 12.5px; font-weight: 600; letter-spacing: .01em; }
+.el-table { --el-table-border-color: var(--aim-line-soft); --el-table-header-bg-color: transparent;
+            --el-table-row-hover-bg-color: rgba(148, 163, 184, .06); font-size: 12.5px; }
+.el-table th.el-table__cell { font-weight: 600; color: var(--aim-dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+/* A tag is a label, not a siren: Element Plus ships saturated by default and a
+   board with forty siren-coloured labels on it is unreadable. */
+.el-tag { --el-tag-bg-color: transparent; border-radius: 5px; font-size: 11px; }
+.aim-shell { height: 100vh; }
+
+/* ---------------------------------------------------------------- shell */
+.aim-aside { border-right: 1px solid var(--aim-line); display: flex; flex-direction: column; }
+.aim-brand { padding: 16px 18px 12px; }
+.aim-brand h1 { font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px; letter-spacing: .01em; }
+.aim-mark { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, #38bdf8, #a78bfa);
+            display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #08111f; }
+.aim-brand .aim-sub { font-size: 11px; color: var(--aim-dim); margin-top: 8px; line-height: 1.7; word-break: break-all; }
+.aim-aside .el-menu { border-right: 0; }
+.aim-aside .el-menu-item { height: 38px; line-height: 38px; font-size: 12.5px; margin: 1px 8px; border-radius: 8px; }
+.aim-aside .el-menu-item.is-active { background: rgba(56, 189, 248, .12); color: var(--aim-accent); }
+.aim-links { margin-top: auto; padding: 12px 14px 16px; border-top: 1px solid var(--aim-line-soft); font-size: 11.5px; }
+.aim-header { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--aim-line); }
+.aim-main { padding: 18px 22px 64px; overflow: auto; }
+.aim-page { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.aim-page h2 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+.aim-page .aim-sub { font-size: 12px; color: var(--aim-dim); }
+.aim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+
+/* ---------------------------------------------------------------- kanban */
+.aim-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 10px; }
+.aim-col { min-width: 272px; flex: 1 0 272px; border: 1px solid var(--aim-line); border-radius: var(--aim-radius);
+           background: rgba(148, 163, 184, .035); }
+.aim-col > header { display: flex; align-items: center; gap: 8px; padding: 11px 13px; }
+.aim-col > header .aim-count { margin-left: auto; font-size: 11px; color: var(--aim-dim);
+                               background: rgba(148, 163, 184, .1); border-radius: 999px; padding: 1px 8px; }
+.aim-colbody { padding: 0 10px 12px; display: flex; flex-direction: column; gap: 9px; max-height: 66vh; overflow-y: auto; }
+/* A flex column shrinks its children by default, which squashed every card to
+   the height of its first line. Cards are not elastic. */
+.aim-colbody > * { flex: 0 0 auto; }
+.aim-card { cursor: grab; border-radius: 10px; padding: 11px 12px; background: var(--el-bg-color);
+            border: 1px solid var(--aim-line); box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
+            transition: border-color .12s ease, transform .12s ease; }
+.aim-card:hover { border-color: rgba(56, 189, 248, .42); transform: translateY(-1px); }
+.aim-card:active { cursor: grabbing; }
+.aim-card .aim-id { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--aim-dim); letter-spacing: .02em; }
+.aim-card .aim-title { display: block; font-size: 13px; line-height: 1.45; font-weight: 600; margin: 4px 0 0;
+                       overflow-wrap: anywhere; }
+.aim-card .aim-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 10px; padding-top: 9px;
+                      border-top: 1px dashed var(--aim-line); font-size: 11px; color: var(--aim-dim); }
+.aim-card .aim-accept { margin-top: 9px; font-size: 11.5px; color: var(--aim-dim); line-height: 1.5;
+                        display: flex; gap: 6px; align-items: flex-start; }
+.aim-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+.aim-flag.late { color: #fca5a5; }
+.aim-flag.blocked { color: #fca5a5; }
+.aim-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--aim-line);
+            color: var(--aim-dim); white-space: nowrap; }
+.aim-chip.draft { color: #fbbf24; border-color: rgba(251, 191, 36, .35); }
+.aim-chip.seed { color: #7dd3fc; border-color: rgba(125, 211, 252, .28); }
+
+/* ------------------------------------------------------------- messages */
+.aim-msg { border: 1px solid var(--aim-line); border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; background: var(--el-bg-color); }
+.aim-msg header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; margin-bottom: 7px; }
+.aim-msg .body { font-size: 12.5px; line-height: 1.65; overflow-wrap: anywhere; }
+.aim-msg .body :first-child { margin-top: 0; } .aim-msg .body :last-child { margin-bottom: 0; }
+.aim-msg .body pre { background: var(--el-fill-color); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-size: 11.5px; line-height: 1.5; }
+.aim-msg .body code { font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--el-fill-color); padding: 1px 5px; border-radius: 4px; }
+.aim-msg .body pre code { background: none; padding: 0; }
+.aim-msg .body table { border-collapse: collapse; margin: 8px 0; }
+.aim-msg .body th, .aim-msg .body td { border: 1px solid var(--aim-line); padding: 4px 8px; font-size: 11.5px; }
+.aim-msg .body blockquote { border-left: 2px solid rgba(56, 189, 248, .5); margin: 8px 0; padding: 2px 12px; color: var(--aim-dim); }
+.aim-msg .body h1, .aim-msg .body h2, .aim-msg .body h3 { font-size: 13.5px; margin: 14px 0 6px; }
+.aim-daysep { text-align: center; color: var(--aim-dim); font-size: 10.5px; letter-spacing: .1em; margin: 16px 0 10px; }
+.aim-daysep::before, .aim-daysep::after { content: ""; }
+
+/* --------------------------------------------------------------- shared */
+.aim-dim { color: var(--aim-dim); }
+.aim-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
+.aim-scroll { max-height: 72vh; }
+.aim-late { color: #fca5a5; }
+.aim-stat .el-statistic__number { font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
+.aim-stat .el-statistic__head { font-size: 11px; color: var(--aim-dim); text-transform: uppercase; letter-spacing: .06em; }
+.aim-thread { padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.aim-thread:hover { background: rgba(148, 163, 184, .06); }
+.aim-thread.on { background: rgba(56, 189, 248, .1); border-color: rgba(56, 189, 248, .3); }

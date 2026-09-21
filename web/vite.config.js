@@ -13,10 +13,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['vue', 'vue-router', 'pinia'],
-          element: ['element-plus', '@element-plus/icons-vue'],
-          charts: ['echarts', 'vue-echarts'],
+        // a function, not a map: the bundler in use here wants to see the id
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('echarts') || id.includes('zrender')) return 'charts'
+          if (id.includes('element-plus')) return 'element'
+          if (id.includes('/vue') || id.includes('pinia') || id.includes('vue-router')) return 'vendor'
+          return undefined
         },
       },
     },

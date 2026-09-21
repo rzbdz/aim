@@ -41,7 +41,7 @@ def render_conversation(state, viewer):
         blocks.append(f'<h3>#{esc(ch["id"])} — the channel record</h3>'
                       f'<p class="dim">{len(msgs)} message(s), {note}</p>' + ("".join(msgs) or
                       '<p class="empty">nothing has been said on the public record yet.</p>'))
-        rooms, hidden_rooms = visible_rooms(ch, viewer)
+        rooms, hidden_rooms = visible_rooms(state, ch, viewer)
         for room in rooms:
             body = "".join(message_html(f'{m.get("agent", "?")} → #{room["id"]}', m.get("body", ""),
                                         m.get("ts", ""),
@@ -82,10 +82,11 @@ def render_conversation(state, viewer):
     return head + "".join(blocks)
 
 
-def render_chat(channels, viewer):
+def render_chat(state, viewer):
+    """Rooms are gated too, so this needs the registry: an outsider is walled off."""
     blocks = []
-    for ch in channels:
-        rooms, hidden = visible_rooms(ch, viewer)
+    for ch in state["channels"]:
+        rooms, hidden = visible_rooms(state, ch, viewer)
         if not ch["rooms"]:
             roomhtml = ('<p class="empty">no rooms yet. Group chat and read cursors are M2 '
                         '(design/06); until then this is the channel only.</p>')
@@ -128,7 +129,7 @@ anything is stuck.</p>
 
 def build(page):
     """Page(state, channels, viewer)"""
-    rooms = (render_chat(page.channels, page.viewer) if any(ch.get("rooms") for ch in page.channels)
+    rooms = (render_chat(page.state, page.viewer) if any(ch.get("rooms") for ch in page.channels)
              else '<p class="note">No rooms yet, so group chat is not running: everything here is '
                   'one-to-one mail and the channel record. Rooms and read cursors are design/06, M2.</p>')
     return (render_conversation(page.state, page.viewer) + rooms

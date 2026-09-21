@@ -10,5 +10,6 @@
   "bytes": 3827,
   "body_sha256": "847a88d73928277a26c8ee44d33e9ea49a52e701f159d791c43759412c2307c5",
   "ack_required": true,
-  "claimed_at": "2026-09-21T08:41:19.609Z"
+  "claimed_at": "2026-09-21T08:41:19.609Z",
+  "acked_at": "2026-09-21T08:45:01.998Z"
 }

@@ -165,8 +165,13 @@ def main():
         print("== the renderer as a participant inside the barrier ==")
         peer = work / "claude.html"
         p = render(root, peer, "--as", "claude-session1")
+        # A render that fails should say why, rather than raising FileNotFoundError
+        # three lines later and hiding the reason it failed.
+        check("participant view renders", p.returncode == 0, p.stderr or p.stdout)
+        if p.returncode != 0:
+            print("  stderr:", (p.stderr or p.stdout)[-800:])
+            return finish()
         peer_html = peer.read_text(encoding="utf-8")
-        check("participant view renders", p.returncode == 0, p.stderr)
         check("ABSENCE: the peer seal claim is not in the bytes", PEER_SEAL not in peer_html,
               "the dashboard is a route around the cross-read refusal")
         check("ABSENCE: the peer draft task is not in the bytes", PEER_DRAFT not in peer_html)
@@ -180,6 +185,21 @@ def main():
         third = work / "third.html"
         render(root, third, "--as", "claude-session2")
         third_html = third.read_text(encoding="utf-8")
+        # T-0041: a registered agent who is not a participant of this channel is
+        # refused by `aim` outright ("'outsider' is not a participant"), so the
+        # renderer must not be the route around that refusal. Every gate branch
+        # used to test membership of `participants`, which meant a stranger took
+        # the else on all three and was served the bytes.
+        stranger = work / "stranger.html"
+        render(root, stranger, "--as", "claude-session2")
+        stranger_html = stranger.read_text(encoding="utf-8")
+        check("ABSENCE: a registered non-participant gets no peer draft", PEER_DRAFT not in stranger_html)
+        check("ABSENCE: a registered non-participant gets no peer seal", PEER_SEAL not in stranger_html)
+        check("ABSENCE: a registered non-participant gets no draft room message", ROOM_DRAFT not in stranger_html)
+        p = subprocess.run([sys.executable, str(BOARD), "render", "--root", str(root), "--json",
+                            "--as", "claude-session2"], capture_output=True, text=True, timeout=120)
+        check("ABSENCE: nor through the json, which is the same gate one layer down",
+              PEER_DRAFT not in p.stdout and PEER_SEAL not in p.stdout)
         check("ABSENCE: a bystander sees neither end of someone else's mail",
               MAIL_BODY not in third_html, "claude-session2 is not on this message")
         check("the bystander's board says how much is withheld", "withheld from this view" in third_html)
@@ -279,14 +299,29 @@ def main():
                   url is not None, "".join(said)[-300:])
             if url:
                 body = urllib.request.urlopen(url + "/", timeout=20).read().decode()
-                check("serve answers / with the board", "kanban" in body or "Board" in body)
-                check("serve re-renders per request rather than caching",
-                      "Cache-Control" not in body and "generated" in body)
-                doc = json.loads(urllib.request.urlopen(url + "/board.json", timeout=20).read().decode())
-                check("serve answers /board.json", "tasks" in doc and "phases" in doc)
+                # `/` is now the built front-end: a shell that fetches the record,
+                # rather than a page with the record baked into it. So the shell
+                # must carry no board data, and the API must carry all of it.
+                check("serve answers / with the front-end shell", 'id="app"' in body)
+                check("the shell carries no board data at all",
+                      PEER_DRAFT not in body and "T-9001" not in body and MAIL_BODY not in body)
+                doc = json.loads(urllib.request.urlopen(url + "/api/state", timeout=20).read().decode())
+                check("serve answers /api/state with the folded board",
+                      "T-9001" in doc["tasks"] and doc["statuses"])
+                check("the api says what it withheld rather than hiding the count",
+                      "withheld_tasks" in doc)
+                legacy = json.loads(urllib.request.urlopen(url + "/board.json", timeout=20).read().decode())
+                check("serve still answers /board.json for a foreign tool",
+                      "tasks" in legacy and "phases" in legacy)
                 gated = urllib.request.urlopen(url + "/?as=claude-session1", timeout=20).read().decode()
                 check("ABSENCE: the served view honours the gate too",
                       PEER_SEAL not in gated and PEER_DRAFT not in gated)
+                stranger_view = urllib.request.urlopen(url + "/?as=claude-session2", timeout=20).read().decode()
+                check("ABSENCE: a stranger is refused the same bytes over http",
+                      PEER_SEAL not in stranger_view and PEER_DRAFT not in stranger_view)
+                js = json.loads(urllib.request.urlopen(url + "/api/state?as=claude-session2", timeout=20).read().decode())
+                check("ABSENCE: the api the front-end reads applies the gate server-side",
+                      PEER_DRAFT not in json.dumps(js) and PEER_SEAL not in json.dumps(js))
                 check("serve answers /board.ics",
                       "BEGIN:VCALENDAR" in urllib.request.urlopen(url + "/board.ics", timeout=20).read().decode())
         finally:
