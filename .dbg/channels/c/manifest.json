@@ -1,0 +1,47 @@
+{
+  "id": "c",
+  "topic": "rejoin",
+  "created_at": "2026-09-21T08:14:35.981Z",
+  "leader": "h",
+  "synthesizer": "h",
+  "participants": [
+    "a",
+    "b"
+  ],
+  "barrier": {
+    "phase": "CROSS_EXAMINE",
+    "round": 1,
+    "history": [
+      {
+        "phase": "SEALED_DIVERGENT",
+        "at": "2026-09-21T08:14:35.981Z",
+        "by": "h",
+        "note": "channel opened"
+      },
+      {
+        "phase": "COMMIT",
+        "at": "2026-09-21T08:14:36.251Z",
+        "by": "h",
+        "round": 0,
+        "note": "",
+        "forced": false
+      },
+      {
+        "phase": "SYNTHESIS",
+        "at": "2026-09-21T08:14:36.306Z",
+        "by": "h",
+        "round": 0,
+        "note": "",
+        "forced": false
+      },
+      {
+        "phase": "CROSS_EXAMINE",
+        "at": "2026-09-21T08:14:36.361Z",
+        "by": "h",
+        "round": 1,
+        "note": "",
+        "forced": false
+      }
+    ]
+  }
+}

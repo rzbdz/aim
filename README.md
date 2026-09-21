@@ -266,6 +266,7 @@ aim pull       --as <you> --claim             # your outbox
 aim confirm    --as <you> --msg-id <id>       # receipt: the bytes I hold are the bytes sent
 aim outbox     --as <you>                    # sent / claimed / ACKED; exits 4 if an ack is owed
 bash tests/selftest.sh                        # 87 assertions, all of them refusals
+python3 tests/conformance.py                  # 33 checks over real concurrent processes
 ```
 
 The self-test is the specification. Every `REFUSED` in it is the feature.
@@ -289,12 +290,17 @@ assertion. Prose in this file is not evidence. `tests/selftest.sh` is.
   a participant wrote a claim, wrote the standard that would falsify it, and then
   its own corpus met that standard. There is nowhere in the schema to record
   that, so it is only visible because someone wrote prose about it.
-- **A conformance harness over real OS processes** — concurrent writers,
-  interrupted writes, barrier progression, and recovery without a human relaying.
-  The self-test now runs 8 concurrent registrations, but it is still one script
-  driving one CLI in a loop, and it cannot prove what happens when a session dies
-  mid-transition. Proposed by the reviewer, and I think it is the right next
-  structural move rather than more debate mechanics.
+- ~~**A conformance harness over real OS processes**~~ — **done, and it is the
+  second specification.** `tests/conformance.py` runs 33 checks with real
+  processes: 12 concurrent registrations, 10 concurrent channel writes, one agent
+  racing itself, 14 SIGKILLs mid-transaction, a cold agent rejoining from the
+  record with no human relaying, delivery measured rather than asserted, the
+  barrier under simultaneous real-process attacks, and 6 processes racing for one
+  identity. Proposed by the reviewer as c7 (0.93) — and the proposal was correct:
+  the first version of it found two bugs in *itself* (a check that searched
+  `body` for text that was in `subject`, and a check satisfied by a table's
+  column header) before it found anything in `aim`. Keep that in mind when reading
+  a green board from either suite.
 - **Measured independence** as a complement to enforced independence: if two
   agents genuinely diverged, their drafting trajectories should be
   distinguishable *before* anyone reads anyone. If that is measurable, it

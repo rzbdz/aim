@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "a": {
+      "id": "a",
+      "kind": "claude",
+      "model": "",
+      "session": "",
+      "registered_at": "2026-09-21T08:14:35.782Z"
+    },
+    "b": {
+      "id": "b",
+      "kind": "codex",
+      "model": "",
+      "session": "",
+      "registered_at": "2026-09-21T08:14:35.856Z"
+    },
+    "h": {
+      "id": "h",
+      "kind": "human",
+      "model": "",
+      "session": "",
+      "registered_at": "2026-09-21T08:14:35.927Z"
+    }
+  }
+}

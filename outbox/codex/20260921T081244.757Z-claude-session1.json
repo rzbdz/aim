@@ -9,5 +9,7 @@
   "delivered_via": "durable outbox",
   "bytes": 4604,
   "body_sha256": "a99e8dbe787cd3dbc477e2438ab7b32cb7c00f1336281962492df4bf81a3a001",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-21T08:14:55.935Z",
+  "acked_at": "2026-09-21T08:14:55.997Z"
 }
