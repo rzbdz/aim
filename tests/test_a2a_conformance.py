@@ -124,6 +124,74 @@ def main():
           and getattr(a2a, "is_iso8601_utc", lambda *_: True)("2026-09-21T09:30:00+08:00") is False,
           "the spec's JSON form is YYYY-MM-DDTHH:mm:ss.sssZ")
 
+    print("== the AgentCard (T-0102) ==")
+    # The card is the one A2A object this fabric can emit today, because it is a
+    # read of the registry and needs no endpoint. These checks are here rather
+    # than in a new file because this file is the contract: a second suite for
+    # the same protocol is how two readings of one spec start.
+    card1, card2 = build_card(twice=True)
+    card = card1
+    check("`aim card` renders an AgentCard for a registered agent",
+          isinstance(card, dict) and bool(card.get("name")),
+          f"got {card if not isinstance(card, dict) else sorted(card)}")
+
+    required = ["name", "description", "capabilities", "skills",
+                "supportedInterfaces", "defaultInputModes", "defaultOutputModes", "version"]
+    check("the card carries every field the spec marks REQUIRED, and an interface",
+          all(f in card for f in required),
+          f"missing {[f for f in required if f not in card]}")
+
+    iface = (card.get("supportedInterfaces") or [{}])[0]
+    check("the interface declares a version in Major.Minor form",
+          re.fullmatch(r"\d+\.\d+", str(iface.get("protocolVersion", ""))) is not None,
+          f"got {iface.get('protocolVersion')!r}; the spec's service parameter is "
+          f"'the A2A protocol version that the client is using', e.g. '0.3'")
+    check("the version this binding pins is the one the card declares",
+          iface.get("protocolVersion") == getattr(a2a, "PROTOCOL_VERSION", None),
+          f"card says {iface.get('protocolVersion')!r}, module pins "
+          f"{getattr(a2a, 'PROTOCOL_VERSION', None)!r} — a card that drifts from the "
+          f"constant the suite pins is a version claim nobody can falsify")
+    check("a custom protocolBinding is identified by a URI",
+          str(iface.get("protocolBinding", "")).startswith("https://"),
+          f"got {iface.get('protocolBinding')!r}; section 5.8 says a custom binding "
+          f"SHOULD be identified by a URI so implementations do not collide")
+
+    caps = card.get("capabilities") or {}
+    check("capabilities has the four boolean/array fields",
+          set(caps) >= {"streaming", "pushNotifications", "extensions", "extendedAgentCard"},
+          f"got {sorted(caps)}")
+    check("streaming is declared false, not omitted",
+          caps.get("streaming") is False,
+          "an absent capability and a false one both make the operations fail, but "
+          "only one of them tells a client why; we must state it (section 12.5)")
+    check("no capability is declared true without the surface behind it",
+          all(caps.get(k) is False for k in ("streaming", "extendedAgentCard")),
+          f"streaming={caps.get('streaming')} extendedAgentCard={caps.get('extendedAgentCard')}")
+
+    exts = caps.get("extensions") or []
+    check("each extension is a URI in the D16 namespace with required:false",
+          len(exts) >= 3
+          and all(e.get("uri", "").startswith("https://") and e.get("required") is False
+                  and e.get("description") for e in exts),
+          f"got {exts}")
+
+    skills = card.get("skills") or []
+    check("every skill carries the spec's fields",
+          bool(skills) and all({"id", "name", "description", "tags"} <= set(s) for s in skills),
+          f"got {[sorted(s) for s in skills]}")
+
+    check("name and description are strings, and description is not empty",
+          isinstance(card.get("name"), str) and isinstance(card.get("description"), str)
+          and bool(card["description"].strip()),
+          "the canonicalization example (section 8.4) has description:'' for a "
+          "REQUIRED field; we always have something to say")
+
+    card1, card2 = build_card(twice=True)
+    card = card1
+    check("the card is deterministic: same registry, same bytes",
+          card1 == card2,
+          "a card that changes between two reads of an unchanged registry cannot be cached")
+
     print("== the JSON-RPC surface ==")
     root, proc, url = start_server()
     try:
@@ -160,6 +228,45 @@ REQUESTS = [
     ("DeleteTaskPushNotificationConfig", {"taskId": "T-0001", "configId": "cfg1"}, False),
     ("GetExtendedAgentCard", {}, False),
 ]
+
+
+def build_card(twice=False):
+    """Run `aim card` against a real fabric and return the parsed card.
+
+    Deliberately end-to-end rather than a call into `aimboard.a2a.agent_card`:
+    the accept line for T-0102 is "aim card --as <agent> prints a card", so the
+    thing under test is the verb. The module-level checks above can pass while
+    the verb is not wired up at all, which is a green suite for an absent
+    feature — the failure mode this project keeps finding.
+
+    `twice=True` runs the verb twice against the *same* root and returns both
+    cards, which is the only way to ask whether the output is deterministic. Two
+    separate fabrics cannot answer it: `supportedInterfaces[].url` is the root,
+    so their cards differ for a reason that has nothing to do with stability.
+    [measured: the first version of this check built a fresh fabric each time and
+    failed on its own fixture, not on the card]
+    """
+    root = tempfile.TemporaryDirectory(prefix="a2a-card-")
+    env = os.environ | {"AIM_ROOT": root.name}
+    for argv in (["init"],
+                 ["register", "--as", "human", "--kind", "human"],
+                 ["register", "--as", "carder", "--kind", "claude", "--model", "Opus 5"]):
+        subprocess.run([str(HERE / "bin" / "aim"), *argv], env=env,
+                       capture_output=True, text=True, timeout=20)
+
+    def once():
+        done = subprocess.run([str(HERE / "bin" / "aim"), "card", "--as", "carder"],
+                              env=env, capture_output=True, text=True, timeout=20)
+        try:
+            return json.loads(done.stdout)
+        except (json.JSONDecodeError, ValueError):
+            return {"_unparsable": done.stdout[:200], "_stderr": done.stderr[:200],
+                    "_rc": done.returncode}
+
+    first = once()
+    second = once() if twice else None
+    root.cleanup()
+    return (first, second) if twice else first
 
 
 def start_server():

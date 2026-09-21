@@ -1784,6 +1784,52 @@ def cmd_status(args):
     print(f"log       {len(log)} public messages")
 
 
+def cmd_card(args):
+    """Render an agent's A2A AgentCard. A read: no lock, no ledger, no refusal.
+
+    The translation lives in `aimboard/a2a.py` and this is a thin front end to
+    it, for the reason design/08 section 3 gives about MCP: one rule, one owner.
+    The rule here is "how an agent's identity is described to a foreign client",
+    and a second implementation of it inside `bin/aim` would be a second place
+    for it to drift from the module the conformance suite pins.
+
+    The import is inside the function so that a broken or absent `aimboard` costs
+    one verb rather than the whole tool: `aim` is the fabric and every other
+    command must keep working when only the dashboard side is unwell. [measured:
+    this is not hypothetical, design/06 mentions a window today where bin/aim
+    itself was unparseable and the entire fabric was down.]
+    """
+    who, kind = resolve_actor(args)
+    reg = load_registry()["agents"]
+    # The binding's interface is the file root: that is where every one of the
+    # eleven operations actually reads and writes. It is not a URL a foreign
+    # client can dial, and the card says so in two places rather than dressing a
+    # path up as an endpoint — `metadata.aim.reachability` and the absent @-scheme.
+    target = str(ROOT)
+    if args.all:
+        cards = [_render_card(reg[i], target) for i in sorted(reg)]
+        print("[" + ",\n ".join(cards) + "]")
+        return
+    # --as is required by resolve_actor and it also names the card's subject, so a
+    # registered agent can render any other registered agent's card. That is
+    # correct rather than sloppy: an AgentCard is the *public* description of an
+    # agent, the spec publishes it at /.well-known/agent-card.json, and there is
+    # nothing in a card that its subject would not hand a stranger.
+    print(_render_card(reg[who], target))
+
+
+def _render_card(agent, target):
+    """Build and serialise one card; `target` is what `supportedInterfaces[].url` names."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from aimboard.a2a import agent_card  # noqa: E402
+    except Exception as exc:  # pragma: no cover - only on a broken checkout
+        die(f"REFUSED: cannot render an AgentCard: aimboard.a2a did not import ({exc}).\n"
+            f"The card is a translation of the registry and it lives beside the "
+            f"renderer; if that module is missing, so is the translation.")
+    return json.dumps(agent_card(agent, target), indent=2, ensure_ascii=False)
+
+
 def cmd_verify(args):
     ok = True
     for rel in ("log.jsonl", "ledger.jsonl", "tasks.jsonl"):
@@ -1914,6 +1960,10 @@ def main():
         return p
 
     add("init", cmd_init)
+    p = add("card", cmd_card, help="render an agent's A2A AgentCard (a read of the registry)")
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--all", action="store_true",
+                   help="every registered agent, as one JSON array")
     p = add("register", cmd_register)
     p.add_argument("--as", dest="actor", required=True)
     p.add_argument("--kind", required=True, choices=["claude", "codex", "human", "other"])
