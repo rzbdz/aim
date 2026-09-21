@@ -5,3 +5,10 @@
 .d2check/
 *.pyc
 __pycache__/
+.conformance/
+.tasktest/
+.ct/
+.race/
+.hooktest/
+.dbg/
+outbox/_drafts/

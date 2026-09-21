@@ -75,6 +75,36 @@ CROSS_EXAMINE_KINDS = {
 MAX_MSGS_PER_ROUND = 2       # per participant, per cross-examination round
 ECHO_RATIO_LIMIT = 0.50      # share of 8-grams that may echo a peer verbatim
 
+# --------------------------------------------------------------------------
+# work items (design/05 §3, §4, §5 — frozen interface)
+# --------------------------------------------------------------------------
+# A board is a shared, always-on, anyone-can-write surface, and the barrier's
+# whole mechanism is denying access to a shared surface until positions are
+# formed. So a work item is channel state and obeys the phase gate: it is born
+# `draft`, and `publish` is the deliberate act that exposes it.
+#
+# The leak this closes is not an attack, it is a convenience:
+#
+#     task: "attack codex's c5 claim, the temp-path one"
+#
+# That title is a complete statement of the author's framing, written in the
+# least suspicious form the fabric contains — an ordinary planning note.
+TASK_STATUSES = ["backlog", "ready", "doing", "review", "done", "blocked", "dropped"]
+TASK_FLOW = {                       # the state machine, not free text
+    "backlog": ["ready", "blocked", "dropped"],
+    "ready": ["doing", "blocked", "dropped"],
+    "doing": ["review", "blocked", "dropped"],
+    "review": ["done", "doing", "blocked", "dropped"],   # back to doing = changes requested
+    "done": [],
+    "blocked": ["ready", "doing", "dropped"],
+    "dropped": [],
+}
+TASK_PRIORITIES = ["low", "normal", "high"]
+TASK_EVENTS = ["created", "moved", "assigned", "published", "linked", "commented", "dropped"]
+# Phases in which a participant may only see their own drafts.
+DIVERGENCE_PHASES = ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
+
+
 
 # --------------------------------------------------------------------------
 # primitives
@@ -163,15 +193,56 @@ class Lock:
 
 
 def read_jsonl(path):
+    """Read a JSONL file, refusing to guess about a malformed line.
+
+    A truncated last line is exactly what a writer killed mid-append leaves
+    behind, and the previous version of this function raised a bare
+    json.JSONDecodeError from inside whatever command happened to be running —
+    a traceback, not a finding. `verify` would crash instead of reporting
+    TAMPER, which is a reader failing at the one job it has.
+
+    Skipping bad lines silently would be worse: a chain that is quietly one
+    record short is the "well-formed file missing a fact" failure this project
+    has already measured once. So the caller gets an error it must handle.
+    """
     if not path.exists():
         return []
     out = []
     with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
+        for n, line in enumerate(fh, 1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 out.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise MalformedLog(path, n, str(exc)) from exc
     return out
+
+
+class MalformedLog(Exception):
+    """A JSONL file has a line that is not a JSON object."""
+
+    def __init__(self, path, lineno, detail):
+        self.path, self.lineno, self.detail = path, lineno, detail
+        super().__init__(f"{path.name}:{lineno} is not valid JSON ({detail})")
+
+
+def read_jsonl_lenient(path):
+    """Best-effort read for display paths. Returns (records, bad_line_numbers)."""
+    if not path.exists():
+        return [], []
+    recs, bad = [], []
+    with open(path, "r", encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                recs.append(json.loads(line))
+            except json.JSONDecodeError:
+                bad.append(n)
+    return recs, bad
 
 
 def read_json(path, default=None):
@@ -778,6 +849,256 @@ def cmd_synthesis_input(args):
         print(text)
 
 
+def tasks_path(ch):
+    return channel_dir(ch) / "tasks.jsonl"
+
+
+def task_events(ch):
+    return read_jsonl(tasks_path(ch))
+
+
+def fold_tasks(ch):
+    """Board state is a fold over the event log. No board file is ever written.
+
+    A kanban board dragged by two agents is a read-modify-write on a shared
+    object, which is the lost update this project has already measured once (5
+    concurrent registrations, 1 survivor, well-formed file). An append-only log
+    has no lost update: the second writer appends and the fold decides. It also
+    means "who moved this to done, and when" survives a disagreement about
+    whether it was done — a picture cannot do that, evidence can.
+    """
+    board = {}
+    for e in task_events(ch):
+        tid, ev = e.get("task"), e.get("event")
+        if not tid:
+            continue
+        if ev == "created":
+            board[tid] = {
+                "id": tid, "title": e.get("title", ""), "owner": e.get("owner", ""),
+                "status": e.get("status", "backlog"), "priority": e.get("priority", "normal"),
+                "estimate_pts": e.get("estimate_pts", 0), "start": e.get("start", ""),
+                "due": e.get("due", ""), "milestone": e.get("milestone", ""),
+                "tags": e.get("tags", []), "accept": e.get("accept", ""),
+                "visibility": e.get("visibility", "draft"), "blocked_by": [],
+                "created_by": e.get("actor", ""), "created_at": e.get("ts", ""),
+                "history": [],
+            }
+        if tid not in board:
+            continue                       # an event for a task that was never created
+        t = board[tid]
+        t["history"].append(e)
+        if ev == "moved":
+            t["status"] = e.get("to", t["status"])
+            if e.get("reason"):
+                t["status_reason"] = e["reason"]
+        elif ev == "assigned":
+            t["owner"] = e.get("owner", t["owner"])
+        elif ev == "published":
+            t["visibility"] = "published"
+        elif ev == "linked":
+            dep = e.get("blocked_by")
+            if dep and dep not in t["blocked_by"]:
+                t["blocked_by"].append(dep)
+        elif ev == "dropped":
+            t["status"] = "dropped"
+    return board
+
+
+def _visible_to(task, who, phase):
+    """The board's version of the cross-read refusal."""
+    if task["visibility"] == "published":
+        return True
+    if phase not in DIVERGENCE_PHASES:
+        return True                        # the barrier is open; drafts are readable
+    return task.get("owner") == who or task.get("created_by") == who
+
+
+def _next_task_id(ch):
+    used = [t for t in fold_tasks(ch) if t.startswith("T-")]
+    n = max((int(t.split("-")[1]) for t in used if t.split("-")[1].isdigit()), default=0)
+    return f"T-{n + 1:04d}"
+
+
+def _append_task_event(ch, ev):
+    p = tasks_path(ch)
+    with Lock(channel_dir(ch) / ".lock"):
+        # The id is assigned inside the lock, so two agents creating a task at
+        # the same instant cannot both be handed T-0016.
+        append_chained(p, ev)
+    return ev
+
+
+def cmd_task_new(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in m["participants"] and kind != "human":
+        die(f"'{who}' is not a participant in {args.channel}")
+    if args.status not in TASK_STATUSES:
+        die(f"unknown status '{args.status}'; one of {', '.join(TASK_STATUSES)}")
+    if args.priority not in TASK_PRIORITIES:
+        die(f"unknown priority '{args.priority}'; one of {', '.join(TASK_PRIORITIES)}")
+    if args.owner and agent_kind(args.owner) is None:
+        die(f"REFUSED: owner '{args.owner}' is not a registered agent")
+    vis = args.visibility
+    if vis == "published" and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
+        die(
+            f"REFUSED: cannot publish a work item while the channel is in "
+            f"{m['barrier']['phase']}.\n"
+            "A task title states a position in the least suspicious form the fabric "
+            "contains. Work items are born draft; `aim task publish` exposes one "
+            "deliberately, and that act is recorded."
+        )
+    with Lock(channel_dir(args.channel) / ".lock.lock"):
+        tid = _next_task_id(args.channel)
+    ev = {
+        "ts": now_iso(), "event": "created", "actor": who, "channel": args.channel,
+        "task": tid, "title": args.title, "owner": args.owner or who,
+        "status": args.status, "priority": args.priority,
+        "estimate_pts": args.estimate or 0, "start": args.start or "", "due": args.due or "",
+        "milestone": args.milestone or "", "tags": args.tag or [], "accept": args.accept or "",
+        "visibility": vis,
+    }
+    _append_task_event(args.channel, ev)
+    print(f"{tid} created ({ev['status']}, {ev['visibility']}) — {ev['title'][:60]}")
+
+
+def _load_task_or_die(ch, tid, who, kind):
+    m = load_manifest(ch)
+    board = fold_tasks(ch)
+    t = board.get(tid)
+    if t is None:
+        die(f"no such task: {tid}")
+    if not _visible_to(t, who, m["barrier"]["phase"]) and kind != "human":
+        die(
+            f"REFUSED: '{tid}' is a draft owned by someone else and the channel is in "
+            f"{m['barrier']['phase']}.\n"
+            "Reading a peer's work item before cross-examination is the board's "
+            "version of reading their private log."
+        )
+    return m, board, t
+
+
+def cmd_task_move(args):
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if t["status"] == "dropped":
+        die(f"REFUSED: {args.id} is dropped; a dropped task is a record, not a workspace")
+    if args.to not in TASK_FLOW.get(t["status"], []):
+        die(
+            f"REFUSED: illegal transition {t['status']} -> {args.to} for {args.id} "
+            f"(allowed: {', '.join(TASK_FLOW.get(t['status'], [])) or 'nothing — terminal'})"
+        )
+    if args.to == "done":
+        open_blockers = [b for b in t["blocked_by"] if board.get(b, {}).get("status") != "done"]
+        if open_blockers and not args.force:
+            die(
+                f"REFUSED: {args.id} is blocked by {', '.join(open_blockers)}, which are not done.\n"
+                "\"Done\" is the one status that has to be decided by something other than "
+                "the person asserting it."
+            )
+    if args.to in ("blocked", "dropped") and not (args.reason or "").strip():
+        die(f"REFUSED: moving to '{args.to}' requires --reason. "
+            f"A blocker without a stated cause is a stall nobody can clear.")
+    ev = {
+        "ts": now_iso(), "event": "dropped" if args.to == "dropped" else "moved",
+        "actor": who, "channel": args.channel, "task": args.id,
+        "from": t["status"], "to": args.to, "reason": args.reason or "",
+    }
+    _append_task_event(args.channel, ev)
+    print(f"{args.id}: {t['status']} -> {args.to}")
+
+
+def cmd_task_assign(args):
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if agent_kind(args.owner) is None:
+        die(f"REFUSED: owner '{args.owner}' is not a registered agent")
+    _append_task_event(args.channel, {
+        "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
+        "task": args.id, "owner": args.owner, "from": t["owner"],
+    })
+    print(f"{args.id}: owner {t['owner'] or '(none)'} -> {args.owner}")
+
+
+def cmd_task_publish(args):
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if t["visibility"] == "published":
+        print(f"{args.id} is already published")
+        return
+    _append_task_event(args.channel, {
+        "ts": now_iso(), "event": "published", "actor": who, "channel": args.channel,
+        "task": args.id, "reason": args.reason or "",
+    })
+    print(f"{args.id} published — it is now readable by every participant in "
+          f"{args.channel}, and the act is on the record")
+
+
+def cmd_task_link(args):
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if args.blocked_by not in board:
+        die(f"REFUSED: no such task to depend on: {args.blocked_by}")
+    if args.blocked_by == args.id:
+        die("REFUSED: a task cannot block itself")
+    _append_task_event(args.channel, {
+        "ts": now_iso(), "event": "linked", "actor": who, "channel": args.channel,
+        "task": args.id, "blocked_by": args.blocked_by,
+    })
+    print(f"{args.id} blocked_by {args.blocked_by}")
+
+
+def cmd_task_comment(args):
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
+    if not body.strip():
+        die("need --body or --body-file")
+    _append_task_event(args.channel, {
+        "ts": now_iso(), "event": "commented", "actor": who, "channel": args.channel,
+        "task": args.id, "body": body,
+    })
+    print(f"comment on {args.id} ({len(body)} chars)")
+
+
+def cmd_task_list(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    board = fold_tasks(args.channel)
+    phase = m["barrier"]["phase"]
+    rows = []
+    for tid in sorted(board):
+        t = board[tid]
+        if not _visible_to(t, who, phase) and kind != "human":
+            continue
+        if args.owner and t["owner"] != args.owner:
+            continue
+        if args.status and t["status"] != args.status:
+            continue
+        if args.milestone and t["milestone"] != args.milestone:
+            continue
+        rows.append(t)
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        print(f"aim: no visible work items in '{args.channel}'"
+              + (f" matching those filters" if (args.owner or args.status or args.milestone) else ""))
+        return
+    hidden = len(board) - len(rows)
+    for t in rows:
+        badge = "" if t["visibility"] == "published" else "  [draft]"
+        block = f"  blocked_by={','.join(t['blocked_by'])}" if t["blocked_by"] else ""
+        due = f"  due={t['due']}" if t["due"] else ""
+        print(f"{t['id']}  {t['status']:<8} {t['owner']:<16} {t['priority']:<6} "
+              f"{t['title'][:52]}{badge}{block}{due}")
+    if hidden:
+        # Counted, never shown: a board that quietly omits rows is a board that
+        # lies about the size of the project.
+        print(f"\n({hidden} more work item(s) exist in this channel and are not visible "
+              f"to you in {phase})")
+
+
 def cmd_reveal(args):
     """Voluntarily disclose the reasoning behind one sealed claim.
 
@@ -899,6 +1220,18 @@ def cmd_confirm(args):
     rec = mine[0]
     if rec.get("to") != who:
         die(f"'{args.msg_id}' was not addressed to you")
+    # Did you actually read it? A receipt that does not require a prior read is a
+    # receipt for a file's existence. Codex produced exactly that in the first
+    # live use of this command: it confirmed a push it had never pulled, so the
+    # sender learned "you received it" from an agent that had not opened it. The
+    # whole point of the receipt is that it means more than the file did.
+    if not rec.get("claimed_at"):
+        die(
+            f"REFUSED: cannot confirm '{args.msg_id}' — you have not read it.\n"
+            f"Read it first (aim pull --as {who} --claim), then confirm. A receipt "
+            f"for an unread message tells the sender intact delivery happened when "
+            f"what actually happened is that a file arrived."
+        )
     damage = _verify_outbox_record(rec)
     if damage:
         # Confirming a message you cannot vouch for is worse than silence: it
@@ -1217,10 +1550,19 @@ def cmd_status(args):
 
 def cmd_verify(args):
     ok = True
-    for rel in ("log.jsonl", "ledger.jsonl"):
+    for rel in ("log.jsonl", "ledger.jsonl", "tasks.jsonl"):
         p = channel_dir(args.channel) / rel
+        try:
+            recs = read_jsonl(p)
+        except MalformedLog as exc:
+            # A truncated line is what a writer killed mid-append leaves behind,
+            # and it is TAMPER, not a crash. This is the reader's one job.
+            print(f"TAMPER {rel}:{exc.lineno} is not valid JSON "
+                  f"({exc.detail}) — a writer was interrupted, or a record was cut")
+            ok = False
+            continue
         prev = "genesis"
-        for i, r in enumerate(read_jsonl(p), 1):
+        for i, r in enumerate(recs, 1):
             h = r.get("hash")
             body = {k: v for k, v in r.items() if k != "hash"}
             if sha256_hex(canonical(body)) != h:
@@ -1397,6 +1739,60 @@ def main():
     p.add_argument("--channel", required=True)
     p.add_argument("--out")
 
+    # ---- work items (design/05 §5, frozen interface) ----------------------
+    tp = sub.add_parser("task", help="work items: the board, gated by the barrier")
+    tsub = tp.add_subparsers(dest="task_cmd", required=True)
+
+    def tadd(name, fn):
+        q = tsub.add_parser(name)
+        q.set_defaults(func=fn)
+        q.add_argument("--as", dest="actor", required=True)
+        q.add_argument("--channel", required=True)
+        return q
+
+    q = tadd("new", cmd_task_new)
+    q.add_argument("--title", required=True)
+    q.add_argument("--owner", default="")
+    q.add_argument("--status", default="backlog")
+    q.add_argument("--priority", default="normal")
+    q.add_argument("--estimate", type=int, default=0)
+    q.add_argument("--start", default="")
+    q.add_argument("--due", default="")
+    q.add_argument("--blocked-by", dest="blocked_by", default="")
+    q.add_argument("--milestone", default="")
+    q.add_argument("--tag", action="append")
+    q.add_argument("--accept", default="", help="the sentence that makes this verifiable")
+    q.add_argument("--visibility", default="draft", choices=["draft", "published"])
+
+    q = tadd("move", cmd_task_move)
+    q.add_argument("--id", required=True)
+    q.add_argument("--to", required=True)
+    q.add_argument("--reason", default="")
+    q.add_argument("--force", action="store_true")
+
+    q = tadd("assign", cmd_task_assign)
+    q.add_argument("--id", required=True)
+    q.add_argument("--owner", required=True)
+
+    q = tadd("publish", cmd_task_publish)
+    q.add_argument("--id", required=True)
+    q.add_argument("--reason", default="")
+
+    q = tadd("link", cmd_task_link)
+    q.add_argument("--id", required=True)
+    q.add_argument("--blocked-by", dest="blocked_by", required=True)
+
+    q = tadd("comment", cmd_task_comment)
+    q.add_argument("--id", required=True)
+    q.add_argument("--body", default="")
+    q.add_argument("--body-file")
+
+    q = tadd("list", cmd_task_list)
+    q.add_argument("--owner", default="")
+    q.add_argument("--status", default="")
+    q.add_argument("--milestone", default="")
+    q.add_argument("--json", action="store_true")
+
     p = add("reveal", cmd_reveal)
     p.add_argument("--as", dest="actor", required=True)
     p.add_argument("--channel", required=True)
@@ -1449,8 +1845,19 @@ def main():
     # Every refusal `die()` records needs to know which channel was being acted
     # on. Set it once here rather than at ~40 call sites; `resolve_actor` fills in
     # the actor when one was given.
-    note_context(channel=getattr(args, "channel", None), action=args.cmd)
-    args.func(args)
+    action = args.cmd
+    if args.cmd == "task":
+        action = f"task {getattr(args, 'task_cmd', '?')}"
+    note_context(channel=getattr(args, "channel", None), action=action)
+    try:
+        args.func(args)
+    except MalformedLog as exc:
+        # A display path met a record it cannot parse. Say which file and which
+        # line, and exit non-zero — never a bare traceback, and never silently.
+        die(f"REFUSED: {exc.path} line {exc.lineno} is not valid JSON ({exc.detail}).\n"
+            f"Run `aim verify --channel {getattr(args, 'channel', '<ch>')}` to see "
+            f"whether the chain is intact; a truncated line usually means a writer "
+            f"was interrupted mid-append.")
 
 
 if __name__ == "__main__":
