@@ -121,6 +121,87 @@ rs=[json.loads(l) for l in open('$LEDGER') if 'refusal' in l]
 sys.exit(0 if all(r.get('agent') is not None and r.get('action') and r.get('phase') for r in rs) else 1)\""
 expect_ok   "the refusal chain does not break the ledger chain" $AIM verify --channel t
 
+echo "== the seal actually binds the private log =="
+# Until 15:55Z this was inert: cmd_seal wrote private_log_hashes, cmd_verify read
+# it as `or []`, and every seal on disk was written by a tool that wrote
+# private_log_sha256 instead. expected == [] and the whole check was skipped. An
+# agent could rewrite its sealed reasoning, recompute the record hashes so the
+# log's own chain stayed self-consistent, and verify would print chain OK.
+#
+# The attack below is exactly that, and it is the reason the byte-level check
+# exists: a hash over a mutable file only means something if the seal holds bytes
+# rather than a rule for reading them.
+#
+# Its own channel, in SEALED_DIVERGENT, so it can seal and so it cannot perturb
+# the message ids the blocks above assert on.
+expect_ok   "open a third channel" $AIM new-channel --id t3 --topic "seal binding" --participants alpha,beta --leader human
+T2PRIV="$AIM_ROOT/channels/t3/private/alpha.jsonl"
+mkdir -p "$AIM_ROOT/channels/t3/private"
+printf '{"ts":"x","from":"alpha","kind":"note","body":"sealed reasoning one","prev":"genesis","hash":""}\n' > "$T2PRIV"
+python3 - "$T2PRIV" <<'PY'
+import json, hashlib, sys
+p = sys.argv[1]
+def canon(o): return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+prev = "genesis"
+out = []
+for line in open(p):
+    r = json.loads(line); r["prev"] = prev; r.pop("hash", None)
+    r["hash"] = hashlib.sha256(canon(r).encode()).hexdigest(); prev = r["hash"]
+    out.append(r)
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in out))
+PY
+expect_ok   "seal t3 over that private log" $AIM seal --as alpha --channel t3 --summary "alpha t3"
+expect_ok   "seal is clean to begin with" $AIM verify --channel t3
+
+# Appending after the seal is legitimate: you keep reasoning. It must pass, and
+# it must say so, or the rule "append is fine, edit is not" is only half true.
+# This runs before the tamper test because the tamper test deliberately breaks
+# the sealed prefix, and a test that has to repair the fixture afterwards is a
+# test that will one day be repaired wrong.
+printf '{"ts":"y","from":"alpha","kind":"note","body":"a later thought, added after the seal","prev":"","hash":""}\n' >> "$T2PRIV"
+python3 - "$T2PRIV" <<'PY'
+import json, hashlib, sys
+p = sys.argv[1]
+def canon(o): return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+recs = [json.loads(l) for l in open(p) if l.strip()]
+prev = "genesis"
+for r in recs:
+    r["prev"] = prev; r.pop("hash", None)
+    r["hash"] = hashlib.sha256(canon(r).encode()).hexdigest(); prev = r["hash"]
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+expect_ok   "an append after the seal still verifies" $AIM verify --channel t3
+expect_ok   "and it is reported as an append, not a failure" \
+  bash -c "$AIM verify --channel t3 2>&1 | grep -q 'appended after sealing'"
+
+python3 - "$T2PRIV" <<'PY'
+import json, hashlib, sys
+p = sys.argv[1]
+def canon(o): return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+recs = [json.loads(l) for l in open(p) if l.strip()]
+recs[0]["body"] = "[AMENDED] On reflection I withdraw this claim entirely."
+prev = "genesis"
+for r in recs:
+    r["prev"] = prev; r.pop("hash", None)
+    r["hash"] = hashlib.sha256(canon(r).encode()).hexdigest(); prev = r["hash"]
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+expect_fail "rewriting a sealed record and recomputing the chain is caught" \
+  $AIM verify --channel t3
+expect_ok   "the reason names the sealed bytes, not just 'a mismatch'" \
+  bash -c "$AIM verify --channel t3 2>&1 | grep -q 'not a prefix of the file now'"
+
+# A seal carrying no commitment at all must fail loudly rather than pass quietly.
+python3 - "$AIM_ROOT/channels/t3/seals/alpha.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+for k in ("private_log_bytes", "private_log_hashes", "private_log_sha256", "private_log_len"):
+    s.pop(k, None)
+json.dump(s, open(p, "w"))
+PY
+expect_fail "a seal with no private-log commitment is TAMPER, not skipped" \
+  $AIM verify --channel t3
+
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
 # Tamper *after* the last successful verify, so the check is not confounded by

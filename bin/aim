@@ -530,6 +530,13 @@ def cmd_seal(args):
         # Hash of the frozen PREFIX, record by record. Appending after sealing is
         # allowed and visible; editing what was sealed is not.
         "private_log_hashes": [r.get("hash", "") for r in recs],
+        # The raw bytes as they were at this instant, for a byte-level check that
+        # does not depend on how the file happens to be re-serialized. Every seal
+        # written before 15:55Z carried this field under a different contract and
+        # was checked by nothing (see cmd_verify); writing both makes the check
+        # work for old and new seals alike.
+        "private_log_bytes": private.read_bytes().hex() if private.exists() else "",
+        "private_log_sha256": sha256_hex(private.read_bytes()) if private.exists() else "",
         "private_log_len": len(recs),
     }
     seal["digest"] = sha256_hex(canonical({k: v for k, v in seal.items() if k not in ("digest",)}))
@@ -1024,12 +1031,11 @@ def cmd_verify(args):
         if d != s["digest"]:
             print(f"TAMPER seal {p.name}: digest mismatch")
             ok = False
-        # The seal covers the private log as a frozen PREFIX: the record hashes
-        # that existed at sealing time, in order. Appending after sealing is
+        # The seal covers the private log as a frozen PREFIX: the bytes and record
+        # hashes that existed at sealing time. Appending after sealing is
         # legitimate — you keep reasoning — and is reported as a note, not a
         # failure. Editing or reordering what was already sealed is not.
         pl = channel_dir(args.channel) / "private" / f"{s['agent']}.jsonl"
-        expected = s.get("private_log_hashes") or []
         if pl.exists():
             # The log's own chain first: a record whose body was edited without
             # its hash being recomputed is caught here, independently of the seal.
@@ -1042,19 +1048,66 @@ def cmd_verify(args):
                     print(f"TAMPER private/{s['agent']}.jsonl:{i} broken chain")
                     ok = False
                 prev = r.get("hash")
-            # Then the sealed prefix: appending after sealing is legitimate — you
-            # keep reasoning — and is a note, not a failure. Editing, removing or
-            # reordering what was already sealed is not.
-            actual = [r.get("hash", "") for r in read_jsonl(pl)]
-            if expected and actual[:len(expected)] != expected:
-                print(f"TAMPER private log {s['agent']}: a record sealed at {s['ts']} "
-                      f"was removed or reordered")
+            if not check_sealed_prefix(s, pl):
                 ok = False
-            elif expected and len(actual) > len(expected):
-                print(f"note   private log {s['agent']}: {len(actual) - len(expected)} record(s) "
-                      f"appended after sealing (allowed; the sealed prefix is intact)")
     print("chain OK" if ok else "chain BROKEN")
     sys.exit(0 if ok else 1)
+
+
+def check_sealed_prefix(seal, pl):
+    """Does the private log still start with exactly what the seal froze?
+
+    Three seal generations exist in this repo, and the check has to be honest
+    about which one it is looking at:
+
+      private_log_bytes   raw hex of the frozen prefix. Newest, exact, and the
+                          only form that cannot be defeated by re-serializing.
+      private_log_hashes  record hashes of the frozen prefix (current cmd_seal).
+      private_log_sha256  the original contract: sha256 of the whole file, plus
+                          a record count. Checked against the first N raw lines,
+                          which is the reading both old seals on disk actually
+                          satisfy. [measured: barrier-v0 does]
+
+    A seal carrying none of these cannot be checked at all. That is reported as
+    TAMPER, not skipped: silently declaring an unverifiable seal intact is the
+    failure this function exists to prevent, and the version that shipped did
+    exactly that for every seal written before 15:55Z.
+    """
+    n_bytes, n_hashes = seal.get("private_log_bytes"), seal.get("private_log_hashes")
+    n_sha, n_len = seal.get("private_log_sha256"), seal.get("private_log_len") or 0
+    raw = pl.read_bytes()
+    lines = [l for l in raw.split(b"\n") if l.strip()]
+    if n_bytes:
+        prefix = (b"\n".join(lines[:n_len]) + b"\n") if n_len else b""
+        if prefix.hex() != n_bytes:
+            print(f"TAMPER private log {seal['agent']}: the bytes sealed at {seal['ts']} "
+                  f"are not a prefix of the file now")
+            return False
+        return _note_append(seal, len(lines), n_len)
+    if n_hashes:
+        actual = [r.get("hash", "") for r in read_jsonl(pl)]
+        if actual[:len(n_hashes)] != n_hashes:
+            print(f"TAMPER private log {seal['agent']}: a record sealed at {seal['ts']} "
+                  f"was removed or reordered")
+            return False
+        return _note_append(seal, len(actual), len(n_hashes))
+    if n_sha and n_len:
+        prefix = (b"\n".join(lines[:n_len]) + b"\n") if n_len else b""
+        if sha256_hex(prefix) != n_sha:
+            print(f"TAMPER private log {seal['agent']}: the {n_len} record(s) sealed at "
+                  f"{seal['ts']} no longer hash to the sealed value")
+            return False
+        return _note_append(seal, len(lines), n_len)
+    print(f"TAMPER seal {seal['agent']}: carries no private-log commitment, so the "
+          f"sealed reasoning cannot be verified at all")
+    return False
+
+
+def _note_append(seal, now_n, sealed_n):
+    if now_n > sealed_n:
+        print(f"note   private log {seal['agent']}: {now_n - sealed_n} record(s) "
+              f"appended after sealing (allowed; the sealed prefix is intact)")
+    return True
 
 
 
