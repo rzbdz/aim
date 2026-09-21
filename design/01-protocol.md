@@ -19,7 +19,10 @@ the only actor who can traverse it. `--force` exists and logs itself as forced.
 **1. The barrier is in the tool.** Before `CROSS_EXAMINE`, `aim inbox` returns
 only your own messages. There is no flag that widens it. The refusal is
 generated from the phase, is printed with a reason, and is the thing the
-self-test asserts (38 refusals, all of them the feature).
+self-test asserts. It is also written to the ledger, which it was not for the
+first version of this design: the original claimed refusals were recorded and
+they were not, so the record could not distinguish "nobody was tempted" from
+"everybody was tempted and was stopped".
 
 **2. The seal is a commitment device, not a binding contract.** Each
 participant writes a summary plus claims, each claim carrying a `confidence`

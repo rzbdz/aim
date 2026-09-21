@@ -6,8 +6,10 @@ File-first, cross-vendor, cross-session. The transport is the filesystem;
 the protocol is this CLI. Nothing here depends on any vendor's internals.
 
 The defining property: the barrier is ENFORCED BY THE TOOL, not by etiquette.
-An agent that wants to peek during SEALED_DIVERGENT is refused by `aim`, and
-the refusal is recorded. Good behaviour should not be a matter of good faith.
+An agent that wants to peek during SEALED_DIVERGENT is refused by `aim`, and the
+refusal is written to the ledger. Good behaviour should not be a matter of good
+faith — and a refusal is the one event that shows an agent *wanted* something it
+was not allowed, which is why it is the event worth keeping.
 
 Storage layout
 --------------

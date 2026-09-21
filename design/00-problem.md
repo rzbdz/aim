@@ -55,7 +55,9 @@ binding constraint and I do not know how to build it. See `design/02-failures.md
 
 ## The distinction that keeps the design honest
 
-**Enforced** (the tool refuses, and the refusal is recorded):
+**Enforced** (the tool refuses, and the refusal is recorded as a ledger event —
+which was not true until 2026-09-21, when a live run measured that refusals were
+printed and discarded):
 cross-reading before cross-examination; public speech before cross-examination;
 phase transitions by anyone but the human; synthesis before every participant
 has sealed; a participant reading the mixed bundle; unaddressed, unlabelled,
