@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""aim-doctor — can this checkout be run at all?
+
+The failure this exists for, stated exactly
+-------------------------------------------
+On 2026-09-21 a half-finished edit left `bin/aim` unparseable for about two
+minutes. Nothing reported it. What reported it was a *person*: codex's next `aim`
+command died with `IndentationError: expected an indented block`, and every verb
+in the fabric — push, pull, the dashboard's write path — was down for as long as
+it took somebody to notice and say so.
+
+That is the whole defect, and it is not a bug in `aim`: it is that the first
+symptom of an undeployable tool is *an unrelated command failing*. The next
+agent to run `aim status` gets a traceback, cannot tell it from a fabric problem,
+and has no way to ask. A syntax error is the cheapest possible failure to detect
+— `ast.parse` does it in 0.09s for this whole tree — and it was detected by
+someone's work being interrupted instead.
+
+Why this is a script and not a subcommand
+-----------------------------------------
+`aim doctor` cannot be a verb in `bin/aim`, because the file that would have to
+report the problem is the file with the problem. So the tripwire lives outside
+the tool it watches. `aim doctor` exists as a thin front end to *this* script for
+convenience, and it says so when it runs: if `bin/aim` is broken, that verb is
+gone and this is what you run instead.
+
+Why it parses instead of importing
+----------------------------------
+Importing `bin/aim` executes its module level, and `aim` is deliberately not
+importable (design/08 section 3 gives it the write discipline; a second importer
+is a second entry point into it). Parsing is enough to catch what this exists to
+catch, it has no side effects, and it cannot itself be the thing that breaks.
+Importing is checked separately, for `aimboard`, where it *is* the real question.
+
+It is a read. No lock, no ledger, no refusal, no write of any kind: a diagnostic
+you cannot run on a suspect tree is a diagnostic that arrives too late to be
+useful.
+
+Wire it in, if you want it before the tool is live rather than after:
+
+    printf '#!/bin/sh\nexec %s/bin/aim-doctor --quiet\n' "$PWD" \\
+      > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+Exit code is the number of failures, which is the convention every suite here
+already uses. `--quiet` prints nothing and only sets the exit code, for a hook.
+"""
+from __future__ import annotations
+
+import ast
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent          # <root>/bin
+
+# Directories that are not this tool. `web/node_modules` is 255M of vendored
+# JavaScript and `web/dist` is its build output; neither is something an agent
+# executes as part of the fabric, and walking them would turn a 0.09s check into
+# a slow one for no finding.
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".selftest", ".synthtest",
+             "dist", ".mypy_cache", ".pytest_cache", ".dbg"}
+
+results: list[tuple[str, bool, str]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    results.append((name, bool(ok), detail))
+
+
+def report(quiet: bool) -> None:
+    for name, ok, detail in results:
+        if quiet:
+            continue
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
+        if detail and not ok:
+            print(f"          {detail}")
+
+
+def is_python(path: Path) -> bool:
+    """Does anything actually execute this file as Python?
+
+    The shebang, not the extension. `bin/aim` has no `.py` suffix and is the most
+    important file here; `bin/aim-doorbell-hook` has no suffix either and is
+    `sh`, so a check keyed on "extensionless file in bin/" would report a shell
+    script as an unparseable Python module and be wrong on its first run.
+    """
+    try:
+        first = path.open("rb").readline(200).decode("utf-8", "replace")
+    except OSError:
+        return False
+    if not first.startswith("#!"):
+        return False
+    return "python" in first
+
+
+def python_sources(root: Path) -> list[Path]:
+    """Every file here that something executes as Python, sorted and deduped.
+
+    Found by walking rather than by a list, because the list is the thing that
+    goes stale: a new module added to `aimboard/` and not added here would be
+    exactly the file nobody notices is broken.
+    """
+    found = set()
+    for path in sorted(root.rglob("*.py")):
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        found.add(path)
+    bin_dir = root / "bin"
+    if bin_dir.is_dir():
+        for path in sorted(bin_dir.iterdir()):
+            if path.is_file() and is_python(path):
+                found.add(path)
+    return sorted(found)
+
+
+def entry_points(root: Path) -> list[Path]:
+    """Executables in `bin/` that are Python, which is what agents actually run."""
+    bin_dir = root / "bin"
+    if not bin_dir.is_dir():
+        return []
+    return sorted(p for p in bin_dir.iterdir()
+                  if p.is_file() and is_python(p) and os.access(p, os.X_OK))
+
+
+def parse_check(root: Path, quiet: bool) -> None:
+    sources = python_sources(root)
+    check("the checkout has python sources to check", bool(sources),
+          f"nothing found under {root}")
+    broken = []
+    for path in sources:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            broken.append((path, f"cannot read: {exc}"))
+            continue
+        try:
+            ast.parse(source, filename=str(path))
+        except SyntaxError as exc:
+            # The line number is the whole value of this check. "bin/aim does not
+            # parse" sends a reader looking; "line 172" is a fix.
+            broken.append((path, f"{exc.msg} at line {exc.lineno}"))
+    rel = lambda p: str(p.relative_to(root)) if root in p.parents else str(p)  # noqa: E731
+    if broken:
+        for path, why in broken:
+            print(f"  FAIL  {rel(path)} does not parse — {why}")
+        check(f"all {len(sources)} python sources parse", False,
+              "; ".join(f"{rel(p)}: {w}" for p, w in broken))
+        return
+    check(f"all {len(sources)} python sources parse "
+          f"(including bin/aim and every aimboard module)", True)
+
+
+def _child_env(extra=None):
+    """The environment a child gets, with bytecode writing off.
+
+    `PYTHONDONTWRITEBYTECODE=1` is not tidiness. A diagnostic that leaves
+    `__pycache__` directories behind while diagnosing has *written to the tree it
+    was asked to inspect*, and "this check is a read" is one of the three things
+    the suite asserts about it. [measured: without this, the read-only check
+    failed on 22 `.pyc` files — every one of them created by the import check
+    itself, which is to say the doctor was the only writer in the diff]
+    """
+    return os.environ | {"PYTHONDONTWRITEBYTECODE": "1"} | (extra or {})
+
+
+def package_check(root: Path) -> None:
+    """`aimboard` imports — the question parsing cannot answer for a package.
+
+    A package can parse module by module and still fail to import: a missing
+    export, a circular import, a module that raises at import time. `bin/aim` is
+    checked by parsing alone because importing it is forbidden; this one is
+    checked by importing because that is the only thing that would catch it, and
+    both entry points here import it before they do anything else.
+    """
+    code = ("import sys; sys.path.insert(0, %r); import aimboard; "
+            "from aimboard.cli import main; print('ok')" % str(root))
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                          text=True, timeout=60, cwd=str(root), env=_child_env())
+    tail = (done.stderr.strip().splitlines() or [""])[-1]
+    check("aimboard imports cleanly", done.returncode == 0 and "ok" in done.stdout,
+          f"rc={done.returncode} {tail}")
+
+
+def start_check(root: Path, quiet: bool) -> None:
+    """Every entry point in `bin/` can answer `--help` without dying.
+
+    This is the check that catches the failure parsing cannot see. A script whose
+    first statement is `from aimboard.mcp import main` parses perfectly and cannot
+    start at all — measured on this tree: `bin/aim-mcp` dies inside
+    `bin/aimboard.py`, because running a script in `bin/` puts `bin/` on
+    `sys.path[0]` and `bin/aimboard.py` shadows the `aimboard` *package*. The
+    module is never reached; the file that shadows it is.
+
+    Run against a throwaway `AIM_ROOT`, so a diagnostic that is meant to be
+    side-effect free cannot be the thing that writes to a real fabric.
+    """
+    points = entry_points(root)
+    check("bin/ has python entry points to start", bool(points),
+          f"nothing executable under {root / 'bin'}")
+    with tempfile.TemporaryDirectory(prefix="aim-doctor-") as scratch:
+        env = _child_env({"AIM_ROOT": scratch})
+        for path in points:
+            rc, why = None, ""
+            try:
+                done = subprocess.run([str(path), "--help"], capture_output=True,
+                                      text=True, timeout=60, env=env, cwd=str(root))
+                rc = done.returncode
+                why = (done.stderr.strip().splitlines() or [""])[-1]
+                ok = rc == 0
+            except subprocess.TimeoutExpired:
+                ok, why = False, "timed out after 60s"
+            except OSError as exc:
+                ok, why = False, f"cannot execute: {exc}"
+            check(f"{path.name} starts and answers --help", ok,
+                  "" if ok else f"rc={rc} {why}")
+            if not ok and not quiet:
+                # Named on its own line as well as counted, because the summary
+                # counts failures and this is the one a reader has to act on.
+                print(f"  FAIL  {path} cannot start: {why}")
+
+
+def live_check(root: Path, quiet: bool) -> None:
+    """Whatever `aim` on PATH is, it has to parse — it is what agents run.
+
+    Checked wherever it points rather than only when it points here. A symlink
+    into a *different* checkout is not a failure of this tree, but it is the tree
+    agents actually execute, so a syntax error there is exactly the outage this
+    script exists to report early. Where it points is printed either way: a
+    reader who assumed it pointed here is the reader this line is for.
+    """
+    found = shutil.which("aim")
+    if not found:
+        check("`aim` on PATH, if there is one, parses", True)
+        if not quiet:
+            print("        note: nothing named `aim` is on PATH; a fresh clone has "
+                  "to be run as bin/aim")
+        return
+    target = Path(found).resolve()
+    if not quiet:
+        print(f"        PATH: {found} -> {target}")
+    try:
+        ast.parse(target.read_text(encoding="utf-8"), filename=str(target))
+        check("`aim` on PATH parses", True)
+    except SyntaxError as exc:
+        check("`aim` on PATH parses", False,
+              f"{target} line {exc.lineno}: {exc.msg} — every agent command is "
+              f"currently failing, and this is why")
+    except OSError as exc:
+        check("`aim` on PATH parses", False, f"cannot read {target}: {exc}")
+
+
+USAGE = """aim-doctor — can this checkout be run at all?
+
+    aim-doctor [--quiet] [--root PATH]
+
+  --quiet   print nothing; the exit code is the whole answer, for a git hook
+  --root    the checkout to check (default: the one this script lives in)
+
+Exit code is the number of failed checks, like every suite in this repo.
+This script is checked by itself, so it has to answer --help the way it demands
+of every other entry point in bin/.
+"""
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(USAGE)
+        return 0
+    quiet = "--quiet" in argv
+    args = [a for a in argv if a != "--quiet"]
+    root = HERE.parent
+    if args and args[0] == "--root":
+        if len(args) < 2:
+            print("aim-doctor: --root wants a path", file=sys.stderr)
+            return 2
+        root = Path(args[1]).resolve()
+    elif args:
+        print(f"aim-doctor: unknown argument {args[0]!r}", file=sys.stderr)
+        return 2
+
+    if not quiet:
+        print(f"== can this checkout be run? ({root}) ==")
+    parse_check(root, quiet)
+    # Only asked when it is possible to ask: a tree whose sources do not parse is
+    # already a failure, and reporting "aimboard does not import" beside it would
+    # be the same finding counted twice — and the second count would be the
+    # confusing one, because the import failure is a *consequence*.
+    if all(ok for _, ok, _ in results):
+        package_check(root)
+        start_check(root, quiet)
+    live_check(root, quiet)
+    report(quiet)
+
+    failed = [name for name, ok, _ in results if not ok]
+    if not quiet:
+        print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
+        if failed:
+            print("undeployable:")
+            for name in failed:
+                print(f"  - {name}")
+    return len(failed)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

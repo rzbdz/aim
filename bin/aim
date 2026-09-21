@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -2342,6 +2343,32 @@ def cmd_card(args):
     print(_render_card(reg[who], target))
 
 
+def cmd_doctor(args):
+    """Ask whether this checkout can be run at all. A front end, and only that.
+
+    The diagnosis lives in `bin/aim-doctor`, deliberately outside the tool it
+    watches: a verb inside `bin/aim` that reported "bin/aim does not parse" is a
+    verb that is gone exactly when it is needed. This exists so the check is one
+    word away on a working tree, and it forwards its exit code unchanged so a
+    script can use it either way.
+
+    Nothing here is checked before the forward, and that is the point: this
+    command must not be able to fail for a reason of its own.
+    """
+    script = Path(__file__).resolve().parent / "aim-doctor"
+    if not script.exists():
+        print(f"aim: {script} is missing, so there is nothing to run. The check "
+              f"lives outside this file on purpose: a doctor inside the patient "
+              f"cannot report the patient's own syntax error.", file=sys.stderr)
+        return 127
+    argv = [sys.executable, str(script)]
+    if args.quiet:
+        argv.append("--quiet")
+    if args.root:
+        argv += ["--root", args.root]
+    return subprocess.run(argv).returncode
+
+
 def _render_card(agent, target):
     """Build and serialise one card; `target` is what `supportedInterfaces[].url` names."""
     try:
@@ -2728,6 +2755,21 @@ def main():
     p = add("verify", cmd_verify)
     p.add_argument("--channel", required=True)
 
+    # Its own verb rather than a flag on `verify`. `verify` validates *a
+    # channel's record* — chains, seals, tamper — and this validates *the
+    # checkout*, which is a different subject with a different failure and a
+    # different reader. Folding them together would mean a channel-scoped command
+    # that can fail because a module elsewhere does not import.
+    #
+    # The flags are declared rather than passed through with `nargs="*"`: with
+    # `nargs="*"` argparse reads `--quiet` as an option of *this* parser and
+    # exits 2 with "unrecognized arguments" before the forward ever happens —
+    # measured, and a diagnostic whose own interface drops the flag it exists to
+    # forward is the same class of bug as the one it is looking for.
+    p = add("doctor", cmd_doctor, help="can this checkout be run at all? (a forward to bin/aim-doctor)")
+    p.add_argument("--quiet", action="store_true", help="print nothing; the exit code is the answer")
+    p.add_argument("--root", default=None, help="the checkout to check (default: this one)")
+
     args = ap.parse_args()
     # Every refusal `die()` records needs to know which channel was being acted
     # on. Set it once here rather than at ~40 call sites; `resolve_actor` fills in
@@ -2746,7 +2788,7 @@ def main():
         action = f"channel {getattr(args, 'channel_cmd', '?')}"
     note_context(channel=getattr(args, "channel", None), action=action)
     try:
-        args.func(args)
+        code = args.func(args)
     except MalformedLog as exc:
         # A display path met a record it cannot parse. Say which file and which
         # line, and exit non-zero — never a bare traceback, and never silently.
@@ -2754,6 +2796,13 @@ def main():
             f"Run `aim verify --channel {getattr(args, 'channel', '<ch>')}` to see "
             f"whether the chain is intact; a truncated line usually means a writer "
             f"was interrupted mid-append.")
+    # Every other verb returns None and the exit code is 0, which is what it has
+    # always been. `doctor` is the one verb whose whole output *is* the verdict it
+    # forwards, so a command that says "this checkout cannot be run" and then
+    # exits 0 has reported nothing a script can act on. Only a non-zero int is
+    # propagated, so no existing verb's exit code can move.
+    if isinstance(code, int) and code:
+        sys.exit(code)
 
 
 if __name__ == "__main__":
