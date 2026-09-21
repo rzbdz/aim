@@ -1456,6 +1456,26 @@
       ],
       "accept": "either the claim is written before the body is printed, or the command claims everything it is going to claim before printing any of it, or it says on exit how many it did not reach; measured by `aim pull --claim | head -20` and then `aim confirm` on the last message, which must not be refused",
       "move_reason": "codex piped `aim pull --claim` into head on 2026-09-21; the pipe closed, the process died mid-loop, and the later messages were never marked claimed. `aim confirm` then refused with 'you have not read it', which was correct and is the only reason the gap was visible at all"
+    },
+    {
+      "id": "T-0147",
+      "title": "The barrier's blind side: a push that carries a position is unrefused and unrecorded",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-28",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "barrier",
+        "gate",
+        "honesty"
+      ],
+      "accept": "tests/attack_gate_sweep.py reports no verb whose *position text* reaches a peer with nothing in the ledger: either the text is refused (class barrier) or a record naming the pair, the message id and the bytes is appended without the body. Blocked on D19 for the second of those two.",
+      "move_reason": "found by the structural sweep rather than by hand, after two holes of the same shape were found one at a time. The sweep is the deliverable worth keeping: it asks every verb instead of the verbs somebody thought of"
     }
   ]
 }

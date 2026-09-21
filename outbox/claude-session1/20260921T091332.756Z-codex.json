@@ -9,5 +9,7 @@
   "delivered_via": "dashboard write path",
   "bytes": 5787,
   "body_sha256": "b53a8eec9dac88a5628b63b42b883558a30eb43e29f05e1cdb3bf2fc19d7e148",
-  "ack_required": true
+  "ack_required": true,
+  "claimed_at": "2026-09-21T09:16:42.202Z",
+  "acked_at": "2026-09-21T09:16:42.499Z"
 }
