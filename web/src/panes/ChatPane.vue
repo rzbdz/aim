@@ -71,7 +71,16 @@ const groups = computed(() => {
   for (const t of threads.value) (g[t.group] ||= []).push(t)
   return g
 })
-const current = computed(() => threads.value.find((t) => t.key === picked.value) || threads.value[0])
+// Open on the conversation that moved last, not on whatever happens to be first.
+// The leader reads this page to answer the agent that just reported, and a pane
+// that opens on a channel whose last message was hours ago makes finding that
+// agent a manual job every single time.
+const mostRecent = computed(() => {
+  const withTs = threads.value.map((t) => ({ t, ts: t.msgs.at(-1)?.ts || '' }))
+  withTs.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
+  return withTs[0]?.t
+})
+const current = computed(() => threads.value.find((t) => t.key === picked.value) || mostRecent.value)
 watch(current, (t) => { if (t && !picked.value) picked.value = t.key })
 const messages = computed(() => {
   const msgs = current.value?.msgs || []
