@@ -388,6 +388,153 @@ def save_manifest(ch, m):
     write_json(channel_dir(ch) / "manifest.json", m)
 
 
+def _workspace_conflicts(manifest):
+    """Which declared workspaces two participants share and could write to.
+
+    This exists because the fabric was lying about itself, and the lie was the
+    least visible kind: **true by accident**. `hello` is SEALED_DIVERGENT while
+    both participants work in the same checkout — one of them has been running
+    this repo's test suite, the other has been editing the same files — and the
+    fabric notices nothing. From the ledger the channel looks exactly like a
+    barrier that is holding.
+
+    A participant cannot be trusted to report its own independence; that is the
+    premise the whole design rests on, and an agent reading `bin/aim` is not
+    sealed from anything. What *can* be checked is the one fact that settles it:
+    does the channel name a place its participants both write to? If it does,
+    divergence there is a claim the tool cannot keep, because the second agent
+    to edit a file has read the first one's work — at second hand, in the same
+    repository, on the same disk, before either has sealed.
+
+    Returns a list of (path, participants) so the refusal can name the manifest
+    the way design/07 §7 asks. Two shapes of declaration count, because they are
+    the same fact stated two ways: a per-participant mapping (this agent works
+    here) and a shared list (these agents work here together).
+    """
+    declared = manifest.get("workspace") or {}
+    if not isinstance(declared, dict):
+        return []
+    owners = {}          # workspace path -> set of participants who named it
+    if "participants" in declared and isinstance(declared["participants"], (list, dict)):
+        entries = declared["participants"]
+    else:
+        entries = {p: declared.get(p) for p in manifest.get("participants", [])}
+    for who, ws in entries.items():
+        if not ws:
+            continue
+        if isinstance(ws, str):
+            owners.setdefault(ws, set()).add(who)
+        elif isinstance(ws, dict):
+            path = ws.get("path")
+            if path and ws.get("writable", True):
+                owners.setdefault(path, set()).add(who)
+    return sorted((path, sorted(members)) for path, members in owners.items()
+                  if len(members) > 1)
+
+
+def assert_barrier_defensible(manifest, to_phase=None):
+    """Refuse a transition into a divergence phase that the manifest falsifies.
+
+    The precondition is a fact about the channel rather than a step in the state
+    machine, so it is checked wherever a divergence phase is about to hold: when
+    the channel is opened, and on every transition *into* one. A manifest can
+    gain a workspace after the channel exists — `aim channel workspace` exists so
+    that it can — and a channel in CROSS_EXAMINE can be carried back to
+    SYNTHESIS, which is why checking only `new-channel` is a check the second
+    command walks past.
+
+    Whether the *current* phase may continue is checked by the caller, and only
+    when the channel has not already been past the floor. `advance` has to decide
+    that for itself: a channel that has physically been through CROSS_EXAMINE
+    cannot claim its positions were committed before exposure no matter what the
+    manifest says, so refusing to let it go home to SYNTHESIS would be a rule
+    about paperwork rather than about exposure. A channel that declared a shared
+    workspace before reaching the floor has no such history, and its current
+    divergence phase is refused on the next transition — whatever that
+    transition is, which is why `advance` checks this for every `to`.
+    """
+    if to_phase not in DIVERGENCE_PHASES:
+        return
+    conflicts = _workspace_conflicts(manifest)
+    if not conflicts:
+        return
+    where = "; ".join(f"'{path}' is named by {', '.join(members)}"
+                      for path, members in conflicts)
+    die(
+        f"REFUSED: channel '{manifest['id']}' declares a shared workspace, so its "
+        f"participants can read each other's work, and a barrier here is a claim "
+        f"the tool cannot keep.\n"
+        f"{where}\n"
+        f"A divergence phase asserts that no participant has seen another's "
+        f"reasoning yet, and that assertion is falsifiable by the filesystem, not "
+        f"by an agent's word: whoever edits that workspace second has read the "
+        f"first one's work before sealing. Amend the manifest (aim channel "
+        f"workspace --channel {manifest['id']} --none) or run this channel without "
+        f"a barrier.",
+        cls="barrier",
+    )
+
+
+def cmd_channel(args):
+    """Dispatcher for channel-level declarations. Reached only if a subcommand
+    forgot to set its own func, which the required subparser above prevents."""
+    die(f"channel: which declaration? (got {getattr(args, 'channel_cmd', None)!r})")
+
+
+def cmd_channel_workspace(args):
+    """Declare, or clear, the workspace a channel's participants share.
+
+    The same care as `aim task publish` takes with a deliberate leak: clearing a
+    declaration does not un-share the directory, so it is recorded in the ledger
+    next to the phases, where a reader who never opens the manifest can see that
+    the barrier's precondition changed under them.
+
+    Deliberately leader-only: a participant clearing the very declaration that
+    falsifies its own barrier is the move this command exists to make visible,
+    and the leader is the one who can see both sides.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    require_leader(who, kind, m, what="change the channel's declaration")
+    if args.none:
+        cleared = m.pop("workspace", None)
+        save_manifest(args.channel, m)
+        with Lock(channel_dir(args.channel) / ".ledger.lock"):
+            append_chained(channel_dir(args.channel) / "ledger.jsonl", {
+                "ts": now_iso(), "event": "workspace_cleared", "agent": who,
+                "action": "channel workspace", "phase": m["barrier"]["phase"],
+                "class": "barrier", "cleared": cleared or {},
+                "reason": "the barrier's precondition changed; this is the record of it",
+            })
+        print(f"{args.channel}: workspace declaration cleared — the phase gate no "
+              f"longer knows whether these participants share a directory, and the "
+              f"ledger now says so")
+        return
+    declared = dict(m.get("workspace") or {})
+    for item in (args.set or []):
+        if "=" not in item:
+            die(f"--set wants <participant>=<path>, got '{item}'")
+        member, _, path = item.partition("=")
+        member, path = member.strip(), path.strip()
+        if member not in m["participants"]:
+            die(f"'{member}' is not a participant in '{args.channel}'")
+        if path:
+            declared[member] = path
+        else:
+            declared.pop(member, None)
+    m["workspace"] = declared
+    conflicts = _workspace_conflicts(m)
+    save_manifest(args.channel, m)
+    if conflicts:
+        print(f"{args.channel}: workspace recorded. This channel can no longer "
+              f"enter or remain in a divergence phase:")
+        for path, members in conflicts:
+            print(f"  {path}  shared by {', '.join(members)}")
+        return
+    print(f"{args.channel}: workspace recorded for {len(declared)} participant(s); "
+          f"no two of them share a writable path, so the barrier claim still holds")
+
+
 def resolve_actor(args, manifest=None):
     """Validate --as and return (agent_id, kind)."""
     who = args.__dict__.get("actor")
@@ -403,13 +550,20 @@ def resolve_actor(args, manifest=None):
     return who, kind
 
 
-def require_leader(who, kind, manifest):
+def require_leader(who, kind, manifest, what="advance the barrier"):
     if kind != "human" or who != manifest["leader"]:
         # `cls="barrier"` because this is a rule *about the barrier*: only the
         # leader moves the phase. It is not a malformed request — the request is
         # well-formed and is refused for who sent it.
+        #
+        # `what` is a parameter because the message used to say "may not advance
+        # the barrier" no matter which verb asked. That was true for `advance`
+        # and false for everything else that now routes through here, and a
+        # refusal that names the wrong action is a refusal a reader cannot
+        # audit: the ledger's `action` field would say `channel workspace` while
+        # the sentence beside it said `advance the barrier`.
         die(
-            f"'{who}' may not advance the barrier. only the human team leader "
+            f"'{who}' may not {what}. only the human team leader "
             f"'{manifest['leader']}' controls phase transitions.\n"
             f"(agents may ask with: aim request-advance ...)",
             cls="barrier",
@@ -538,6 +692,23 @@ def cmd_new_channel(args):
             ],
         },
     }
+    if getattr(args, "workspace", None):
+        declared = {}
+        for item in args.workspace:
+            if "=" not in item:
+                die(f"--workspace wants <participant>=<path>, got '{item}'")
+            member, _, path = item.partition("=")
+            member = member.strip()
+            if member not in parts:
+                die(f"'{member}' is not a participant in '{args.id}'")
+            declared[member] = path.strip()
+        m["workspace"] = declared
+    # Before the channel exists, not after: a channel whose own manifest
+    # falsifies the barrier must not be opened with a phase that claims it.
+    # `to_phase` is spelled out rather than defaulted — a new channel is born in
+    # SEALED_DIVERGENT, and a default here would be the same kind of silent
+    # inference that made the ledger's `class` field wrong.
+    assert_barrier_defensible(m, to_phase="SEALED_DIVERGENT")
     save_manifest(args.id, m)
     (d / "private").mkdir(parents=True, exist_ok=True)
     (d / "seals").mkdir(parents=True, exist_ok=True)
@@ -545,6 +716,8 @@ def cmd_new_channel(args):
     print(f"  topic: {args.topic}")
     print(f"  participants: {', '.join(parts)}")
     print(f"  leader: {args.leader}   synthesizer: {args.synthesizer or '(unset)'}")
+    if m.get("workspace"):
+        print(f"  workspace: " + ", ".join(f"{k}={v}" for k, v in sorted(m["workspace"].items())))
 
 
 def _evidence_list(args):
@@ -603,7 +776,7 @@ def cmd_say(args):
         kind_of = "note"
 
     if kind_of == "ruling":
-        require_leader(who, kind, m)
+        require_leader(who, kind, m, what="publish a ruling")
     elif kind_of == "synthesis":
         # Both of these are the barrier's own rules, not form errors: one is
         # about who may speak for the channel, the other about when. A
@@ -831,6 +1004,14 @@ def cmd_advance(args):
         die(f"unknown phase '{to}'")
     if to not in TRANSITIONS[cur] and not args.force:
         die(f"illegal transition {cur} -> {to} (allowed: {TRANSITIONS[cur]}); --force to override")
+    # Checked against the phase being *entered*, not the one being left: a
+    # channel already past CROSS_EXAMINE may legitimately declare a shared
+    # workspace, and it is the move back into divergence that falsifies it.
+    # `--force` does not override this, deliberately: `--force` exists for "the
+    # state machine says no but I mean it", and no amount of meaning it changes
+    # what is on disk. A forced divergence on a shared workspace is exactly the
+    # claim this refuses.
+    assert_barrier_defensible(m, to_phase=to)
 
     if to == "SYNTHESIS":
         missing = [p for p in m["participants"]
@@ -1853,6 +2034,15 @@ def cmd_status(args):
         print(f"  {p:<16} private={len(priv):<4} public={len(pub):<4} {mark}")
     print(f"history   " + " -> ".join(h["phase"] for h in b["history"]))
     print(f"log       {len(log)} public messages")
+    # The barrier's precondition, stated where the phase is stated. A reader who
+    # sees SEALED_DIVERGENT and nothing else has been told the claim without the
+    # evidence for it; the workspace is the one fact that can falsify it.
+    if m.get("workspace"):
+        conflicts = _workspace_conflicts(m)
+        print(f"workspace " + ", ".join(f"{k}={v}" for k, v in sorted(m["workspace"].items())))
+        if conflicts:
+            print(f"          WARNING: {len(conflicts)} shared writable path(s) — a "
+                  f"divergence phase on this channel is a claim the tool cannot keep")
 
 
 def cmd_card(args):
@@ -2049,6 +2239,20 @@ def main():
     p.add_argument("--participants", required=True, help="comma-separated agent ids")
     p.add_argument("--leader", default="human")
     p.add_argument("--synthesizer", default="")
+    p.add_argument("--workspace", action="append", metavar="AGENT=PATH",
+                   help="a directory this participant writes to; two participants "
+                        "naming the same one makes the barrier indefensible (T-0110)")
+
+    p = add("channel", cmd_channel, help="channel-level declarations that outlive a phase")
+    csub = p.add_subparsers(dest="channel_cmd", required=True)
+    q = csub.add_parser("workspace", help="declare or clear the workspace participants share")
+    q.set_defaults(func=cmd_channel_workspace)
+    q.add_argument("--as", dest="actor", required=True)
+    q.add_argument("--channel", required=True)
+    q.add_argument("--set", action="append", metavar="AGENT=PATH",
+                   help="repeatable; PATH empty clears that participant")
+    q.add_argument("--none", action="store_true",
+                   help="clear the whole declaration (recorded in the ledger)")
 
     p = add("say", cmd_say)
     p.add_argument("--as", dest="actor", required=True)
@@ -2215,6 +2419,8 @@ def main():
     action = args.cmd
     if args.cmd == "task":
         action = f"task {getattr(args, 'task_cmd', '?')}"
+    elif args.cmd == "channel":
+        action = f"channel {getattr(args, 'channel_cmd', '?')}"
     note_context(channel=getattr(args, "channel", None), action=action)
     try:
         args.func(args)

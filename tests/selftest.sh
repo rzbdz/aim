@@ -598,6 +598,71 @@ sys.exit(0 if len(recs)>=3 and recs[2].get('prev')==recs[1].get('hash')
 expect_ok   "no stderr warning is needed, because nothing was dropped" \
   bash -c "! env AIM_ROOT='$LC' $AIM task new --as outsider --channel uc --title x 2>&1 | grep -q 'not recorded'"
 
+echo "== a channel that declares a shared workspace may not claim a barrier =="
+# T-0110, and it is the honest version of a confession. `hello` is
+# SEALED_DIVERGENT while both participants have been reading each other's files
+# for an hour: one of them runs this repo's test suite, the other edits the same
+# files, and the fabric notices nothing. From the ledger that channel is
+# indistinguishable from a barrier that is holding. An agent reading `bin/aim` is
+# sealed from nothing, so a participant cannot be trusted to report its own
+# independence — but the manifest can name the shared directory, and then the
+# phase gate's precondition is falsified by a fact on disk rather than by a
+# promise. That is checkable, which is the whole difference.
+WORK="$AIM_ROOT/shared-checkout"
+expect_ok   "a channel whose participants name distinct workspaces opens" \
+  $AIM new-channel --id dev --topic "shared workspace" --participants alpha,beta --leader human \
+    --workspace alpha=/srv/alpha --workspace beta=/srv/beta
+expect_fail "a channel that declares one shared workspace cannot open at all" \
+  $AIM new-channel --id dev2 --topic "shared" --participants alpha,beta --leader human \
+    --workspace alpha="$WORK" --workspace beta="$WORK"
+expect_ok   "and the refusal names the manifest, not an agent's word" \
+  bash -c "$AIM new-channel --id dev2 --topic shared --participants alpha,beta --leader human \
+             --workspace alpha='$WORK' --workspace beta='$WORK' 2>&1 | grep -q \"channel 'dev2' declares a shared workspace\""
+# The declaration can arrive after the channel exists, which is why the check
+# cannot live only in `new-channel`: the second command would walk past it.
+expect_ok   "the declaration can be added to a channel that already exists" \
+  $AIM channel workspace --as human --channel dev --set alpha="$WORK" --set beta="$WORK"
+expect_fail "and the divergence phase is then refused on advance" \
+  $AIM advance --as human --channel dev --to COMMIT
+expect_ok   "the refusal says which directory, and who shares it" \
+  bash -c "$AIM advance --as human --channel dev --to COMMIT 2>&1 | grep -q 'named by alpha, beta'"
+expect_ok   "the shared-workspace refusal is recorded as a barrier event" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$AIM_ROOT/channels/dev/ledger.jsonl')]
+r=[e for e in rs if e.get('event')=='refusal' and e.get('action')=='advance']
+sys.exit(0 if r and r[-1]['class']=='barrier' and 'shared workspace' in r[-1]['reason'] else 1)\""
+expect_fail "a participant cannot clear the declaration that falsifies its own barrier" \
+  $AIM channel workspace --as alpha --channel dev --none
+expect_ok   "the leader can, and the clearing is on the record" \
+  bash -c "$AIM channel workspace --as human --channel dev --none &&
+           python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$AIM_ROOT/channels/dev/ledger.jsonl')]
+c=[e for e in rs if e.get('event')=='workspace_cleared']
+sys.exit(0 if c and c[-1]['agent']=='human' and c[-1]['class']=='barrier'
+         and c[-1]['cleared']=={'alpha':'$WORK','beta':'$WORK'} else 1)\""
+expect_ok   "the phase gate opens again once the claim matches the filesystem" \
+  $AIM advance --as human --channel dev --to COMMIT
+# One participant naming a directory is a declaration, not a conflict: only a
+# path two of them write to falsifies the barrier. The channel is in COMMIT by
+# now, so the way to ask is a transition back into divergence — which is also
+# the case that would be missed by checking only `new-channel`.
+expect_ok   "a workspace named by one participant is not a conflict" \
+  bash -c "$AIM channel workspace --as human --channel dev --set alpha='$WORK' 2>&1 | grep -q 'no two of them share'"
+# Both halves of this row are the assertion, so neither may be the one that
+# decides the exit status. [measured: the first version was `advance …; status |
+# grep -q …`, whose rc is grep's — a red advance would have left the row green]
+expect_fail "a divergence phase is only reachable through a legal transition" \
+  $AIM advance --as human --channel dev --to SEALED_DIVERGENT
+expect_ok   "and the forced transition back into divergence is allowed here" \
+  $AIM advance --as human --channel dev --to SYNTHESIS --force
+expect_ok   "status reports the declaration beside the phase it constrains" \
+  bash -c "$AIM status --channel dev | grep -q \"^workspace alpha=$WORK\""
+expect_fail "a shared path declared after the fact still refuses the next transition" \
+  bash -c "$AIM channel workspace --as human --channel dev --set beta='$WORK' >/dev/null &&
+           $AIM advance --as human --channel dev --to COMMIT --force"
+
 echo "== a verifier cannot die on the input it exists to judge =="
 # Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
 # whose entire job is to describe damage raised KeyError on a seal that had no
