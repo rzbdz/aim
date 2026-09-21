@@ -43,9 +43,27 @@
     },
     {
       "id": "M6",
-      "name": "A2A alignment",
+      "name": "A2A binding (the core, re-based)",
       "due": "2026-09-27",
-      "accept": "an A2A conformance test exists and fails before it passes: eleven operations, nine error codes, the data model's encodings; aim declares a binding in an AgentCard; and the one rule A2A contradicts (withheld counts) is resolved per surface, with a test"
+      "accept": "a conformance test for eleven operations and nine error codes; an AgentCard per agent; D17 resolved per surface with a test; the tag we pin recorded"
+    },
+    {
+      "id": "M7",
+      "name": "MCP server and the tool surface",
+      "due": "2026-09-29",
+      "accept": "every bin/aim verb is reachable as an MCP tool; each tool runs the CLI rather than reimplementing the write discipline; a refusal comes back as the CLI's own text with its exit code"
+    },
+    {
+      "id": "M8",
+      "name": "Skills, packaged",
+      "due": "2026-09-30",
+      "accept": "one installable skill, the same file for both harnesses, versioned with the fabric, whose first instruction is how this project is managed with the tool it documents"
+    },
+    {
+      "id": "M9",
+      "name": "Dashboard as product",
+      "due": "2026-10-02",
+      "accept": "the Vue front-end serves kanban, gantt and chat on real components; the server-rendered HTML is kept only as an export; exactly one write path exists and it runs bin/aim"
     }
   ],
   "tasks": [
@@ -145,7 +163,7 @@
       "id": "T-0011",
       "title": "Fold: board state is derived from events; no board file is ever written",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "blocked",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -158,13 +176,14 @@
       "tags": [
         "store"
       ],
-      "accept": "no file on disk holds a mutable board; replay of the log reproduces the board"
+      "accept": "no file on disk holds a mutable board; replay of the log reproduces the board",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0012",
       "title": "Verbs: task new / move / assign / link / comment",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "blocked",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -177,13 +196,14 @@
       "tags": [
         "cli"
       ],
-      "accept": "each verb appends exactly one event and is idempotent-safe under retry"
+      "accept": "each verb appends exactly one event and is idempotent-safe under retry",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0013",
       "title": "Status state machine: done needs no open blocker, blocked/dropped need a reason",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "blocked",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -196,13 +216,14 @@
       "tags": [
         "cli"
       ],
-      "accept": "move to done with an open blocked_by is refused"
+      "accept": "move to done with an open blocked_by is refused",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0014",
       "title": "Barrier gate on tasks: draft by default, publish is deliberate and recorded",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "blocked",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -215,13 +236,14 @@
       "tags": [
         "barrier"
       ],
-      "accept": "reading a peer draft during SEALED_DIVERGENT is refused and the refusal is in the ledger"
+      "accept": "reading a peer draft during SEALED_DIVERGENT is refused and the refusal is in the ledger",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0015",
       "title": "Selftest: task-gate refusals, 87 -> 110 assertions",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "blocked",
       "priority": "normal",
       "estimate": 3,
       "start": "2026-09-23",
@@ -234,7 +256,8 @@
       "tags": [
         "test"
       ],
-      "accept": "bash tests/selftest.sh is green and each new REFUSED is a real refusal"
+      "accept": "bash tests/selftest.sh is green and each new REFUSED is a real refusal",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0018",
@@ -628,7 +651,7 @@
       "id": "T-0041",
       "title": "Adversarial review of the dashboard by the developer it was split from",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "blocked",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-24",
@@ -642,7 +665,8 @@
         "review",
         "dashboard"
       ],
-      "accept": "one attack on the renderer that the author did not consider"
+      "accept": "one attack on the renderer that the author did not consider",
+      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
     },
     {
       "id": "T-0042",
@@ -1244,6 +1268,98 @@
       ],
       "accept": "a manifest may declare workspace; if two participants share a writable one, a divergence phase on that channel is REFUSED with a reason naming the manifest, and the refusal is recorded in the ledger; a test opens a divergence phase on such a channel and expects the refusal",
       "move_reason": "from the peer's message of 2026-09-21T08:17Z: hello is SEALED_DIVERGENT while both participants have been reading each other's files for an hour, and the fabric noticed nothing. The outcome asked for (write the honest name down) is right; a manifest-declared workspace makes it the tool's job rather than a confession"
+    },
+    {
+      "id": "T-0120",
+      "title": "An MCP server that is a wrapper, not a second writer",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-26",
+      "blocked_by": [],
+      "milestone": "M7",
+      "visibility": "published",
+      "tags": [
+        "mcp",
+        "tools"
+      ],
+      "accept": "an MCP tool call runs bin/aim and returns its stdout, exit code and refusal text unchanged; a test proves a write through MCP lands in the ledger exactly once",
+      "why_not_direct": "an MCP server writing tasks.jsonl itself is the second implementation of the write discipline that produced the lost update and the duplicate ids"
+    },
+    {
+      "id": "T-0121",
+      "title": "One MCP tool per verb, derived from aim's own --help rather than hand-listed",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-26",
+      "blocked_by": [],
+      "milestone": "M7",
+      "visibility": "published",
+      "tags": [
+        "mcp",
+        "tools",
+        "interface"
+      ],
+      "accept": "the tool list is generated from the CLI, so a new verb cannot be missing from MCP without a test failing"
+    },
+    {
+      "id": "T-0130",
+      "title": "The instruction as a package: one skill, both harnesses, versioned with the fabric",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-26",
+      "blocked_by": [],
+      "milestone": "M8",
+      "visibility": "published",
+      "tags": [
+        "skills",
+        "docs"
+      ],
+      "accept": "a skill installs aim on PATH, carries the AGENTS.md rules (seal before read, do not route around a refusal), names the version of aim it describes, and is the same file for Claude Code and Codex"
+    },
+    {
+      "id": "T-0140",
+      "title": "The Vue front-end becomes the dashboard; the server-rendered HTML becomes an export",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-22",
+      "due": "2026-10-02",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "web"
+      ],
+      "accept": "kanban, gantt (ECharts with dataZoom) and chat are on real components; the gate is applied server-side in the JSON API and a test asserts absence on that path too; the old renderer is reachable only as an export"
+    },
+    {
+      "id": "T-0141",
+      "title": "Exactly one write path from the browser, and it runs bin/aim",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-10-02",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "write-discipline"
+      ],
+      "accept": "POST /api/command runs an allowlisted aim subcommand with no shell, is off by default behind --allow-write and bound to 127.0.0.1, and a refusal comes back as a refusal together with the ledger entry it produced"
     }
   ]
 }
