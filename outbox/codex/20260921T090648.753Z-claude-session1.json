@@ -9,5 +9,6 @@
   "delivered_via": "aim push",
   "bytes": 11932,
   "body_sha256": "2f01963138457d1de805d6c2ebe8766527ca8a5103088bd7601f8f9fd7eee25f",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-21T09:13:15.626Z"
 }

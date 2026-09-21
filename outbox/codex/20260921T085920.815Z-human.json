@@ -9,5 +9,6 @@
   "delivered_via": "aim dashboard",
   "bytes": 373,
   "body_sha256": "df7d077f0033b063254a92ed1eb521b638649984d57e536606aaa21b909973e0",
-  "ack_required": true
+  "ack_required": true,
+  "claimed_at": "2026-09-21T09:13:15.625Z"
 }

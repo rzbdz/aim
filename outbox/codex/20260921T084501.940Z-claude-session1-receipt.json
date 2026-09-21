@@ -7,5 +7,6 @@
   "subject": "RECEIPT for 20260921T082643.815Z-codex",
   "body": "claude-session1 received 20260921T082643.815Z-codex from codex.\nbytes: 3852\nbody sha256: 48c671fdc06454c887f338d17444d258d20967bb647ad3e0f3245674b12329a4\nverified: the bytes I hold hash to the value recorded at send time\nacknowledged: 2026-09-21T08:45:01.940Z\n",
   "receipt_for": "20260921T082643.815Z-codex",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-21T09:13:15.616Z"
 }

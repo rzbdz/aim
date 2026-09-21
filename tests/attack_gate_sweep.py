@@ -12,17 +12,22 @@ this file asks structurally instead of anecdotally: for every verb that can carr
 text, put a known string in it during SEALED_DIVERGENT and make every move a peer
 is entitled to make, now and after the phase opens.
 
-Two mistakes this file was written to stop making, both of which cost codex a
-signal once already:
+Three mistakes this file was written to stop making, each of which either cost
+codex a signal or hid this file's own result:
 
-  * a probe must run against a fabric that exists. The first version of this file
-    built nothing, so every verb failed with "unknown channel", `gate()` was
-    never reached, and the refusal it reported on was a refusal to open a
-    nonexistent file. That is a pass for the wrong reason, and the fix is
-    `fabric()` below.
+  * a probe must run against a fabric that exists. The first version built
+    nothing, so every verb failed with "unknown channel", `gate()` was never
+    reached, and the refusal it reported on was a refusal to open a nonexistent
+    file. That is a pass for the wrong reason, and the fix is `fabric()` below.
   * "the peer cannot read it" must be asked as the peer, on every surface the
     peer has. `inbox --as a1` proves nothing about a2 — twice already a probe in
     this repo was green because it looked at the wrong viewer.
+  * `open_the_barrier` must refuse to return a phase it did not reach. It first
+    advanced into SYNTHESIS with no synthesizer; that refusal is silent to a
+    caller, the phase sat at COMMIT, and every `later` column read False — so the
+    one hole the column exists to catch was invisible in its own output. It now
+    asserts the phase it achieved. An instrument that cannot fail its own reading
+    is not an instrument.
 
 It is a *measure*, not a test with a verdict, because for some verbs the answer
 is legitimately yes (`seal` publishes a digest the whole design rests on; `task
@@ -82,14 +87,27 @@ def peer_reads(root):
 def open_the_barrier(root):
     """Both seal, the leader walks the channel to CROSS_EXAMINE. The peer may
     then read everything the channel was ever holding. A verb that hides its text
-    only until this moment has not hidden it; it has delayed it."""
+    only until this moment has not hidden it; it has delayed it.
+
+    This function refuses to return a phase it did not reach. The first version
+    advanced into SYNTHESIS with no synthesizer, that refusal is silent to a
+    caller, and the phase sat at COMMIT — so every `later` column in the run was
+    False and the one hole the column exists to catch was invisible. An
+    instrument that cannot fail its own reading is not an instrument."""
     cl = root / "claims.json"
     cl.write_text(json.dumps(CLAIMS))
     for a in ("a1", "a2"):
-        run(root, "seal", "--as", a, "--channel", "c", "--summary", f"s-{a}",
-            "--claims", str(cl))
-    for to in ("COMMIT", "SYNTHESIS", "CROSS_EXAMINE"):
-        run(root, "advance", "--as", "human", "--channel", "c", "--to", to)
+        assert run(root, "seal", "--as", a, "--channel", "c", "--summary", f"s-{a}",
+                   "--claims", str(cl)).returncode == 0, f"seal {a} failed"
+    assert run(root, "register", "--as", "syn", "--kind", "other").returncode == 0
+    steps = [("COMMIT", []), ("SYNTHESIS", ["--synthesizer", "syn"]),
+             ("CROSS_EXAMINE", [])]
+    for to, extra in steps:
+        r = run(root, "advance", "--as", "human", "--channel", "c", "--to", to, *extra)
+        assert r.returncode == 0, f"advance -> {to} failed: {r.stderr.strip()[:120]}"
+    phase = json.loads((root / "channels" / "c" / "manifest.json").read_text())
+    phase = phase["barrier"]["phase"]
+    assert phase == "CROSS_EXAMINE", f"barrier did not open, phase is {phase}"
     return run(root, "inbox", "--as", "a2", "--channel", "c").stdout
 
 
@@ -100,6 +118,8 @@ def lines(p):
 def probe(name, argv, registered=("human", "a1", "a2")):
     root = fabric(registered)
     ch = root / "channels" / "c"
+    (root / "claims.json").write_text(json.dumps(CLAIMS))
+    argv = [str(root / "claims.json") if a == "@claims" else a for a in argv]
     before = (lines(ch / "ledger.jsonl"), lines(ch / "tasks.jsonl"))
     r = run(root, *argv)
     now = peer_reads(root)
@@ -131,7 +151,7 @@ def main():
         probe("reveal --body", ["reveal", "--as", "a1", "--channel", "c",
                                 "--claim-id", "c1", "--body", SECRET]),
         probe("seal --summary", ["seal", "--as", "a1", "--channel", "c",
-                                 "--summary", SECRET, "--claims", "/dev/null"]),
+                                 "--summary", SECRET, "--claims", "@claims"]),
         probe("nudge", ["nudge", "--channel", "c", "--peer", "a2"]),
         # register takes an id, not free text; the secret goes in --session, which
         # is metadata an agent picks. It is in the sweep because "which fields carry

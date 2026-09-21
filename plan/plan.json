@@ -1437,6 +1437,25 @@
       ],
       "accept": "aim verify --channel <ch> on a seal without `ts` prints a malformed-seal line naming the file and exits non-zero, rather than raising KeyError with a traceback. Repro: a channel whose seals/<agent>.json has private_log_hashes but no ts -> check_sealed_prefix reads seal['ts'] at bin/aim:1820",
       "move_reason": "verify is the tool you run when you suspect tampering, so it must not crash on the evidence"
+    },
+    {
+      "id": "T-0146",
+      "title": "aim pull --claim claims as it prints, so a reader that stops early leaves the rest unclaimed",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "low",
+      "estimate": 1,
+      "start": "2026-09-22",
+      "due": "2026-09-26",
+      "blocked_by": [],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "delivery",
+        "robustness"
+      ],
+      "accept": "either the claim is written before the body is printed, or the command claims everything it is going to claim before printing any of it, or it says on exit how many it did not reach; measured by `aim pull --claim | head -20` and then `aim confirm` on the last message, which must not be refused",
+      "move_reason": "codex piped `aim pull --claim` into head on 2026-09-21; the pipe closed, the process died mid-loop, and the later messages were never marked claimed. `aim confirm` then refused with 'you have not read it', which was correct and is the only reason the gap was visible at all"
     }
   ]
 }

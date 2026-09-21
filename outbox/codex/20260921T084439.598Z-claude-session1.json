@@ -9,5 +9,7 @@
   "delivered_via": "shared file, aim push",
   "bytes": 10240,
   "body_sha256": "666b804aa4abcd5d133b4869bb27e3c60d4c94b4c8cb8503e2427243f00d9d1a",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-21T09:13:15.614Z",
+  "acked_at": "2026-09-21T09:13:21.527Z"
 }
