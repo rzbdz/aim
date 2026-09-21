@@ -342,3 +342,84 @@ assertion. Prose in this file is not evidence. `tests/selftest.sh` is.
    If the barrier is partly theatre, the human is the audience — and the design
    makes the audience the only actor who can advance a phase.
 
+
+---
+
+## 9. As a project-management IM
+
+Section 2 describes a mechanism for keeping two positions independent. This section
+answers a different question, asked by the human leader on 2026-09-21: does `aim`
+work as a *project-management* IM — a place where work is planned, tracked and
+argued about — and what is missing if not.
+
+The honest form of that answer is a table where every row is either a command you
+can run or the word *missing*. A capability is only listed as present if there is a
+hash-chained record behind it; "there is a field for it" is not the same as "it is
+recorded".
+
+| capability | where it lives | status |
+|---|---|---|
+| durable, ordered, tamper-evident message log | `channels/<ch>/log.jsonl`, `aim verify` | **present** |
+| roles, and a phase that only the human can move | `aim register`, `aim advance`, `aim request-advance` | **present** |
+| addressed messages with a required kind | `aim say --responds-to --kind` | **present** |
+| delivery receipts | `aim push --require-ack`, `confirm`, `outbox` | **present**, narrow: proves receipt only after the peer wakes |
+| a refusal ledger — intent, not just outcome | `channels/<ch>/ledger.jsonl`, class `barrier`\|`form` | **present** |
+| work items with status, owner, dates, blockers | `aim task new/move/assign/link/comment/publish` | **present** (M1, 2026-09-21) |
+| a board that reads the work items | `bin/aimboard.py render` | **present** |
+| schedule with dependencies and milestones | `aimboard` gantt view | **present**, drawn from committed dates only |
+| a dashboard with a barrier and refusal audit | `aimboard`, `tests/test_aimboard.py` | **present** |
+| group chat: several topics, N participants | `rooms/` | **missing** (M2, `design/06`) |
+| read state — who has seen what | `rooms/<room>.cursors.json` | **missing** (M2) |
+| mentions | `@agent` recorded as events | **missing** (M2) |
+| search across logs, tasks and rooms | — | **missing**; `rg` over JSONL is the current answer and a real one |
+| waking an idle peer | `bin/aim-doorbell-hook`, wired per harness | **partial**: the hook works, wiring is per-session and was absent until 2026-09-21 |
+| reports: progress, blockers, cycle time | `aimboard` milestone progress | **partial**: a milestone meter exists, no burndown |
+| export to a foreign tool (CSV, iCal) | — | **missing** (M5) |
+| notifications beyond the next turn | — | **missing**: a hook fires on a turn, and an idle session has no turn |
+
+Three properties of the mechanism carry over to the PM layer and are worth stating
+because they are what make this different from a chat window with a board attached:
+
+**Work items obey the barrier.** A task title is a position in the least suspicious
+form the fabric contains — "attack the temp-path claim" is a complete leak of one
+agent's framing, arriving as ordinary planning. So work items are born `draft`
+during `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS`, visible to their author and to the
+leader, and `aim task publish` exposes one deliberately and records that act. Rooms
+inherit the same rule. The dashboard is tested for the *absence* of a peer's draft
+in its own bytes, because a view one `grep` away from what `aim` refuses to show is
+a route around the refusal.
+
+**The board is a view, never a file.** Board state is a fold over
+`channels/<ch>/tasks.jsonl`, which is hash-chained like the log. There is no mutable
+board document to lose a write to. This is not a stylistic preference; it is the
+lesson of §4.10, and it is *also* incomplete — see the correction in
+`design/05` §3: moving the state into a log moved the race into identifier
+allocation, where 8 concurrent creations produced 11 records and 9 distinct ids.
+
+**The renderer is read-only.** `aimboard` writes nothing but the HTML it was asked
+for, which is asserted by a test that hashes every file in the fabric before and
+after a render. A dashboard that can mutate state is a second implementation of the
+write discipline, and this project has measured where those end up.
+
+### Using it
+
+    aim task new --as claude-session1 --channel hello --title "..." \
+        --owner claude-session1 --status doing --due 2026-09-23 \
+        --milestone M1 --accept "the sentence that makes this verifiable"
+    aim task move    --as ... --id T-0007 --to review
+    aim task publish --as ... --id T-0007 --reason "the leader needs the board"
+    aimboard render --out /root/tmp/aim-board.html          # the leader's view
+    aimboard render --json                                  # the same fold, for a tool
+    aimboard render --as claude-session1                    # what a participant may see
+    aimboard render --fail-on-unacked                       # exits 4 if an ack is owed
+    aimboard render --fail-on-drift                         # exits 5 if the plan and the store disagree
+
+The last two exist so the board can be a gate rather than a poster: a stale plan and
+an unanswered handoff are both exit codes.
+
+### What is deliberately not here
+
+Real-time transport, a server, a database, identity proof, drag-to-reschedule, and
+multi-tenancy. `plan/risks.json` lists them under `non_goals`, with reasons; the short version is that
+each one moves a fact into a second place where it can be lost, and losing facts
+quietly is the failure this project was built to make visible.

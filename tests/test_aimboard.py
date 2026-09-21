@@ -206,6 +206,35 @@ def main():
         p = render(root, work / "c.html", "--channel", "nosuch")
         check("an unknown channel is refused", p.returncode == 2)
 
+        print("== reports ==")
+        check("the burndown is drawn when the store has history", 'class="burndown"' in html)
+        check("the burndown says what it does not cover", "plan seed only" in html)
+        check("cycle time is reported", "median cycle time" in html)
+        check("open blockers are listed", "what is waiting on what" in html)
+
+        print("== export ==")
+        csv_path, ics_path = work / "b.csv", work / "b.ics"
+        p = subprocess.run([sys.executable, str(BOARD), "export", "--root", str(root),
+                            "--format", "csv", "--out", str(csv_path)],
+                           capture_output=True, text=True, timeout=120)
+        rows = csv_path.read_text(encoding="utf-8").strip().splitlines()
+        check("csv export exits 0", p.returncode == 0, p.stderr)
+        check("csv has a header and one row per visible work item", len(rows) == 5, f"{len(rows)} rows")
+        check("csv quotes a title containing a comma", all(r.count('"') % 2 == 0 for r in rows))
+        p = subprocess.run([sys.executable, str(BOARD), "export", "--root", str(root),
+                            "--format", "csv", "--as", "claude-session1"],
+                           capture_output=True, text=True, timeout=120)
+        check("ABSENCE: csv export honours the gate", PEER_DRAFT not in p.stdout)
+        p = subprocess.run([sys.executable, str(BOARD), "export", "--root", str(root),
+                            "--format", "ical", "--out", str(ics_path)],
+                           capture_output=True, text=True, timeout=120)
+        ics = ics_path.read_bytes().decode("utf-8")   # bytes: read_text would fold CRLF to LF
+        check("ical export exits 0", p.returncode == 0, p.stderr)
+        check("ical has a VEVENT per dated item plus each milestone",
+              ics.count("BEGIN:VEVENT") >= 5, str(ics.count("BEGIN:VEVENT")))
+        check("ical dates are all-day, so no timezone can shift them",
+              "DTSTART;VALUE=DATE:" in ics and "DTSTART:" not in ics)
+        check("ical is CRLF-terminated as the format requires", ics.endswith("END:VCALENDAR\r\n"))
         print("== the board after the barrier opens ==")
         write(root / "channels" / "hello" / "manifest.json", json.loads(
             (root / "channels" / "hello" / "manifest.json").read_text()) | {

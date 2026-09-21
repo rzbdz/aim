@@ -854,9 +854,9 @@
     },
     {
       "id": "T-0082",
-      "title": "move --to done must refuse while a blocker is open",
+      "title": "RETRACTED: the done-with-open-blocker rule is implemented and works",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "dropped",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-21",
@@ -868,7 +868,8 @@
         "defect"
       ],
       "accept": "T-0003 blocked_by an open T-0002 cannot reach done, and the refusal is recorded",
-      "move_reason": "measured: review -> done succeeded with the blocker still in backlog (design/05 section 5, plan T-0013)"
+      "move_reason": "measured: review -> done succeeded with the blocker still in backlog (design/05 section 5, plan T-0013)",
+      "drop_reason": "misdiagnosed by the reviewer. The rule refuses correctly: 'REFUSED: T-0002 is blocked by T-0001, which are not done.' The real defect is that --blocked-by on `task new` is silently dropped, so there was no dependency to enforce. See T-0088."
     },
     {
       "id": "T-0083",
@@ -957,6 +958,47 @@
         "friction"
       ],
       "accept": "a syntax error in bin/aim is reported by something other than the next agent's command failing"
+    },
+    {
+      "id": "T-0088",
+      "title": "--blocked-by on task new is silently dropped: record it or refuse",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "defect",
+        "silent"
+      ],
+      "accept": "the created record carries blocked_by, or the flag is rejected and the refusal is in the ledger",
+      "move_reason": "measured: aim task new --blocked-by T-0001 returns rc=0 and writes no dependency, while aim task link writes it correctly"
+    },
+    {
+      "id": "T-0089",
+      "title": "Make tests/test_pm_contract.py green: it executes design/05 section 5",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0080",
+        "T-0081",
+        "T-0088"
+      ],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "test",
+        "contract"
+      ],
+      "accept": "python3 tests/test_pm_contract.py exits 0, and every refusal it asserts is also in the ledger"
     }
   ]
 }

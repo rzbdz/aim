@@ -45,12 +45,12 @@ LABELS = {
     "en": {
         "overview": "Overview", "kanban": "Board", "gantt": "Timeline",
         "table": "Work items", "chat": "Chat", "barrier": "Barrier & audit",
-        "plan": "Plan & risk",
+        "reports": "Reports", "plan": "Plan & risk",
     },
     "zh": {
         "overview": "总览", "kanban": "看板", "gantt": "甘特图",
         "table": "工作项", "chat": "群聊", "barrier": "屏障与审计",
-        "plan": "计划与风险",
+        "reports": "报表", "plan": "计划与风险",
     },
 }
 
@@ -82,6 +82,17 @@ def esc(value):
         .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         .replace('"', "&quot;").replace("'", "&#39;")
     )
+
+
+def as_list(value):
+    """A dependency is a list in the seed and a string in the store's `linked`
+    event. `set("T-0001")` is a set of characters, which is how a renderer turns
+    one dependency into six and never notices."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
 
 
 def read_json(path, default=None):
@@ -188,8 +199,8 @@ def fold_tasks(events):
                 if field in ev:
                     item[field] = ev[field]
             item["status"] = item.get("status") or "backlog"
-            item["blocked_by"] = list(item.get("blocked_by") or [])
-            item["tags"] = list(item.get("tags") or [])
+            item["blocked_by"] = as_list(item.get("blocked_by"))
+            item["tags"] = as_list(item.get("tags"))
             item["created_at"] = ev.get("ts", "")
             items[tid] = item
         elif tid in items:
@@ -206,8 +217,7 @@ def fold_tasks(events):
         elif kind == "assigned":
             item["owner"] = ev.get("owner", item.get("owner"))
         elif kind == "linked":
-            blocked = ev.get("blocked_by") or []
-            item["blocked_by"] = sorted(set(item["blocked_by"]) | set(blocked))
+            item["blocked_by"] = sorted(set(item["blocked_by"]) | set(as_list(ev.get("blocked_by"))))
         elif kind == "published":
             item["visibility"] = "published"
         elif kind == "dropped":
@@ -834,6 +844,10 @@ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:6px}
 details p{margin:6px 0 0;color:var(--dim);font-size:12.5px}
 .reason{margin:8px 0 0;color:#fca5a5;font-size:12.5px}
 .empty{color:var(--dim);font-size:12.5px;font-style:italic}
+.burndown{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.burndown .line{fill:none;stroke:#38bdf8;stroke-width:2}
+.burndown .thr{fill:#34d399;opacity:.55}
+.burndown .axis{font:10px ui-monospace,monospace;fill:var(--dim)}
 """
 
 JS = """
@@ -873,6 +887,7 @@ def render_html(state, viewer, risks, generated_at, lang="en"):
         ("gantt", labels["gantt"], render_gantt(state["milestones"], tasks, as_of)),
         ("table", labels["table"], render_table(tasks, as_of)),
         ("chat", labels["chat"], render_chat(channels, viewer) + "<h3>transport</h3>" + render_transport(state)),
+        ("reports", labels["reports"], render_reports(tasks, state["milestones"], as_of, labels)),
         ("barrier", labels["barrier"], render_barrier(state, viewer, labels)),
         ("plan", labels["plan"], render_plan(state, risks, labels)),
     ]
@@ -991,6 +1006,34 @@ def cmd_render(args):
     return code
 
 
+def cmd_export(args):
+    root = Path(args.root)
+    as_of = parse_day(args.as_of) or datetime.now(timezone.utc).date()
+    generated_at = args.generated_at or now_iso()
+    state = load_fabric(root, args.plan or ["plan/*.json"], as_of)
+    if not state["channels"]:
+        print(f"aimboard: no channels under {root}", file=sys.stderr)
+        return 2
+    viewer = args.viewer or state["channels"][0]["leader"] or "human"
+    if viewer not in state["registry"]:
+        print(f"aimboard: unknown viewer '{viewer}'", file=sys.stderr)
+        return 2
+    tasks, hidden = visible_tasks(state, viewer, gate_channel(state, viewer, {}))
+    if args.format == "csv":
+        out = export_csv(tasks)
+    elif args.format == "ical":
+        out = export_ical(tasks, state["milestones"], generated_at)
+    else:
+        out = json.dumps(json_payload(state, viewer, {}, generated_at), indent=2,
+                         ensure_ascii=False, sort_keys=True)
+    if args.out:
+        Path(args.out).write_text(out, encoding="utf-8")
+        print(f"aimboard: wrote {args.out} ({len(tasks)} item(s), {hidden} withheld, {args.format})")
+    else:
+        sys.stdout.write(out)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="aimboard",
@@ -1012,8 +1055,176 @@ def main(argv=None):
     r.add_argument("--fail-on-unacked", action="store_true", help="exit 4 if a demanded ack is outstanding")
     r.add_argument("--fail-on-drift", action="store_true", help="exit 5 if the plan and the store disagree")
     r.set_defaults(func=cmd_render)
+    e = sub.add_parser("export", help="same fold, for a foreign tool: csv, ical or json")
+    e.add_argument("--root", default=os.environ.get("AIM_ROOT", "/root/tmp/agent-im"))
+    e.add_argument("--format", default="csv", choices=["csv", "ical", "json"])
+    e.add_argument("--out", default=None)
+    e.add_argument("--as", dest="viewer", default=None)
+    e.add_argument("--as-of", default=None)
+    e.add_argument("--generated-at", default=None)
+    e.add_argument("--plan", action="append", default=None)
+    e.set_defaults(func=cmd_export)
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+
+
+# ------------------------------------------------------------------ reports
+def task_history(tasks):
+    """Created-at and done-at per work item, from the events themselves.
+
+    Seed items have no history, and are counted as such rather than dated from
+    today: a burndown drawn from dates that were guessed is worse than no
+    burndown, because it looks like a measurement.
+    """
+    hist = {}
+    for tid, task in tasks.items():
+        created = done = None
+        for ev in task.get("events") or []:
+            kind = str(ev.get("event") or "")
+            kind = kind[5:] if kind.startswith("task.") else kind
+            if kind == "created" and not created:
+                created = ev.get("ts")
+            if kind == "moved" and ev.get("to") == "done" and not done:
+                done = ev.get("ts")
+        hist[tid] = {"created": created, "done": done, "task": task}
+    return hist
+
+
+def day_of(ts):
+    if not ts:
+        return None
+    try:
+        return date.fromisoformat(str(ts)[:10])
+    except ValueError:
+        return None
+
+
+def render_reports(tasks, milestones, as_of, labels):
+    hist = task_history(tasks)
+    dated = {t: h for t, h in hist.items() if h["created"]}
+    done = {t: h for t, h in dated.items() if h["done"]}
+    cycles = []
+    for tid, h in done.items():
+        a, b = day_of(h["created"]), day_of(h["done"])
+        if a and b:
+            cycles.append((b - a).days)
+    cycles.sort()
+    median = cycles[len(cycles) // 2] if cycles else None
+    days = [as_of - timedelta(days=n) for n in range(13, -1, -1)]
+    series = []
+    for d in days:
+        remaining = sum(1 for h in dated.values()
+                        if day_of(h["created"]) <= d and not (h["done"] and day_of(h["done"]) <= d))
+        series.append((d, remaining))
+    throughput = {}
+    for h in done.values():
+        d = day_of(h["done"])
+        throughput[d] = throughput.get(d, 0) + 1
+    blocked = [(tid, h["task"]) for tid, h in hist.items() if h["task"].get("blocked_by")
+               or h["task"].get("status") == "blocked"]
+    open_blockers = "".join(
+        f'<tr><td>{esc(tid)}</td><td>{esc(t.get("title",""))}</td>'
+        f'<td>{esc(", ".join(t.get("blocked_by") or []))}</td>'
+        f'<td>{esc(t.get("status",""))}</td><td>{esc(t.get("owner",""))}</td></tr>'
+        for tid, t in sorted(blocked))
+    if not open_blockers:
+        open_blockers = '<tr><td colspan="5" class="dim">no work item is waiting on another.</td></tr>'
+    chart = ""
+    if dated:
+        w, h, pad = 560, 160, 34
+        hi = max(r for _, r in series) or 1
+        step = (w - pad) / max(1, len(series) - 1)
+        pts = " ".join(f"{pad + i * step:.1f},{h - pad - (r / hi) * (h - 2 * pad):.1f}"
+                       for i, (_, r) in enumerate(series))
+        bars = ""
+        tmax = max(throughput.values()) if throughput else 1
+        for i, d in enumerate(days):
+            n = throughput.get(d, 0)
+            if not n:
+                continue
+            bh = (n / tmax) * 40
+            bars += (f'<rect class="thr" x="{pad + i * step - 4:.1f}" y="{h - pad - bh:.1f}" '
+                     f'width="8" height="{bh:.1f}"><title>{n} done on {d}</title></rect>')
+        labels_axis = "".join(
+            f'<text x="{pad + i * step:.1f}" y="{h - 12}" class="axis">{d.isoformat()[5:]}</text>'
+            for i, (d, _) in enumerate(series) if i % 3 == 0)
+        chart = (f'<svg class="burndown" viewBox="0 0 {w} {h}" width="100%" role="img" '
+                 f'aria-label="remaining work items per day, last 14 days">'
+                 f'<line x1="{pad}" y1="{h - pad}" x2="{w - 6}" y2="{h - pad}" class="grid week"/>'
+                 f'<line x1="{pad}" y1="{pad // 2}" x2="{pad}" y2="{h - pad}" class="grid week"/>'
+                 f'{bars}<polyline class="line" points="{pts}"/>{labels_axis}'
+                 f'<text x="{pad + 4}" y="{pad // 2 - 4}" class="axis">remaining (max {hi})</text>'
+                 f'</svg>')
+    else:
+        chart = ('<p class="empty">no recorded work items yet: the burndown is drawn from task '
+                 'events, and a seed file has none. Nothing here is inferred from today.</p>')
+    cov = (f'{len(done)}/{len(dated)} recorded item(s) have a done transition; '
+           f'{len(tasks) - len(dated)} item(s) are plan seed only and are absent from the chart')
+    return f'''<h4>burndown, last 14 days</h4>
+{chart}
+<p class="note">{esc(cov)}</p>
+<h4>throughput and cycle time</h4>
+<p>{len(done)} item(s) completed · median cycle time {esc(median if median is not None else "-")} day(s) · mean {
+   esc(round(sum(cycles) / len(cycles), 1) if cycles else "-")} day(s)</p>
+<h4>what is waiting on what</h4>
+<table class="items"><tr><th>id</th><th>title</th><th>blocked by</th><th>status</th><th>owner</th></tr>{open_blockers}</table>'''
+
+
+# ------------------------------------------------------------------- export
+def export_csv(tasks):
+    cols = ["id", "status", "owner", "priority", "estimate", "start", "due",
+            "milestone", "blocked_by", "visibility", "tags", "provenance", "title"]
+    lines = [",".join(cols)]
+    for tid, t in sorted(tasks.items()):
+        row = []
+        for c in cols:
+            v = tid if c == "id" else t.get(c, "")
+            if isinstance(v, list):
+                v = " ".join(str(x) for x in v)
+            v = "" if v is None else str(v)
+            row.append('"' + v.replace('"', '""') + '"' if any(ch in v for ch in ',"\n') else v)
+        lines.append(",".join(row))
+    return "\n".join(lines) + "\n"
+
+
+def _ical_date(value):
+    d = parse_day(value)
+    return d.strftime("%Y%m%d") if d else None
+
+
+def export_ical(tasks, milestones, generated_at):
+    """All-day VEVENTs only. No VTIMEZONE, so a date cannot drift by rendering it."""
+    stamp = "".join(ch for ch in generated_at if ch.isdigit())[:15] + "Z"
+    out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//aim//aimboard//EN",
+           "CALSCALE:GREGORIAN", "X-WR-CALNAME:aim board"]
+    for mid, m in sorted(milestones.items()):
+        if not _ical_date(m.get("due")):
+            continue
+        due = parse_day(m["due"])
+        out += ["BEGIN:VEVENT", f"UID:{mid}@aim", f"DTSTAMP:{stamp}",
+                f"DTSTART;VALUE=DATE:{due.strftime('%Y%m%d')}",
+                f"SUMMARY:{mid} {m.get('name','')}".rstrip(),
+                f"DESCRIPTION:{m.get('accept','')}".replace("\n", " "),
+                "END:VEVENT"]
+    for tid, t in sorted(tasks.items()):
+        start_d, due_d = parse_day(t.get("start")), parse_day(t.get("due"))
+        if not (start_d or due_d):
+            continue
+        start_d = start_d or due_d
+        end_d = (due_d or start_d) + timedelta(days=1)   # DTEND is exclusive
+        desc = f"status: {t.get('status','')}; owner: {t.get('owner','')}; " \
+               f"blocked by: {', '.join(t.get('blocked_by') or []) or '-'}; " \
+               f"acceptance: {t.get('accept','')}"
+        out += ["BEGIN:VEVENT", f"UID:{tid}@aim", f"DTSTAMP:{stamp}",
+                f"DTSTART;VALUE=DATE:{start_d.strftime('%Y%m%d')}",
+                f"DTEND;VALUE=DATE:{end_d.strftime('%Y%m%d')}",
+                f"SUMMARY:[{t.get('status','')}] {tid} {t.get('title','')}".rstrip(),
+                f"DESCRIPTION:{desc}".replace("\n", " "),
+                "END:VEVENT"]
+    out.append("END:VCALENDAR")
+    return "\r\n".join(out) + "\r\n"
 
 
 if __name__ == "__main__":
