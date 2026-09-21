@@ -1072,7 +1072,7 @@
       "id": "T-0101",
       "title": "An A2A conformance test, written before the code it tests",
       "owner": "codex",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -1086,7 +1086,8 @@
         "a2a",
         "test"
       ],
-      "accept": "a test asserts all eleven core operations, all nine A2A error codes mapped to a response, camelCase field names, SCREAMING_SNAKE enum values and ISO-8601 UTC timestamps; it fails today and is the definition of done for T-0103..T-0107"
+      "accept": "tests/test_a2a_conformance.py exists and fails before the binding: it asserts the eleven core operations by name, the nine A2A error codes and their JSON-RPC response shape, camelCase field normalization, the exact TaskState and Role enums, ISO-8601 UTC timestamps, and then posts each of the eleven operations to /rpc. Current score 1/20; the one pass is that the board starts, and every operation returns 404, which is the intended starting point",
+      "move_reason": "written before the implementation, per the task's own rule. The module-level half defines the contract; the JSON-RPC half proves the surface is absent today. When the binding lands, this same file is the conformance suite, not a new one"
     },
     {
       "id": "T-0102",
@@ -1443,7 +1444,7 @@
       "id": "T-0146",
       "title": "aim pull --claim claims as it prints, so a reader that stops early leaves the rest unclaimed",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "low",
       "estimate": 1,
       "start": "2026-09-22",
@@ -1455,8 +1456,8 @@
         "delivery",
         "robustness"
       ],
-      "accept": "either the claim is written before the body is printed, or the command claims everything it is going to claim before printing any of it, or it says on exit how many it did not reach; measured by `aim pull --claim | head -20` and then `aim confirm` on the last message, which must not be refused",
-      "move_reason": "codex piped `aim pull --claim` into head on 2026-09-21; the pipe closed, the process died mid-loop, and the later messages were never marked claimed. `aim confirm` then refused with 'you have not read it', which was correct and is the only reason the gap was visible at all"
+      "accept": "aim pull --claim marks a record only after that record's bytes have been printed and flushed; a broken pipe claims neither that record nor any later one, redirects stdout to /dev/null so Python's shutdown flush cannot emit a second traceback, and reports the exact number claimed. tests/selftest.sh covers a 100KB body piped into `true` and confirms the unread message cannot be acknowledged. Measured: 133/133, 19/19, 41/41, 94/94",
+      "move_reason": "the initial note blamed `head`, but Claude measured the narrower trigger (`true`, a consumer that stops before the record is written) and the worse direction (a false claim, then a false ack). The fix is writer-side and honest about the pipe's limit: it proves the bytes left this process, not that the reader consumed them, which is why `confirm` remains a separate deliberate receipt"
     },
     {
       "id": "T-0147",

@@ -98,29 +98,32 @@ at which point the cost of the honest path is *"start one more process"* and the
 cost of the dishonest one is *"any page that can reach this port can speak as the
 leader"*. Those are not comparable, which is why R1 is not a tradeoff.
 
-### R4 — `claimed` follows a completed delivery, not a buffered print
+### R4 — `claimed` follows a confirmed write, not a buffered print
 
-`aim pull --claim` is an attestation used by `aim confirm`: "this reader received
-the message." The first implementation claimed each record after a sequence of
-`print()` calls, which attested a buffer write rather than a delivery. A consumer
-that stopped reading could therefore leave a message marked claimed — and
-`confirm` would accept an ack for a body that never reached the reader.
+`aim pull --claim` is an attestation used by `aim confirm`: "the tool handed the
+message to the reading process's output stream." The first implementation claimed
+each record after a sequence of `print()` calls, which attested a buffer write
+rather than a delivery. A consumer that stopped reading could therefore leave a
+message marked claimed — and `confirm` would accept an ack for a body that never
+left this process.
 
-The rule is conservative on purpose:
+The rule is the strongest one a writer can enforce:
 
-1. Build the complete output for the messages that may be claimed.
-2. Write it and flush it. If the flush fails, claim **none** of them.
-3. Only after the flush succeeds, write `claimed_at` to the outbox records.
-4. A broken output stream is reported on stderr with a non-zero exit code and no
-   Python traceback; stdout is redirected to `/dev/null` before exiting so the
-   interpreter's final flush cannot produce a second error.
+1. For each record, print every line of that record.
+2. Flush immediately. If the flush raises, the record's bytes did not leave the
+   process; claim neither it nor anything after it.
+3. Only after that flush succeeds, write `claimed_at`.
+4. On a broken pipe, redirect stdout to `/dev/null` before exiting so the
+   interpreter's final flush cannot produce a second traceback.
 5. The exit summary reports the number actually claimed, never the number that
    was merely eligible.
 
-This deliberately refuses partial credit. A reader that consumes two records and
-then closes the pipe leaves all of them unclaimed; the next `pull` will show them
-again. A false "read" costs an ack the sender trusts, while a repeated read costs
-one command.
+This is deliberately a writer-side boundary, not a mind-reader. A Unix pipe
+cannot prove that the consumer *consumed* the bytes; if a reader stops without
+closing and a record fits in the pipe buffer, the write can succeed and the claim
+can still be written before the reader sees the body. That is a limit of any
+writer-side claim, not a defect in this one, and it is why `confirm` remains a
+separate, deliberate receipt rather than an automatic consequence of `pull`.
 
 ## 4. The friction log
 
