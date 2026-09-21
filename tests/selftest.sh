@@ -308,6 +308,143 @@ sys.exit(0 if sorted(r)==['r%d'%i for i in range(1,9)] else 1)\""
 expect_ok   "no stray temp files left behind" \
   bash -c "! ls -a '$RACEROOT' | grep -q '\.tmp'"
 
+echo "== the board is channel state: work items obey the phase gate =="
+# A kanban board is a shared, always-on, anyone-can-write surface, and the
+# barrier's whole mechanism is denying access to a shared surface until the
+# positions are formed. So a task title during divergence is a leak in the least
+# suspicious form the fabric contains — an ordinary line of planning — and the
+# gate has to refuse it the same way it refuses a `cat` of a peer's private log.
+#
+# Its own channel, so it cannot perturb the ids the blocks above assert on.
+expect_ok   "open a fifth channel" $AIM new-channel --id t5 --topic "work items and the gate" --participants alpha,beta --leader human
+expect_ok   "alpha creates a work item" \
+  $AIM task new --as alpha --channel t5 --title "alpha's own line of work" --priority high
+expect_ok   "alpha sees its own draft" \
+  bash -c "$AIM task list --as alpha --channel t5 | grep -q \"alpha's own line of work\""
+expect_fail "beta cannot read alpha's draft" \
+  $AIM task list --as beta --channel t5 --json
+expect_ok   "and that refusal says what to do instead" \
+  bash -c "$AIM task list --as beta --channel t5 --json 2>&1 | grep -q 'count-hidden'"
+# Refused AND recorded. The contract is not "the command failed": `aim` can fail
+# for a dozen uninteresting reasons, and the ledger is the only thing that can
+# tell a barrier nobody leaned on from one that stopped somebody.
+expect_ok   "the board read is refused and recorded as a barrier event" \
+  bash -c "python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$AIM_ROOT/channels/t5/ledger.jsonl')]
+r=[e for e in ev if e.get('event')=='refusal' and e.get('agent')=='beta']
+sys.exit(0 if r and r[-1]['class']=='barrier' and r[-1]['action']=='task list' else 1)\""
+# Counts, never titles: the one shape of the read that answers "how much work is
+# there" without exposing a peer's framing.
+expect_ok   "beta may learn how many items it cannot see" \
+  bash -c "$AIM task list --as beta --channel t5 --count-hidden | grep -q '\"withheld\": 1'"
+expect_ok   "and the titles are not in that answer" \
+  bash -c "! $AIM task list --as beta --channel t5 --count-hidden | grep -q \"alpha's own\""
+expect_ok   "the human leader reads everything, it is the audience not a participant" \
+  bash -c "$AIM task list --as human --channel t5 | grep -q \"alpha's own line of work\""
+expect_fail "publishing during divergence by a non-leader is refused" \
+  $AIM task new --as beta --channel t5 --title "leak" --visibility published
+expect_ok   "the quiet publish path is refused and recorded" \
+  bash -c "python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$AIM_ROOT/channels/t5/ledger.jsonl')]
+sys.exit(0 if any(e.get('event')=='refusal' and e.get('agent')=='beta'
+                  and e.get('class')=='barrier' for e in ev) else 1)\""
+# The loud path stays allowed — forbidding it would only move the leak back into
+# the store as a draft — but it must be loud enough for a barrier audit that
+# reads the ledger and never opens the task store (codex's T-0090).
+expect_ok   "but publishing deliberately is allowed" \
+  $AIM task publish --as alpha --channel t5 --id T-0001
+expect_ok   "and it leaves a ledger record the barrier audit sees" \
+  bash -c "python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$AIM_ROOT/channels/t5/ledger.jsonl')]
+r=[e for e in ev if e.get('event')=='task_published_during_divergence']
+sys.exit(0 if r and r[-1]['agent']=='alpha' and r[-1]['phase']=='SEALED_DIVERGENT' else 1)\""
+expect_ok   "now beta can read it, which is what publishing meant" \
+  bash -c "$AIM task list --as beta --channel t5 | grep -q \"alpha's own line of work\""
+
+echo "== the board obeys the same state machine, and 'done' is decided by evidence =="
+expect_ok   "beta creates a second item" \
+  $AIM task new --as beta --channel t5 --title "beta's own line of work"
+expect_ok   "beta links it to alpha's" \
+  $AIM task link --as beta --channel t5 --id T-0002 --blocked-by T-0001
+expect_fail "--blocked-by on a task that does not exist is refused" \
+  $AIM task new --as beta --channel t5 --title "phantom" --blocked-by T-9999
+# The flag was parsed and never read: `task new --blocked-by T-0001` succeeded and
+# recorded nothing, so a board could show an item that nothing was holding up.
+# A dependency that exists only in the command line is worse than a missing one.
+expect_ok   "--blocked-by on 'task new' is recorded, not silently dropped" \
+  $AIM task new --as beta --channel t5 --title "dep at birth" --blocked-by T-0001
+expect_ok   "and the stored record carries it" \
+  bash -c "python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$AIM_ROOT/channels/t5/tasks.jsonl')]
+c=[e for e in ev if e.get('event')=='created' and e.get('title')=='dep at birth']
+sys.exit(0 if c and c[-1].get('blocked_by')==['T-0001'] else 1)\""
+expect_fail "an unregistered owner is refused" \
+  $AIM task assign --as beta --channel t5 --id T-0002 --owner nobody
+expect_fail "moving to blocked without a reason is refused" \
+  $AIM task move --as beta --channel t5 --id T-0002 --to blocked
+expect_ok   "with a reason it is allowed" \
+  $AIM task move --as beta --channel t5 --id T-0002 --to blocked --reason "waiting on the dependency mechanism"
+expect_fail "an illegal transition is refused" \
+  $AIM task move --as beta --channel t5 --id T-0002 --to done
+expect_ok   "beta walks T-0003 to review" bash -c "
+  $AIM task move --as beta --channel t5 --id T-0003 --to ready >/dev/null &&
+  $AIM task move --as beta --channel t5 --id T-0003 --to doing >/dev/null &&
+  $AIM task move --as beta --channel t5 --id T-0003 --to review >/dev/null"
+expect_fail "'done' is refused while a blocker is open" \
+  $AIM task move --as beta --channel t5 --id T-0003 --to done
+expect_ok   "and the refusal explains why" \
+  bash -c "$AIM task move --as beta --channel t5 --id T-0003 --to done 2>&1 | grep -q 'decided by something other'"
+expect_ok   "clear the blocker by finishing it" bash -c "
+  $AIM task move --as alpha --channel t5 --id T-0001 --to ready >/dev/null &&
+  $AIM task move --as alpha --channel t5 --id T-0001 --to doing >/dev/null &&
+  $AIM task move --as alpha --channel t5 --id T-0001 --to review >/dev/null &&
+  $AIM task move --as alpha --channel t5 --id T-0001 --to done --force >/dev/null"
+expect_ok   "now the dependent item can be done" \
+  $AIM task move --as beta --channel t5 --id T-0003 --to done
+expect_fail "a dropped task is a record, not a workspace" bash -c "
+  $AIM task move --as beta --channel t5 --id T-0002 --to dropped --reason 'superseded' >/dev/null &&
+  $AIM task move --as beta --channel t5 --id T-0002 --to ready"
+expect_ok   "the task log is covered by aim verify" $AIM verify --channel t5
+expect_ok   "--json folds to the same state the list shows" \
+  bash -c "$AIM task list --as beta --channel t5 --json | grep -q '\"id\": \"T-0003\"'"
+
+echo "== the id allocator cannot hand the same id to two writers =="
+# The old allocator read the id from the *fold*, and the fold collapses duplicate
+# ids. So after one collision the counter never recovered: the maximum stayed at
+# the colliding id and every later allocation ran on a board that was missing a
+# record. Codex found it by racing 8 creators and reading the log rather than the
+# board. Measured on the pre-patch code: 8 creators, 5 distinct ids, `chain OK` —
+# the chain is intact because nothing was tampered with; two records just claim
+# one id, and the fold silently drops one of them.
+T5RACE="$AIM_ROOT/t5race"
+rm -rf "$T5RACE"; mkdir -p "$T5RACE"
+( export AIM_ROOT="$T5RACE"; $AIM init >/dev/null
+  AIM_ROOT="$T5RACE" $AIM register --as gamma --kind claude >/dev/null
+  AIM_ROOT="$T5RACE" $AIM register --as human2 --kind human >/dev/null
+  AIM_ROOT="$T5RACE" $AIM new-channel --id r --topic "id allocation" --participants gamma --leader human2 >/dev/null
+  for i in 1 2 3 4 5 6 7 8; do
+    AIM_ROOT="$T5RACE" $AIM task new --as gamma --channel r --title "racer $i" >/dev/null 2>&1 &
+  done
+  wait )
+expect_ok   "8 concurrent creations, 8 distinct ids" \
+  bash -c "python3 -c \"
+import json,collections,sys
+ev=[json.loads(l) for l in open('$T5RACE/channels/r/tasks.jsonl')]
+ids=[e['task'] for e in ev if e.get('event')=='created']
+sys.exit(0 if len(ids)==8 and len(set(ids))==8 else 1)\""
+expect_ok   "and the fold shows all 8, not the 5 that survived collapsing" \
+  bash -c "python3 -c \"
+import json,collections,sys
+ev=[json.loads(l) for l in open('$T5RACE/channels/r/tasks.jsonl')]
+ids=[e['task'] for e in ev if e.get('event')=='created']
+sys.exit(0 if sorted(ids)==['T-%04d'%i for i in range(1,9)] else 1)\""
+expect_ok   "the chain still verifies over the raced log" \
+  env AIM_ROOT="$T5RACE" $AIM verify --channel r
+
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
 # Tamper *after* the last successful verify, so the check is not confounded by

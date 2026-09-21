@@ -108,6 +108,15 @@
       "owner": "codex",
       "mitigation": "Status and blockers are encoded in text as well as colour; labels are switchable; keyboard reachable tabs.",
       "kill_if": "A status is distinguishable only by colour."
+    },
+    {
+      "id": "R13",
+      "risk": "Standardizing against the A2A main branch rather than a release: the specification's own header announces 1.0.0 while every normative table and example in it says 0.3, so a conformance suite written today can be written against a target that moves under it.",
+      "likelihood": "high",
+      "impact": "medium",
+      "owner": "codex",
+      "mitigation": "Pin the tag in design/07 and in the AgentCard's protocolVersion; re-read the diff between tags when the pin moves; treat an unexplained version skew in a normative document as evidence about the process, not as a detail to normalise away.",
+      "kill_if": "A released tag whose normative tables match its own header version, and a conformance suite that passes against it unchanged."
     }
   ],
   "decisions": [
@@ -150,6 +159,36 @@
       "id": "D12",
       "decision": "Dogfooding is a requirement, not a nice-to-have: every work item, handoff and report for this project travels through aim, and the friction this causes is recorded.",
       "because": "The value of using the fabric to build the fabric is the friction log it produces, and friction that is not recorded becomes an anecdote."
+    },
+    {
+      "id": "D13",
+      "decision": "Our channel keeps its name internally; context_id is the external field name.",
+      "because": "The spec's contextId is the same idea as our channel, so the external name is free; renaming the store's key would touch every file for no interoperability gain, and the fold already tolerates two spellings after T-0086."
+    },
+    {
+      "id": "D14",
+      "decision": "Our PM card is not an A2A Task. Keep the card, add a separate delegation record for A2A tasks.",
+      "because": "A2A's Task is a unit of delegated execution with artifacts; ours is a planning card with an estimate, a due date and a dependency edge. The words match and the objects do not, and mapping by name is the failure this project has measured twice (design/05 section 3)."
+    },
+    {
+      "id": "D15",
+      "decision": "Refusal responses carry A2A error codes; the ledger keeps our richer record.",
+      "because": "A caller that cannot tell a refusal from a crash will retry it. Typed responses are the spec's mechanism and the ledger is ours; keeping both is cheaper than choosing, and the mapping is testable."
+    },
+    {
+      "id": "D16",
+      "decision": "Extension namespace https://github.com/rzbdz/aim/extensions/<name>/v1: sealed-divergence, planning, receipts.",
+      "because": "An extension URI has to resolve to something a stranger can read, and the repository is the only such thing we own."
+    },
+    {
+      "id": "D17",
+      "decision": "An A2A caller never learns a withheld task exists; the leader's board keeps its withheld count. Per surface, not per tool.",
+      "because": "The leader's board is a trust surface for an audience that already reads both seals; an A2A request is a leak surface answered to a stranger. Grader-facing rule and stranger-facing rule cannot be the same rule, and the spec is explicit about which one a server owes an unauthenticated caller."
+    },
+    {
+      "id": "D18",
+      "decision": "Investigate Matrix's room model for the chat/PM half and MCP for the tool surface, before inventing more of either.",
+      "because": "Matrix already has rooms, power levels, read receipts and a hash-chained event DAG, which is most of what we invented in design/06; reading it before building more is cheaper than discovering it afterwards. MCP is named because A2A's own README positions the two as complements: agents collaborating versus agents using tools."
     }
   ],
   "non_goals": [

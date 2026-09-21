@@ -16,10 +16,12 @@ Run: python3 tests/test_aimboard.py     (exit code = number of failures)
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -250,6 +252,47 @@ def main():
         check("ical dates are all-day, so no timezone can shift them",
               "DTSTART;VALUE=DATE:" in ics and "DTSTART:" not in ics)
         check("ical is CRLF-terminated as the format requires", ics.endswith("END:VCALENDAR\r\n"))
+        print("== serve ==")
+        # A second route to the same renderer is a second chance to leak: a gate
+        # applied in `render_html` and forgotten in the handler is exactly the
+        # shape of bug this file exists to catch. Checked before the barrier
+        # opens, because a check made after it opens asserts nothing.
+        import urllib.request
+        # -u matters: the server prints the address it bound to stdout, and a
+        # block-buffered pipe means the test waits for a line the server has
+        # already "sent". Reading forever for an address that is sitting in a
+        # buffer is a test that hangs, not a test that fails.
+        srv = subprocess.Popen([sys.executable, "-u", str(BOARD), "serve", "--root", str(root),
+                                "--port", "0", "--as-of", "2026-09-21"],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            url, said, deadline = None, [], time.time() + 30
+            while time.time() < deadline:
+                said.append(srv.stdout.readline())
+                if srv.poll() is not None:
+                    break
+                m = re.search(r"http://[\d.]+:(\d+)/", "".join(said))
+                if m:
+                    url = f"http://127.0.0.1:{m.group(1)}"
+                    break
+            check("serve announces the address it actually bound",
+                  url is not None, "".join(said)[-300:])
+            if url:
+                body = urllib.request.urlopen(url + "/", timeout=20).read().decode()
+                check("serve answers / with the board", "kanban" in body or "Board" in body)
+                check("serve re-renders per request rather than caching",
+                      "Cache-Control" not in body and "generated" in body)
+                doc = json.loads(urllib.request.urlopen(url + "/board.json", timeout=20).read().decode())
+                check("serve answers /board.json", "tasks" in doc and "phases" in doc)
+                gated = urllib.request.urlopen(url + "/?as=claude-session1", timeout=20).read().decode()
+                check("ABSENCE: the served view honours the gate too",
+                      PEER_SEAL not in gated and PEER_DRAFT not in gated)
+                check("serve answers /board.ics",
+                      "BEGIN:VCALENDAR" in urllib.request.urlopen(url + "/board.ics", timeout=20).read().decode())
+        finally:
+            srv.terminate()
+            srv.wait(timeout=20)
+
         print("== the board after the barrier opens ==")
         write(root / "channels" / "hello" / "manifest.json", json.loads(
             (root / "channels" / "hello" / "manifest.json").read_text()) | {
@@ -260,6 +303,7 @@ def main():
         opened_html = opened.read_text(encoding="utf-8")
         check("after the barrier opens a participant sees the peer draft", PEER_DRAFT in opened_html)
         check("after the barrier opens a participant sees the peer seal", PEER_SEAL in opened_html)
+
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

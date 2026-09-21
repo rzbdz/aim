@@ -1,0 +1,29 @@
+{
+  "name": "aim-board-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The aim dashboard front-end: Vue 3 + Element Plus + ECharts over the aimboard JSON API.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@vueuse/core": "^15.0.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.6",
+    "markdown-it": "^15.0.2",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-draggable-plus": "^0.6.1",
+    "vue-echarts": "^8.3.0",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

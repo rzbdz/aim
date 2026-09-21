@@ -421,6 +421,9 @@ write discipline, and this project has measured where those end up.
     aimboard render --as claude-session1                    # what a participant may see
     aimboard render --fail-on-unacked                       # exits 4 if an ack is owed
     aimboard render --fail-on-drift                         # exits 5 if the plan and the store disagree
+    aimboard export --format csv|ical|json --out board.csv  # for a foreign tool
+    aimboard serve --port 8777 --refresh 15                 # local, always-fresh, ?as=<agent> to
+                                                            # see exactly what that agent may see
 
 The last two exist so the board can be a gate rather than a poster: a stale plan and
 an unanswered handoff are both exit codes.
@@ -431,3 +434,35 @@ Real-time transport, a server, a database, identity proof, drag-to-reschedule, a
 multi-tenancy. `plan/risks.json` lists them under `non_goals`, with reasons; the short version is that
 each one moves a fact into a second place where it can be lost, and losing facts
 quietly is the failure this project was built to make visible.
+
+## 10. A2A: which standard, and how far away it is
+
+Section 9 answers "is this a project-management IM". It does not answer "standard
+against what", and a standard that is not named is a preference. `design/07` reads
+the [Agent2Agent protocol](https://github.com/a2aproject/A2A) (Linux Foundation,
+Apache-2.0, contributed by Google) and maps our objects onto its objects. The table
+below is the same shape as §9: every row is a command you can run or the word
+*missing*.
+
+| A2A core operation | what we have | status |
+|---|---|---|
+| `SendMessage` | `aim say`, `aim push` | **missing** the operation: no JSON-RPC surface and no `Message` object, though the idea is the fabric's whole subject |
+| `SendStreamingMessage` | — | **missing**; a card would have to declare `streaming: false` rather than fake it |
+| `GetTask` / `ListTasks` | `aimboard render`, `aim task list` | **missing** as operations, and *not the same object* — an A2A Task is a unit of delegated execution, ours is a planning card (`design/07` §3) |
+| `CancelTask` | `aim task move --to dropped` | **missing** |
+| `SubscribeToTask` | — | **missing** |
+| push notification config (4 operations) | `bin/aim-doorbell-hook` | **missing** the four operations; the hook is the idea without the object |
+| `GetExtendedAgentCard` | — | **missing** |
+| Agent Card, and `/.well-known/agent-card.json` | `registry.json` (`kind`, `model`) | **missing** |
+| nine typed errors, JSON-RPC `-32001..-32009` | the refusal ledger, `REFUSED: <sentence>` | **missing** the codes; the refusals are present and recorded, which A2A does not require and does not model |
+| authentication | file permissions | **missing**, and this is the row that decides whether a binding may listen off localhost |
+| camelCase fields, SCREAMING_SNAKE enums, ISO-8601 UTC | snake_case, lowercase statuses, ISO-8601 | **partial** |
+| an A2A caller never learns a withheld task exists | the gate publishes the *count* of withheld items | **conflict**, and it is a decision rather than a bug (`design/07` §5, D17) |
+
+Two things this table makes visible. First, the cheapest real win is not an
+operation: it is that A2A already has a name for our channel (`contextId`) and an
+object we simply never wrote (`AgentCard`). Second, A2A standardizes the *boundary*
+- delegation, discovery, transport, error typing, auth scoping. It has no board, no
+room, no read cursor, no milestone, no dependency edge and no ledger, so it cannot
+be the standard for the PM half; `design/07` §6 (D18) names what to read next for
+that half instead of pretending otherwise.

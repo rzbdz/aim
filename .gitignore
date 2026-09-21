@@ -12,3 +12,6 @@ __pycache__/
 .hooktest/
 .dbg/
 outbox/_drafts/
+
+# the front-end build
+web/node_modules/

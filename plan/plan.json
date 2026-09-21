@@ -40,6 +40,12 @@
       "name": "Conformance, docs, export",
       "due": "2026-09-26",
       "accept": "conformance.py covers tasks/rooms/dashboard; README matches code"
+    },
+    {
+      "id": "M6",
+      "name": "A2A alignment",
+      "due": "2026-09-27",
+      "accept": "an A2A conformance test exists and fails before it passes: eleven operations, nine error codes, the data model's encodings; aim declares a binding in an AgentCard; and the one rule A2A contradicts (withheld counts) is resolved per surface, with a test"
     }
   ],
   "tasks": [
@@ -680,7 +686,7 @@
       "id": "T-0051",
       "title": "Hook-based wake: inject check-your-outbox on the peer's next turn",
       "owner": "claude-session1",
-      "status": "review",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-25",
@@ -694,13 +700,13 @@
         "delivery"
       ],
       "accept": "a message delivered while the peer sits idle is read on its next turn, with no human relaying",
-      "move_reason": "hook works when invoked by hand; it is not wired into either harness, so the doorbell does not ring - measured 2026-09-21 when the human had to remind codex to pull"
+      "move_reason": "verified by the pm 2026-09-21: bin/aim-doorbell-hook exists at 4859 bytes, added in commit dd80cbc, and is wired into both harnesses' hooks. What is not done is the part README section 5 already marks partial: the wiring is per-session and an idle session has no next turn."
     },
     {
       "id": "T-0052",
       "title": "Write down what delivery still does not do",
       "owner": "codex",
-      "status": "review",
+      "status": "done",
       "priority": "normal",
       "estimate": 1,
       "start": "2026-09-25",
@@ -714,7 +720,7 @@
         "docs"
       ],
       "accept": "README section 5 says solved or unsolved per row, with the measurement beside it",
-      "move_reason": "README section 5 is honest per row, but its doorbell row still reads unsolved while commit dd80cbc says 'this closes it'; the README is right and the commit overclaims"
+      "move_reason": "verified by the pm 2026-09-21: README section 5 carries four rows, each marked solved or unsolved with its measurement beside it (record solved, wake solved, real-time missing, idle-session missing)."
     },
     {
       "id": "T-0060",
@@ -1019,6 +1025,225 @@
       ],
       "accept": "an agent publishing during a divergence phase leaves a ledger record a barrier audit sees without opening the task store",
       "move_reason": "measured: task publish during SEALED_DIVERGENT succeeds for an agent and writes no ledger record; the channel's ledger holds only one unrelated refusal"
+    },
+    {
+      "id": "T-0100",
+      "title": "Write down which standard we are standardizing on: design/07 maps A2A onto our objects by semantics, not by name",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "design",
+        "a2a"
+      ],
+      "accept": "design/07 exists, reads the released spec's own text, names the version skew between the doc's header and its examples, and gives a mapping table plus the decisions D13-D18"
+    },
+    {
+      "id": "T-0101",
+      "title": "An A2A conformance test, written before the code it tests",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-22",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0100"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "test"
+      ],
+      "accept": "a test asserts all eleven core operations, all nine A2A error codes mapped to a response, camelCase field names, SCREAMING_SNAKE enum values and ISO-8601 UTC timestamps; it fails today and is the definition of done for T-0103..T-0107"
+    },
+    {
+      "id": "T-0102",
+      "title": "Emit an AgentCard for an agent in the fabric",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0100"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "discovery"
+      ],
+      "accept": "aim card --as <agent> prints a card with name, description, version, supportedInterfaces (protocolBinding AIM+FILES, protocolVersion pinned to a release), capabilities{streaming:false, pushNotifications:true, extensions:[three URIs]}, skills, defaultInputModes/OutputModes; streaming:false is stated rather than faked"
+    },
+    {
+      "id": "T-0103",
+      "title": "Map the five mandated refusal classes onto A2A's nine error types",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0101"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "refusal",
+        "contract"
+      ],
+      "accept": "each of design/05 section 5's refusal classes produces its mapped A2A error type (-32001..-32009) on an A2A surface, and the ledger still records the refusal in our own shape; a test asserts both halves"
+    },
+    {
+      "id": "T-0104",
+      "title": "An A2A caller may not learn that a withheld task exists",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-24",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0103"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "gate"
+      ],
+      "accept": "GetTask and ListTasks as a participant in SEALED_DIVERGENT answer TaskNotFoundError for a peer draft, with no count and no 'withheld' field; the leader's board keeps the count it has today; a test asserts the difference"
+    },
+    {
+      "id": "T-0105",
+      "title": "Channel records carry context_id, and the fold accepts both spellings while the migration is open",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0100"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "schema"
+      ],
+      "accept": "the store writes context_id, reads either spelling, and the fold does not silently drop a task written by an older aim; a test writes both and folds once"
+    },
+    {
+      "id": "T-0106",
+      "title": "The doorbell hook becomes a TaskPushNotificationConfig",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "low",
+      "estimate": 1,
+      "start": "2026-09-25",
+      "due": "2026-09-26",
+      "blocked_by": [
+        "T-0102"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "transport"
+      ],
+      "accept": "a push notification config carries url, token and authenticationInfo as the spec defines; the local hook stays the default and the config is additive; a config with no token is refused"
+    },
+    {
+      "id": "T-0107",
+      "title": "Say in one table which A2A states we cannot express, and which of our states A2A cannot",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 2,
+      "start": "2026-09-25",
+      "due": "2026-09-26",
+      "blocked_by": [
+        "T-0103"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "contract"
+      ],
+      "accept": "README maps PM status <-> TASK_STATE_* in both directions, names ready/blocked/review as ours-with-no-A2A-word and input-required/auth-required/rejected as A2A's-with-no-ours, and a test asserts every status in the state machine appears exactly once"
+    },
+    {
+      "id": "T-0108",
+      "title": "Answer, on the board, which of the eleven operations this fabric can do today",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 1,
+      "start": "2026-09-26",
+      "due": "2026-09-26",
+      "blocked_by": [],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "dashboard",
+        "honesty"
+      ],
+      "accept": "the capability matrix from README section 9 gains an A2A section where every row is either a command that works or the word missing, and it is rendered rather than promised"
+    },
+    {
+      "id": "T-0109",
+      "title": "Be tested by the reference implementation: a2a-sdk as the client",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-26",
+      "due": "2026-09-27",
+      "blocked_by": [
+        "T-0101"
+      ],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "a2a",
+        "test",
+        "auth"
+      ],
+      "accept": "the official Python SDK drives our endpoint and its errors are ours; before that endpoint is reachable off localhost, authentication is either implemented or the card says the binding is localhost-only and the suite asserts it is bound to 127.0.0.1"
+    },
+    {
+      "id": "T-0110",
+      "title": "A channel that declares a shared workspace may not claim a barrier",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-24",
+      "blocked_by": [],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "barrier",
+        "dogfooding",
+        "honesty"
+      ],
+      "accept": "a manifest may declare workspace; if two participants share a writable one, a divergence phase on that channel is REFUSED with a reason naming the manifest, and the refusal is recorded in the ledger; a test opens a divergence phase on such a channel and expects the refusal",
+      "move_reason": "from the peer's message of 2026-09-21T08:17Z: hello is SEALED_DIVERGENT while both participants have been reading each other's files for an hour, and the fabric noticed nothing. The outcome asked for (write the honest name down) is right; a manifest-declared workspace makes it the tool's job rather than a confession"
     }
   ]
 }
