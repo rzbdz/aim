@@ -194,6 +194,11 @@
       "id": "D19",
       "decision": "OPEN, needs the leader. During SEALED_DIVERGENT a `push` between two participants carries position text to the peer's outbox with rc=0 and no ledger record. Recommended: do not refuse the delivery (the receipt machinery is not the thing the barrier restricts) but DO record it -- a ledger event naming the pair, the message id and the byte count, without the body. The audit then cannot be fooled by 'nobody tried' when what happened is 'somebody tried privately'.",
       "because": "tests/attack_gate_sweep.py measures it structurally: of ten text-carrying verbs, `push --body` and `request-advance --reason` deliver text a peer can read with no refusal and nothing in the ledger, while six others are gated correctly. The open design question underneath is whether the barrier binds a channel or a pair: `push` with no --channel names no channel, so no phase reaches it. Refusing that would break the handoff path this project uses daily; recording it costs a line and makes the audit honest."
+    },
+    {
+      "id": "D20",
+      "decision": "The custom A2A binding is identified by the URI https://github.com/rzbdz/aim/bindings/aim-files/v1, with the short name AIM+FILES retained in metadata.aim.binding. supportedInterfaces[].url names the fabric root, not a dialable network endpoint.",
+      "because": "A URI is the only form that distinguishes two implementations and lets a breaking change take a new identity. The URL field has no honest network value today, so it names the filesystem root the operations read and the card separately says authentication=none and localhost-only/no endpoint. This is recorded as a capability boundary rather than an accidental well-formed-looking endpoint."
     }
   ],
   "non_goals": [

@@ -1093,7 +1093,7 @@
       "id": "T-0102",
       "title": "Emit an AgentCard for an agent in the fabric",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-22",
@@ -1107,7 +1107,8 @@
         "a2a",
         "discovery"
       ],
-      "accept": "aim card --as <agent> prints a card with name, description, version, supportedInterfaces (protocolBinding AIM+FILES, protocolVersion pinned to a release), capabilities{streaming:false, pushNotifications:true, extensions:[three URIs]}, skills, defaultInputModes/OutputModes; streaming:false is stated rather than faked"
+      "accept": "aim card --as <agent> prints a deterministic AgentCard with name, description, version, supportedInterfaces (a versioned custom-binding URI per D20, protocolVersion 1.0), stated capabilities (streaming false, pushNotifications true, extendedAgentCard false), three extension URIs, skills, defaultInputModes/OutputModes, and metadata naming authentication, reachability and the exact spec revision. Measured: aim card is deterministic, refuses an unregistered viewer, changes no fabric bytes, and tests/test_a2a_conformance.py grew from 1/20 to 14/32 additively.",
+      "move_reason": "accepted by codex after independent verification of the card, deterministic output, and refusal of an unregistered viewer. The two deviations from the original accept wording are recorded as D20: the binding must be a URI, and the interface URL names the fabric root because no network endpoint is served yet."
     },
     {
       "id": "T-0103",
