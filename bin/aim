@@ -292,9 +292,30 @@ def append_chained(path, rec):
 
     Tamper-evidence, not tamper-proofing: anyone may rewrite the file, but
     `aim verify` will then show the chain break.
+
+    An unchained tail is tolerated, loudly. A record whose `hash` is missing is
+    still a record someone wrote, and refusing to append after it would turn a
+    corrupt ledger into a *silently* corrupt one: every later refusal would fail
+    to record and the failure would live on stderr, where nobody auditing the
+    ledger would ever see it. That is strictly worse than the corruption, because
+    "nobody was tempted" and "the recorder was broken" look identical from the
+    ledger — which is the one distinction the ledger exists to make.
+
+    The `prev` link says `genesis` and `chain_broken` says why, so `aim verify`
+    reports it instead of the two records simply being unchained. Codex's renderer
+    test fixture writes its ledger without hashes, which is how this was found:
+    three of its checks assert a refusal was recorded, and every one of them was
+    failing for a reason that had nothing to do with the refusal.
     """
     recs = read_jsonl(path)
-    rec["prev"] = recs[-1]["hash"] if recs else "genesis"
+    if recs and not recs[-1].get("hash"):
+        rec["prev"] = "genesis"
+        rec["chain_broken"] = (
+            "the previous record in this file carries no hash, so this one cannot "
+            "chain onto it; it was appended rather than dropped so that the "
+            "refusal is on the record")
+    else:
+        rec["prev"] = recs[-1]["hash"] if recs else "genesis"
     rec["hash"] = sha256_hex(canonical({k: v for k, v in rec.items() if k != "hash"}))
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -1805,19 +1826,27 @@ def check_sealed_prefix(seal, pl):
     """
     n_bytes, n_hashes = seal.get("private_log_bytes"), seal.get("private_log_hashes")
     n_sha, n_len = seal.get("private_log_sha256"), seal.get("private_log_len") or 0
+    # A seal without a timestamp is a seal this function has to be able to *report*,
+    # and it could not: every TAMPER line indexed seal['ts'], so the one path whose
+    # entire job is to describe damage raised KeyError on a damaged seal. Codex's
+    # renderer test builds such a seal (agent + digest + private_log_hashes, no ts)
+    # and `verify` crashed on it instead of reporting. A verifier that dies on the
+    # input it exists to judge is worse than one that says nothing, because it
+    # looks like a tool failure rather than a finding.
+    when = seal.get("ts") or "(no ts recorded in the seal)"
     raw = pl.read_bytes()
     lines = [l for l in raw.split(b"\n") if l.strip()]
     if n_bytes:
         prefix = (b"\n".join(lines[:n_len]) + b"\n") if n_len else b""
         if prefix.hex() != n_bytes:
-            print(f"TAMPER private log {seal['agent']}: the bytes sealed at {seal['ts']} "
+            print(f"TAMPER private log {seal['agent']}: the bytes sealed at {when} "
                   f"are not a prefix of the file now")
             return False
         return _note_append(seal, len(lines), n_len)
     if n_hashes:
         actual = [r.get("hash", "") for r in read_jsonl(pl)]
         if actual[:len(n_hashes)] != n_hashes:
-            print(f"TAMPER private log {seal['agent']}: a record sealed at {seal['ts']} "
+            print(f"TAMPER private log {seal['agent']}: a record sealed at {when} "
                   f"was removed or reordered")
             return False
         return _note_append(seal, len(actual), len(n_hashes))
@@ -1825,7 +1854,7 @@ def check_sealed_prefix(seal, pl):
         prefix = (b"\n".join(lines[:n_len]) + b"\n") if n_len else b""
         if sha256_hex(prefix) != n_sha:
             print(f"TAMPER private log {seal['agent']}: the {n_len} record(s) sealed at "
-                  f"{seal['ts']} no longer hash to the sealed value")
+                  f"{when} no longer hash to the sealed value")
             return False
         return _note_append(seal, len(lines), n_len)
     print(f"TAMPER seal {seal['agent']}: carries no private-log commitment, so the "

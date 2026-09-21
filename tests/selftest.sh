@@ -2,13 +2,24 @@
 # Barrier self-test. Runs entirely inside a throwaway AIM_ROOT so it never
 # touches real channels. Every REFUSED below is the feature, not a bug.
 set -u
-export AIM_ROOT="${AIM_ROOT:-/root/tmp/agent-im/.selftest}"
+# The root is per-process. It used to be a fixed `.selftest`, and this repo now has
+# two agents running it at once: each run `rm -rf`s the other's fabric mid-assertion,
+# and the result is a red suite that says nothing about the code. That is worse than
+# a slow suite — "the suite is red" is the signal we use to decide whether the code is
+# right, and a harness that fires it spuriously is a harness that will eventually be
+# ignored. An explicit AIM_ROOT still wins, because a caller who names a root is
+# taking responsibility for it.
+export AIM_ROOT="${AIM_ROOT:-/root/tmp/agent-im/.selftest-$$}"
 rm -rf "$AIM_ROOT"; mkdir -p "$AIM_ROOT"
+# Same reasoning one level down: the capture files were shared /tmp paths, so two
+# runs overwrote each other's stderr and the FAIL lines quoted the other run.
+TMPD="$(mktemp -d -t aim-selftest-XXXXXX)"
+trap 'rm -rf "$TMPD"; [ -n "${KEEP_SELFTEST:-}" ] || rm -rf "$AIM_ROOT"' EXIT
 AIM=/root/tmp/agent-im/bin/aim
 
 pass=0; fail=0
-expect_ok()   { local d="$1"; shift; if "$@" >/tmp/st.out 2>/tmp/st.err; then pass=$((pass+1)); printf '  ok    %s\n' "$d"; else fail=$((fail+1)); printf '  FAIL  %s (expected success)\n' "$d"; sed 's/^/          /' /tmp/st.err; fi; }
-expect_fail() { local d="$1"; shift; if "$@" >/tmp/st.out 2>/tmp/st.err; then fail=$((fail+1)); printf '  FAIL  %s (expected refusal, got success)\n' "$d"; else pass=$((pass+1)); printf '  ok    %s\n' "$d"; printf '          -> %s\n' "$(head -1 /tmp/st.err)"; fi; }
+expect_ok()   { local d="$1"; shift; if "$@" >"$TMPD/out" 2>"$TMPD/err"; then pass=$((pass+1)); printf '  ok    %s\n' "$d"; else fail=$((fail+1)); printf '  FAIL  %s (expected success)\n' "$d"; sed 's/^/          /' "$TMPD/err"; fi; }
+expect_fail() { local d="$1"; shift; if "$@" >"$TMPD/out" 2>"$TMPD/err"; then fail=$((fail+1)); printf '  FAIL  %s (expected refusal, got success)\n' "$d"; else pass=$((pass+1)); printf '  ok    %s\n' "$d"; printf '          -> %s\n' "$(head -1 "$TMPD/err")"; fi; }
 
 echo "== setup =="
 expect_ok "register alpha"  $AIM register --as alpha --kind claude
@@ -444,6 +455,107 @@ ids=[e['task'] for e in ev if e.get('event')=='created']
 sys.exit(0 if sorted(ids)==['T-%04d'%i for i in range(1,9)] else 1)\""
 expect_ok   "the chain still verifies over the raced log" \
   env AIM_ROOT="$T5RACE" $AIM verify --channel r
+
+echo "== the refusal recorder cannot be talked out of recording =="
+# Codex's renderer test fixture writes `ledger.jsonl` without `hash` fields, and
+# three of its checks assert that a refusal was recorded. Every one of them failed
+# for a reason that had nothing to do with the refusal: `append_chained` indexed
+# `recs[-1]["hash"]`, so appending onto an unchained tail raised KeyError, `die()`
+# swallowed it into a stderr warning, and the refusal was lost.
+#
+# That is strictly worse than the corruption it came from: from the ledger,
+# "nobody was tempted" and "the recorder was broken" look identical — which is the
+# one distinction the ledger exists to make. An unchained tail is now tolerated
+# loudly: the record is appended, `prev` says `genesis` and `chain_broken` says
+# why, so `aim verify` reports it rather than the two records being quietly
+# unchained.
+LC="$AIM_ROOT/unchained"; rm -rf "$LC"; mkdir -p "$LC/channels/uc"
+python3 - "$LC" <<'PY'
+import json, pathlib, sys
+d = pathlib.Path(sys.argv[1]) / "channels" / "uc"
+(d / "manifest.json").write_text(json.dumps({
+    "id": "uc", "topic": "unchained ledger", "leader": "human",
+    "participants": ["alpha", "beta"], "synthesizer": "",
+    "barrier": {"phase": "SEALED_DIVERGENT", "round": 0, "history": []}}))
+(d / "registry.json").parent.mkdir(parents=True, exist_ok=True)
+PY
+# `alpha`/`beta` already exist from the setup block, but this channel lives in its
+# own root, so register them here. Without this the refusal below is "unknown
+# agent", which is still a refusal and still recorded — the assertions would pass
+# for the wrong reason, which is worse than failing. The refusal has to come from
+# the gate, so the actor is a registered agent who is *not* a participant.
+expect_ok "register beta and an outsider in the unchained root" bash -c "
+  AIM_ROOT='$LC' $AIM register --as beta --kind codex >/dev/null &&
+  AIM_ROOT='$LC' $AIM register --as outsider --kind claude >/dev/null"
+# Exactly the shape codex's fixture writes: a real record, no hash, no prev.
+python3 - "$LC" <<'PY'
+import json, pathlib, sys
+d = pathlib.Path(sys.argv[1]) / "channels" / "uc"
+(d / "ledger.jsonl").write_text(json.dumps({
+    "ts": "2026-09-21T00:00:06Z", "event": "refusal", "agent": "beta",
+    "action": "read_others", "class": "barrier", "phase": "SEALED_DIVERGENT",
+    "reason": "REFUSED: no"}) + "\n")
+PY
+expect_fail "a refusal in an unchained channel is still refused" \
+  env AIM_ROOT="$LC" $AIM task new --as outsider --channel uc --title "not mine"
+expect_ok   "it was refused by the gate, not by an unknown id" \
+  bash -c "env AIM_ROOT='$LC' $AIM task new --as outsider --channel uc --title x 2>&1 | grep -q 'not a participant'"
+# The FIRST refusal appended is the one that had to chain onto the unchained tail;
+# every later one chains onto it normally. Asserting on `recs[-1]` looked right and
+# passed the wrong record through the test, which is how the first version of this
+# block was wrong: it asserted the *last* line was unchained, and by then it wasn't.
+expect_ok   "and the first refusal is recorded, which is the whole point" \
+  bash -c "python3 -c \"
+import json,sys
+recs=[json.loads(l) for l in open('$LC/channels/uc/ledger.jsonl')]
+sys.exit(0 if len(recs)>=2 and recs[1]['event']=='refusal' and recs[1]['agent']=='outsider' else 1)\""
+expect_ok   "the record that could not be chained says so, and why" \
+  bash -c "python3 -c \"
+import json,sys
+r=[json.loads(l) for l in open('$LC/channels/uc/ledger.jsonl')][1]
+sys.exit(0 if r.get('prev')=='genesis' and 'carries no hash' in (r.get('chain_broken') or '') else 1)\""
+expect_ok   "and the record after it chains onto it normally, so the break is one record wide" \
+  bash -c "python3 -c \"
+import json,sys
+recs=[json.loads(l) for l in open('$LC/channels/uc/ledger.jsonl')]
+sys.exit(0 if len(recs)>=3 and recs[2].get('prev')==recs[1].get('hash')
+         and not recs[2].get('chain_broken') else 1)\""
+expect_ok   "no stderr warning is needed, because nothing was dropped" \
+  bash -c "! env AIM_ROOT='$LC' $AIM task new --as outsider --channel uc --title x 2>&1 | grep -q 'not recorded'"
+
+echo "== a verifier cannot die on the input it exists to judge =="
+# Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
+# whose entire job is to describe damage raised KeyError on a seal that had no
+# timestamp. Codex's renderer fixture builds exactly such a seal (agent, digest,
+# private_log_hashes, no ts), and `aim verify` crashed on it — which reads as a
+# broken tool, not as a finding.
+SEALROOT="$AIM_ROOT/tsless"; rm -rf "$SEALROOT"; mkdir -p "$SEALROOT/channels/sc/private" "$SEALROOT/channels/sc/seals"
+python3 - "$SEALROOT" <<'PY'
+import hashlib, json, pathlib, sys
+def canon(o): return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def sha(b): return hashlib.sha256(b).hexdigest()
+d = pathlib.Path(sys.argv[1]) / "channels" / "sc"
+(d / "manifest.json").write_text(json.dumps({
+    "id": "sc", "topic": "tsless seal", "leader": "human", "participants": ["alpha"],
+    "synthesizer": "", "barrier": {"phase": "SEALED_DIVERGENT", "round": 0, "history": []}}))
+rec = {"ts": "x", "from": "alpha", "kind": "note", "body": "sealed reasoning", "prev": "genesis"}
+rec["hash"] = sha(canon(rec).encode())
+(d / "private" / "alpha.jsonl").write_text(json.dumps(rec, ensure_ascii=False) + "\n")
+seal = {"agent": "alpha", "private_log_hashes": [rec["hash"]]}     # deliberately no `ts`
+seal["digest"] = sha(canon(seal).encode())
+(d / "seals" / "alpha.json").write_text(json.dumps(seal))
+# Now edit the private log so the sealed hashes no longer match, which is what
+# reaches the TAMPER line.
+rec2 = {"ts": "y", "from": "alpha", "kind": "note", "body": "EDITED", "prev": "genesis"}
+rec2["hash"] = sha(canon(rec2).encode())
+(d / "private" / "alpha.jsonl").write_text(json.dumps(rec2, ensure_ascii=False) + "\n")
+PY
+expect_fail "an edited private log under a ts-less seal is caught, not crashed on" \
+  env AIM_ROOT="$SEALROOT" $AIM verify --channel sc
+expect_ok   "and the TAMPER line says the seal had no timestamp instead of raising" \
+  bash -c "env AIM_ROOT='$SEALROOT' $AIM verify --channel sc 2>&1 | grep -q 'no ts recorded in the seal'"
+expect_ok   "with no traceback in the output" \
+  bash -c "! env AIM_ROOT='$SEALROOT' $AIM verify --channel sc 2>&1 | grep -q 'Traceback'"
 
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t

@@ -82,8 +82,11 @@ def attack(root):
     print(f"  'outsider' is registered; channels/hello/participants = codex,claude-session1")
     print()
     print(f"render --as outsider -> rc={p.returncode}, {len(body)} bytes")
+    failed = []
     for name, s in (("peer draft task title", DRAFT), ("peer sealed claim", SEAL)):
-        print(f"  {'LEAKED' if s in body else 'absent':>7}  {name}")
+        hit = s in body
+        failed += [name] if hit else []
+        print(f"  {'LEAKED' if hit else 'absent':>7}  {name}")
 
     print()
     print("the same caller, through the tool that owns the gate:")
@@ -103,13 +106,42 @@ def attack(root):
                             "--as", "outsider", *extra],
                            capture_output=True, text=True, timeout=120)
         hit = DRAFT in q.stdout or SEAL in q.stdout
+        failed += ["render " + (" ".join(extra) or "(html to stdout)")] if hit else []
         label = " ".join(extra) or "(html to stdout)"
         print(f"  render --as outsider {label} -> {'LEAKED' if hit else 'absent'}")
+
     print()
-    print("The tool refuses and records. The renderer serves the bytes.")
-    print("Suggested fix, codex's call: the gate should ask whether the viewer is a")
-    print("*registered agent*, not whether they are in this channel's participants.")
-    print("`aim` already has agent_kind(); the renderer reads registry.json.")
+    print("the other direction, because a fix that hides too much is a different bug.")
+    print("Three questions, and the HTML is the surface that carries the seal panel:")
+    for who in ("codex", "claude-session1", "human", "outsider"):
+        q = subprocess.run([sys.executable, BOARD, "render", "--root", str(root),
+                            "--as", who, "--generated-at", "2026-09-21T00:00:00.000Z"],
+                           capture_output=True, text=True, timeout=120)
+        own = SEAL in q.stdout          # codex's own claim
+        peer = DRAFT in q.stdout        # codex's own draft task, seen by others
+        print(f"  --as {who:<16} sees codex's own seal: {str(own):<5} "
+              f"sees codex's draft task: {peer}")
+    print("  expected: codex YES/YES (its own work), human YES/YES (the leader reads")
+    print("  both seals and is exempt from the task gate), the peer and the stranger")
+    print("  no/no. Blanking every row would pass the attack and hide the wrong thing.")
+    print()
+    print("  note on --json: it carries no seal panel at all (its keys are as_of,")
+    print("  chain, decisions, mail, milestones, phases, risks, root, tasks, unacked,")
+    print("  viewer, withheld_tasks), so the seal questions are HTML-only. Checked")
+    print("  rather than assumed, because 'the JSON must be hiding it' was my first")
+    print("  guess and it was wrong.")
+
+    print()
+    if failed:
+        print(f"ATTACK STILL SUCCEEDS on {len(failed)} surface(s): {', '.join(failed)}")
+        print("Suggested fix: gate on whether the viewer is a REGISTERED AGENT, not on")
+        print("whether they are in this channel's participants. `aim` already has")
+        print("agent_kind(); the renderer reads registry.json.")
+    else:
+        print("attack fails on every surface, and the participant/leader rows above are")
+        print("the control: this was fixed by codex in c139474 and re-measured here,")
+        print("not taken from the commit message. Kept as a regression test, because")
+        print("the branch it exercises is the one nobody walks by accident.")
 
 
 def part_one():
