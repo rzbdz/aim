@@ -1513,62 +1513,58 @@ def cmd_pull(args):
         print(f"aim: nothing unread for '{who}' ({len(items)} claimed)")
         return
     show = unread if args.unread_only else [(p, read_json(p)) for p in items]
+    # T-0146, design/06 R4: a claim follows a completed delivery of the complete
+    # output, never a buffered or per-record print. Python ignores SIGPIPE, so a
+    # pull piped into a consumer that stops early (head, a closed shell, `| true`)
+    # would let per-record prints succeed into the pipe buffer and the loop keep
+    # going; claiming on the authority of a buffered write marks a message *read*
+    # that never left this process, and `confirm` then accepts an ack for it.
+    # So build the whole transcript first, emit it in one write+flush, and claim
+    # only if that flush succeeds. A partial read gets no partial credit — R4's
+    # word: a false "read" costs an ack the sender trusts, while a repeated read
+    # costs one `pull`.
+    parts = []
+    for _, rec in show:
+        parts.append(f"=== from {rec['from']} @ {rec['ts']}  channel={rec['channel'] or '-'}"
+                     f"  msg_id={rec.get('msg_id', '(none)')}\n")
+        if rec.get("subject"):
+            parts.append(f"    subject: {rec['subject']}\n")
+        # Integrity first: a message you cannot trust is worse than a missing one,
+        # because you will act on it.
+        damage = _verify_outbox_record(rec)
+        if damage:
+            parts.append(f"    !!! DAMAGED: {damage}\n")
+        parts.append("    " + rec["body"].replace("\n", "\n    ") + "\n")
+        if rec.get("ack_required") and not rec.get("acked_at"):
+            parts.append(f"    >>> the sender asked for an ack: "
+                         f"aim confirm --as {who} --msg-id {rec.get('msg_id')}\n")
+        parts.append("\n")
+    delivered = False
+    try:
+        sys.stdout.write("".join(parts))
+        sys.stdout.flush()
+        delivered = True
+    except BrokenPipeError:
+        # The reader closed before the complete output left the process, so claim
+        # NONE of it. Point the real fd at devnull instead of closing sys.stdout:
+        # the interpreter flushes stdout once more at exit, and a close-flush on a
+        # broken pipe would raise again (BrokenPipeError is what we are in). dup2
+        # gives that shutdown flush a target that cannot fail, so the run reports
+        # the failure once and exits non-zero with no traceback — R4 point 4.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     claimed = 0
-    cut = len(show)
-    for i, (p, rec) in enumerate(show, 1):
-        # T-0146: claim only what actually reached the reader. Python ignores
-        # SIGPIPE, so a pull piped into a consumer that stops early (head, a
-        # closed shell, `| true`) lets the earlier prints succeed into the pipe
-        # buffer and the loop keep going; claiming on the authority of a buffered
-        # write marks a message *read* that never left this process, and `confirm`
-        # then accepts an ack for it. So the whole record — printing, flush, and
-        # the claim — is one guarded step: a record is claimed only if every one
-        # of its bytes reached the pipe. Emit-and-flush as one operation, because
-        # a record body larger than the pipe buffer raises BrokenPipeError *inside*
-        # the print, not at the flush that follows it.
-        try:
-            print(f"=== from {rec['from']} @ {rec['ts']}  channel={rec['channel'] or '-'}"
-                  f"  msg_id={rec.get('msg_id', '(none)')}")
-            if rec.get("subject"):
-                print(f"    subject: {rec['subject']}")
-            # Integrity first: a message you cannot trust is worse than a missing
-            # one, because you will act on it.
-            damage = _verify_outbox_record(rec)
-            if damage:
-                print(f"    !!! DAMAGED: {damage}")
-            print("    " + rec["body"].replace("\n", "\n    "))
-            if rec.get("ack_required") and not rec.get("acked_at"):
-                print(f"    >>> the sender asked for an ack: "
-                      f"aim confirm --as {who} --msg-id {rec.get('msg_id')}")
-            print()
-            sys.stdout.flush()
-        except BrokenPipeError:
-            # The reader closed before this record's last byte left the process,
-            # so this record was NOT delivered and must NOT be claimed. Point the
-            # real fd at devnull instead of closing sys.stdout: the interpreter
-            # flushes stdout once more at exit, a close-flush on a broken pipe
-            # would raise again (BrokenPipeError is what it hit on the way here),
-            # and an unused assignment leaves the dead pipe in place for that same
-            # final flush. dup2 gives the shutdown flush a target that cannot fail.
-            # The note below is all the trace this path is allowed to earn.
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-            cut = i
-            break
-        if args.claim and not rec.get("claimed_at"):
-            rec["claimed_at"] = now_iso()
-            write_json(p, rec)
-            claimed += 1
-    unclaimed = len(unread) - claimed
-    if cut < len(show):
-        print(f"\nnote: the reader stopped after {cut - 1} of {len(show)} message(s); "
-              f"{unclaimed} message(s) remain unread and unclaimed",
-              file=sys.stderr)
+    if args.claim and delivered:
+        for p, rec in show:
+            if not rec.get("claimed_at"):
+                rec["claimed_at"] = now_iso()
+                write_json(p, rec)
+                claimed += 1
+    if not delivered and unread:
+        print(f"\nnote: the output did not reach the reader ({len(unread)} message(s)"
+              f" not delivered); claimed 0", file=sys.stderr)
+        sys.exit(1)
     if args.claim and claimed:
-        try:
-            print(f"claimed {claimed} message(s)" +
-                  (f", {unclaimed} still unread" if unclaimed else ""))
-        except BrokenPipeError:  # the reader closed after the last record's flush
-            pass
+        print(f"claimed {claimed} message(s)")
 
 
 def cmd_nudge(args):

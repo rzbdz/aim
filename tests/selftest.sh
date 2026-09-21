@@ -274,28 +274,50 @@ expect_fail "confirming a message you never received is refused" \
   $AIM confirm --as beta --msg-id 20200101T000000.000Z-nobody
 
 echo "== claim order: a reader that stops early must not leave a false claim =="
-# T-0146. `pull --claim` used to mark each message claimed on the authority of a
-# buffered print, so a consumer that closed the pipe early (head, `| true`) let the
-# earlier messages be claimed even though their bytes never left the process, and
-# `confirm` then accepted an ack for a message nobody read. A claim is an
-# attestation of a read; it may only be written after this message's bytes flushed.
-# Give beta a fresh unread message whose body is larger than the kernel pipe
-# buffer (64 KiB): a consumer that stops reading before the bytes arrive then
-# forces EPIPE on the write, so the flush cannot succeed and the record must not
-# be claimed. A body that fits the pipe buffer may legitimately be claimed even
-# under `| true`, because those bytes did leave the process into the pipe — that
-# is a race, not a false claim, and a test must not assert on it.
+# T-0146, and design/06 R4 which codex wrote while I was fixing it: a claim follows
+# a *completed delivery of the complete output*, never a buffered or per-record
+# print. `pull --claim` used to mark each message claimed on the authority of a
+# buffered print, so a consumer that stopped reading early left the earlier
+# messages claimed even though their bytes never left the process, and `confirm`
+# then accepted an ack for a message nobody read. R4 is deliberately all-or-
+# nothing: a false "read" costs an ack the sender trusts, while a repeated read
+# costs one `pull`.
+# The shape that reproduces the bug is SMALL first, then over the pipe buffer:
+# the small message's buffered print is claimed before the large message's write
+# forces the EPIPE. A single large message does not reproduce it — the large
+# write raises before any claim — so a test with only that cannot tell fixed from
+# broken. [measured against the pre-fix bin/aim: smallthen+big gives the small
+# message claimed and `confirm` accepting an ack for it; large-only gives neither]
 BIG=$(mktemp); python3 -c "print('X'*100000)" > "$BIG"
-NEWM=$($AIM push --as alpha --to beta --subject "t0146" --body-file "$BIG" \
-  | grep -o 'msg[0-9TZ.\-]*' | head -1)
+$AIM push --as alpha --to beta --subject "small-before-big" --body "tiny" >/dev/null
+$AIM push --as alpha --to beta --subject "t0146-big" --body-file "$BIG" >/dev/null
+# read the id back from the record rather than grepping the push output: the grep
+# produced an empty id here, and the confirm assertion below was then green for the
+# wrong reason (it refused an empty --msg-id, not the claim gap). We assert on the
+# SMALL record: it is the one that fits the pipe buffer and is therefore the one
+# the old code falsely claimed. [measured: with the *big* record, whose write
+# raises before any claim, the assertion passed on the old code too — a test that
+# is green when broken]
+SMALLM=$(python3 -c "
+import json,glob
+print([json.load(open(p))['msg_id'] for p in glob.glob('$AIM_ROOT/outbox/beta/*.json')
+       if json.load(open(p)).get('subject')=='small-before-big'][0])")
+[ -n "$SMALLM" ] || { echo "FATAL: could not read msg_id for T-0146 block"; exit 2; }
 expect_ok   "a pull into a reader that stops early does not crash" \
   bash -c "
     err=\$(mktemp)
     $AIM pull --as beta --claim 2>\$err | true
     rc=\${PIPESTATUS[0]}
     ! grep -q 'Traceback' \$err && [ \$rc -ne 120 ]; rm -f \$err"
-expect_fail "confirming what that reader never received is refused" \
-  bash -c "$AIM confirm --as beta --msg-id '$NEWM' 2>&1 | grep -q 'have not read it'"
+expect_ok   "and it claims none of what did not arrive (R4: no partial credit)" \
+  bash -c "
+    python3 -c \"
+import json,glob,sys
+recs=[json.load(open(p)) for p in glob.glob('$AIM_ROOT/outbox/beta/*.json')]
+small=[r for r in recs if r['msg_id']=='$SMALLM'][0]
+sys.exit(0 if not small.get('claimed_at') else 1)\""
+expect_ok   "confirming what that reader never received is refused" \
+  bash -c "$AIM confirm --as beta --msg-id '$SMALLM' 2>&1 | grep -q 'have not read it'"
 rm -f "$BIG"
 
 echo "== identity: an id cannot be taken over quietly =="
