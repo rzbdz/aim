@@ -1,0 +1,112 @@
+#!/usr/bin/env sh
+# Doorbell, first working version: surface the outbox on a session's next turn.
+#
+# The problem this solves, stated exactly
+# ---------------------------------------
+# "A durable record is not delivery." A push lands in outbox/<you>/ and stays
+# there until *you* run `aim pull`. Nothing wakes you. In the first two-vendor
+# exchange that cost real time: a message sat unread in codex's outbox until its
+# session happened to have a live turn. `aim confirm` measures the gap; this
+# closes it.
+#
+# How it works
+# ------------
+# Both harnesses here (Claude Code and Codex) run a shell command on
+# UserPromptSubmit and feed its stdout to the model. So a hook that prints your
+# unread messages makes them part of the next turn, with no polling loop, no
+# daemon, and no vendor API. The contract is one line long: print text, and the
+# session sees it.
+#
+# Install (either harness, same script):
+#
+#   Claude Code  ~/.claude/settings.json
+#     "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command",
+#       "command": "/root/tmp/agent-im/bin/aim-doorbell-hook <your-agent-id>"}]}]}
+#
+#   Codex        ~/.codex/hooks.json, same shape, key "UserPromptSubmit"
+#
+# Why this is a hook and not a feature of `aim`
+# ---------------------------------------------
+# `aim` must not know how any harness wakes a session. The hook is harness glue
+# and belongs outside the tool: it is the *only* file here that would need
+# rewriting for a third vendor, and deleting it costs nothing because the
+# durable record is untouched. That is the opposite of the queue-based doorbell
+# the design started with, which depended on a local daemon and was therefore
+# exactly the vendor internals this project is supposed to avoid.
+#
+# Cost: one process per turn, and it prints nothing when there is nothing to
+# say, so a quiet outbox is invisible.
+#
+# Limits, stated rather than implied:
+#   * It fires on the *next prompt*. If a session is idle with no user at the
+#     keyboard, nothing fires and nothing is delivered. This turns "asleep
+#     forever" into "asleep until spoken to", which is a real improvement and is
+#     not the same as waking an idle process.
+#   * It does not mark messages claimed. Reading and claiming stay separate, so
+#     a hook that fires twice cannot silently acknowledge on your behalf.
+
+set -u
+
+AGENT="${1:-${AIM_AGENT:-}}"
+AIM="${AIM_BIN:-/root/tmp/agent-im/bin/aim}"
+ROOT="${AIM_ROOT:-/root/tmp/agent-im}"
+MAX_BYTES="${AIM_DOORBELL_MAX_BYTES:-6000}"
+
+# No id, no aim, no outbox -> say nothing and exit 0. A doorbell that breaks a
+# session start is worse than no doorbell.
+[ -n "$AGENT" ] || exit 0
+[ -x "$AIM" ] || exit 0
+[ -d "$ROOT/outbox/$AGENT" ] || exit 0
+
+# Count only unread, non-receipt messages: a receipt is a delivery fact, not
+# something anyone needs to be interrupted for.
+PENDING=$(python3 - "$ROOT" "$AGENT" <<'PY' 2>/dev/null || echo 0
+import json, pathlib, sys
+root, agent = pathlib.Path(sys.argv[1]), sys.argv[2]
+d = root / "outbox" / agent
+n = 0
+for p in sorted(d.glob("*.json")):
+    try:
+        r = json.loads(p.read_text())
+    except Exception:
+        continue
+    if not r.get("claimed_at") and not r.get("receipt_for"):
+        n += 1
+print(n)
+PY
+)
+
+[ "$PENDING" -gt 0 ] 2>/dev/null || exit 0
+
+echo "──────────────────────────────────────────────────────────────────────"
+echo "aim: $PENDING unread message(s) waiting in your outbox, agent '$AGENT'."
+echo "These were delivered to you and are part of your turn now."
+echo
+python3 - "$ROOT" "$AGENT" "$MAX_BYTES" <<'PY'
+import json, pathlib, sys
+root, agent, cap = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+d = root / "outbox" / agent
+shown = 0
+for p in sorted(d.glob("*.json")):
+    try:
+        r = json.loads(p.read_text())
+    except Exception:
+        continue
+    if r.get("claimed_at") or r.get("receipt_for"):
+        continue
+    if shown >= cap:
+        print("  (more messages truncated — run `aim pull --as %s`)" % agent)
+        break
+    body = r.get("body", "")
+    print(f"--- from {r.get('from')}  {r.get('ts', '')[:19]}  msg_id={r.get('msg_id', '(none)')}")
+    if r.get("subject"):
+        print(f"    subject: {r['subject']}")
+    print("    " + body.replace("\n", "\n    "))
+    if r.get("ack_required"):
+        print(f"    >>> a receipt was requested: aim confirm --as {agent} --msg-id {r.get('msg_id')}")
+    print()
+    shown += len(body)
+print("To read these as messages and mark them claimed:  aim pull --as %s --claim" % agent)
+PY
+echo "──────────────────────────────────────────────────────────────────────"
+exit 0

@@ -268,6 +268,54 @@ def t_delivery_metrics():
           "no receipt landed in the sender's outbox")
 
 
+def t_doorbell():
+    section("the doorbell: delivery without a polling loop")
+    fresh()
+    run(["register", "--as", "me", "--kind", "claude"])
+    run(["register", "--as", "peer", "--kind", "codex"])
+    hook = "/root/tmp/agent-im/bin/aim-doorbell-hook"
+    env = dict(os.environ, AIM_ROOT=ROOT)
+
+    def ring(agent):
+        p = subprocess.run([hook, agent], env=env, capture_output=True, text=True, timeout=30)
+        return p.stdout, p.returncode
+
+    out, rc = ring("me")
+    check("a quiet outbox makes the hook silent, not noisy", out == "" and rc == 0,
+          f"said {len(out)} chars into an empty outbox")
+    out, rc = ring("")
+    check("no agent id -> silent, so it cannot break a session start", out == "" and rc == 0)
+    out, rc = ring("nobody-registered")
+    check("unknown agent -> silent", out == "" and rc == 0)
+
+    run(["push", "--as", "peer", "--to", "me", "--subject", "review", "--body",
+         "an unread message that must reach the session", "--require-ack"])
+    out, rc = ring("me")
+    check("an unread message rings the doorbell", "must reach the session" in out,
+          f"hook said {len(out)} chars")
+    check("and it tells the session the receipt is owed", "aim confirm" in out)
+    check("and it does not silently claim on the agent's behalf",
+          not any(json.loads(p.read_text()).get("claimed_at")
+                  for p in pathlib.Path(f"{ROOT}/outbox/me").glob("*.json")),
+          "the hook marked the message read; reading and claiming must stay separate")
+
+    # A receipt is a delivery fact, not something to interrupt a session for.
+    mid = [json.loads(p.read_text())["msg_id"] for p in pathlib.Path(f"{ROOT}/outbox/me").glob("*.json")][0]
+    run(["pull", "--as", "me", "--claim"])
+    run(["confirm", "--as", "me", "--msg-id", mid])
+    run(["push", "--as", "me", "--to", "peer", "--subject", "x", "--body", "y", "--require-ack"])
+    pmid = [json.loads(p.read_text())["msg_id"] for p in pathlib.Path(f"{ROOT}/outbox/peer").glob("*.json")][0]
+    run(["pull", "--as", "peer", "--claim"])
+    run(["confirm", "--as", "peer", "--msg-id", pmid])
+    out, rc = ring("me")
+    check("a receipt does not ring the doorbell", out == "", f"said {len(out)} chars for a receipt")
+
+    # Broken environment must not break the session.
+    env2 = dict(os.environ, AIM_ROOT=ROOT, AIM_BIN="/nonexistent")
+    p = subprocess.run([hook, "me"], env=env2, capture_output=True, text=True, timeout=30)
+    check("a missing aim binary is survivable", p.returncode == 0)
+
+
 def t_cold_peer_replay():
     section("the doorbell gap, measured rather than asserted")
     fresh()
@@ -275,9 +323,12 @@ def t_cold_peer_replay():
     run(["register", "--as", "b", "--kind", "codex"])
     run(["push", "--as", "a", "--to", "b", "--subject", "urgent", "--body", "you need to see this", "--require-ack"])
 
-    # Simulate a peer that is simply not running: nothing polls. The record is
-    # durable and the sender has no way to distinguish this from a peer that read
-    # it and disagreed.
+    # Simulate a peer that is simply not running and whose hook never fires
+    # because no prompt ever arrives. The record is durable and the sender has no
+    # way to distinguish this from a peer that read it and disagreed. The new
+    # UserPromptSubmit doorbell (t_doorbell) turns "asleep forever" into "asleep
+    # until spoken to" — which is an improvement and is not the same as waking an
+    # idle process, so this check stays as the honest floor.
     time.sleep(0.3)
     out = run(["outbox", "--as", "a"])
     check("a message to a sleeping peer stays unacked indefinitely",
@@ -357,7 +408,7 @@ def main():
     print(f"conformance harness — real processes, throwaway root {ROOT}")
     for fn in (t_concurrent_registration, t_concurrent_say, t_concurrent_same_agent,
                t_crash_recovery, t_recovery_without_human, t_delivery_metrics,
-               t_cold_peer_replay, t_barrier_progression, t_identity_collision):
+               t_doorbell, t_cold_peer_replay, t_barrier_progression, t_identity_collision):
         try:
             fn()
         except Exception as exc:
