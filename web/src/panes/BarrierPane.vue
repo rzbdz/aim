@@ -42,6 +42,12 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
           A hash chain is not a signature: it proves the file was not edited without also editing every
           later line, and it says nothing about who wrote the first one.
         </p>
+        <el-alert v-if="ch.tasks_unknown_events" type="warning" :closable="false" show-icon
+                  style="margin-top:8px" title="the store holds events the fold could not place">
+          {{ ch.tasks_unknown_events }} event(s) name a task whose creation is not in this store. They are not
+          on the board: a `moved` for a card that was never created is either a foreign writer or a truncated
+          file, and either way the board would be quietly wrong if this number were not here.
+        </el-alert>
       </el-card>
 
       <el-card shadow="never" style="margin-bottom:14px">

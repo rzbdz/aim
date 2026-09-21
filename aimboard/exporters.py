@@ -67,6 +67,9 @@ def json_payload(state, viewer, risks, generated_at):
         "root": state["root"],
         "viewer": viewer,
         "withheld_tasks": hidden,
+        # an event the fold could not place: dropped from the board, so it has to
+        # be visible somewhere or the board is quietly wrong
+        "unplaced_events": state.get("unplaced_events", 0),
         "phases": {c["id"]: {"phase": c["phase"], "round": c["round"],
                              "participants": c["participants"], "leader": c["leader"],
                              "sealed": sorted(c["seals"]), "refusals": len(c["refusals"])}

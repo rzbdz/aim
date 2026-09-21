@@ -94,16 +94,26 @@ def fixture(root, phase="SEALED_DIVERGENT"):
            "private_log_hashes": ["y"],
            "claims": [{"id": "c2", "claim": PEER_SEAL, "confidence": 0.9, "kill_if": "k2"}]})
     jsonl(ch / "tasks.jsonl", [
-        {"ts": "2026-09-21T00:00:01Z", "event": "task.created", "id": "T-9001", "actor": "codex",
+        # The writer's own spelling: `aim task new` emits `event: "created"` with
+        # the id in `task`. This fixture used to write `task.created` + `id`, which
+        # the fold also accepts -- so "the renderer tolerates both spellings" was
+        # really "the fixture had a typo and the renderer was taught to live with
+        # it", and a tolerance that exists to excuse one file cannot tell a real
+        # event from a foreign one.
+        {"ts": "2026-09-21T00:00:01Z", "event": "created", "task": "T-9001", "actor": "codex",
          "title": PEER_DRAFT, "owner": "codex", "status": "doing", "visibility": "draft",
          "start": "2026-09-21", "due": "2026-09-23", "blocked_by": [], "milestone": "M9"},
-        {"ts": "2026-09-21T00:00:02Z", "event": "task.created", "id": "T-9002", "actor": "claude-session1",
+        {"ts": "2026-09-21T00:00:02Z", "event": "created", "task": "T-9002", "actor": "claude-session1",
          "title": "a published item", "owner": "claude-session1", "status": "done",
          "visibility": "published", "start": "2026-09-21", "due": "2026-09-22",
          "blocked_by": ["T-9001"], "milestone": "M9"},
-        {"ts": "2026-09-21T00:00:03Z", "event": "task.created", "id": "T-9003", "actor": "codex",
+        {"ts": "2026-09-21T00:00:03Z", "event": "created", "task": "T-9003", "actor": "codex",
          "title": XSS, "owner": "codex", "status": "review", "visibility": "published",
          "start": "2026-09-22", "due": "2026-09-25", "blocked_by": [], "milestone": "M9"},
+        # an event the fold cannot place: a move for a task whose creation the
+        # fabric never saw. It must be counted and reported, not silently dropped.
+        {"ts": "2026-09-21T00:00:04Z", "event": "moved", "task": "T-9999", "actor": "codex",
+         "status": "doing"},
     ])
     jsonl(ch / "rooms" / "dev.jsonl", [
         {"ts": "2026-09-21T00:00:04Z", "agent": "codex", "body": ROOM_DRAFT,
@@ -243,6 +253,9 @@ def main():
               "T-9001" in doc["tasks"] and "T-9004" in doc["tasks"])
         check("--json reports the phase", doc["phases"]["hello"]["phase"] == "SEALED_DIVERGENT")
         check("--json reports the withheld count", doc["withheld_tasks"] == 0)
+        check("an event the fold could not place is counted, not silently dropped",
+              doc["unplaced_events"] == 1,
+              json.dumps({k: doc[k] for k in ("unplaced_events",)}))
         p = subprocess.run([sys.executable, str(BOARD), "render", "--root", str(root), "--json",
                             "--as", "claude-session1"], capture_output=True, text=True, timeout=120)
         doc = json.loads(p.stdout)

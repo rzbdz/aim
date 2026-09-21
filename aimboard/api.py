@@ -40,6 +40,11 @@ def channel_payload(state, ch, viewer):
         "participants": ch["participants"], "history": ch["history"],
         "sealed": sealed, "chain": ch["chain"], "tasks_recorded": len(ch["tasks_recorded"]),
         "tasks_store_exists": ch["tasks_exists"],
+        # The fold counts events it could not place (a `moved` for a task whose
+        # `created` never appeared, say) and nobody was reading the number, which
+        # is the "well-formed and missing a fact" failure this project keeps
+        # finding: a log that silently drops events still draws a clean board.
+        "tasks_unknown_events": ch.get("tasks_unknown_events", 0),
         "refusals": [{"ts": r.get("ts", ""), "agent": r.get("agent", ""),
                       "action": r.get("action", ""), "class": r.get("class", ""),
                       "phase": r.get("phase", ""), "reason": r.get("reason", "")}
@@ -74,6 +79,7 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         "write": write or {"enabled": False, "as": ""},
         "phase": channel.get("phase", "-"),
         "withheld_tasks": hidden,
+        "unplaced_events": state.get("unplaced_events", 0),
         "channels": [channel_payload(state, ch, viewer) for ch in state["channels"]],
         "tasks": tasks,
         "milestones": state["milestones"],

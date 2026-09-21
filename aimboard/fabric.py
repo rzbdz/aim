@@ -177,6 +177,11 @@ def load_fabric(root, plans, as_of):
         "root": str(root),
         "as_of": as_of.isoformat(),
         "registry": registry,
+        # One fact, computed where the fold happens, read by every serialiser:
+        # the two payload builders below (api.payload for the dashboard,
+        # exporters.json_payload for foreign tools) must not each derive it, or
+        # they become two answers to one question.
+        "unplaced_events": sum(c.get("tasks_unknown_events", 0) for c in channels),
         "channels": channels,
         "milestones": milestones,
         "seed_tasks": seed_tasks,
