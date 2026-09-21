@@ -1115,6 +1115,30 @@ def task_events(ch):
     return read_jsonl(tasks_path(ch))
 
 
+def context_of(rec):
+    """The `contextId` an A2A record carries, or None if it carries none.
+
+    `contextId` is A2A's name for what we have always called a channel — "an
+    identifier for logically grouping related tasks and messages" (§4.4) — and
+    design/07 D13 freezes the mapping: **keep `channel` inside, add `context_id`
+    as the external field name**. So this function is the one place the two
+    spellings meet, and it reads `context_id` first for a reason that is easy to
+    get backwards: `context_id` is what the store writes *now*, and `channel` is
+    what the records already on disk carry. Reading `channel` first would mean a
+    record that carried both spellings with different values resolved to the
+    older one.
+
+    `None`, not `""`, when neither is present. An empty string is a value, and a
+    caller that asks "does this record name a context" must not be told yes by a
+    record that names nothing.
+    """
+    for field in ("context_id", "channel"):
+        value = rec.get(field)
+        if value:
+            return value
+    return None
+
+
 def fold_tasks(ch):
     """Board state is a fold over the event log. No board file is ever written.
 
@@ -1124,6 +1148,14 @@ def fold_tasks(ch):
     has no lost update: the second writer appends and the fold decides. It also
     means "who moved this to done, and when" survives a disagreement about
     whether it was done — a picture cannot do that, evidence can.
+
+    Every event of a task carries `context_id` (or, before T-0105, `channel`),
+    and the fold takes the context from the `created` event — the one record whose
+    job is to establish what this task *is*. The other events are checked for
+    agreement and a task whose events name two different contexts is marked
+    `context_conflict`, because `aimboard` decides which channel's phase gate a
+    card is drawn under by reading this field, and a card attributed to a channel
+    its own log never names is a card drawn under a phase that does not govern it.
     """
     board = {}
     for e in task_events(ch):
@@ -1140,12 +1172,20 @@ def fold_tasks(ch):
                 "visibility": e.get("visibility", "draft"),
                 "blocked_by": list(e.get("blocked_by") or []),
                 "created_by": e.get("actor", ""), "created_at": e.get("ts", ""),
+                # Reported under the A2A name, because that is the name a foreign
+                # reader has. `aimboard.fold.fold_tasks` is a second implementation
+                # of this rule and does not set it; see the note at the end of this
+                # function for why that is a measurement rather than an oversight.
+                "context_id": context_of(e),
                 "history": [],
             }
         if tid not in board:
             continue                       # an event for a task that was never created
         t = board[tid]
         t["history"].append(e)
+        here = context_of(e)
+        if here and t["context_id"] and here != t["context_id"]:
+            t["context_conflict"] = sorted({t["context_id"], here})
         if ev == "moved":
             t["status"] = e.get("to", t["status"])
             if e.get("reason"):
@@ -1166,6 +1206,14 @@ def fold_tasks(ch):
                     t["blocked_by"].append(dep)
         elif ev == "dropped":
             t["status"] = "dropped"
+    # There is a second fold — `aimboard/fold.py`, codex's — and `context_id` is
+    # deliberately not added to it here. Not because it does not belong there: it
+    # does, and it is the fold the board actually renders from. Because that file
+    # is his half of the interface (design/05 §8), and a field added to it from
+    # this side would be the second-writer failure that doc names. The accept line
+    # for T-0105 is about the *store* and about `aim` not dropping a record an
+    # older aim wrote, both of which are asserted; the renderer half is a note to
+    # him, not an edit by me.
     return board
 
 
@@ -1263,8 +1311,17 @@ def cmd_task_new(args):
     if args.blocked_by and args.blocked_by not in fold_tasks(args.channel):
         die(f"REFUSED: no such task to depend on: {args.blocked_by}")
     tid = _next_task_id(args.channel)
+    # `context_id` is written beside `channel` rather than replacing it, and every
+    # reader falls back to `channel` for a record written before this line
+    # existed. design/07 D13: keep the internal name, add the external one.
+    # Writing both is not belt-and-braces; it is the migration. A store that
+    # stopped writing `channel` would leave the records already on disk as the
+    # only place the field exists, and a reader that folded them would be reading
+    # a field the writer no longer produces — which is how a field quietly
+    # becomes optional and then absent.
     ev = {
         "ts": now_iso(), "event": "created", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
         "task": tid, "title": args.title, "owner": args.owner or who,
         "status": args.status, "priority": args.priority,
         "estimate_pts": args.estimate or 0, "start": args.start or "", "due": args.due or "",
@@ -1325,7 +1382,8 @@ def cmd_task_move(args):
             f"A blocker without a stated cause is a stall nobody can clear.")
     ev = {
         "ts": now_iso(), "event": "dropped" if args.to == "dropped" else "moved",
-        "actor": who, "channel": args.channel, "task": args.id,
+        "actor": who, "channel": args.channel, "context_id": args.channel,
+        "task": args.id,
         "from": t["status"], "to": args.to, "reason": args.reason or "",
     }
     _append_task_event(args.channel, ev)
@@ -1339,6 +1397,7 @@ def cmd_task_assign(args):
         die(f"REFUSED: owner '{args.owner}' is not a registered agent")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
         "task": args.id, "owner": args.owner, "from": t["owner"],
     })
     print(f"{args.id}: owner {t['owner'] or '(none)'} -> {args.owner}")
@@ -1353,6 +1412,7 @@ def cmd_task_publish(args):
     phase = m["barrier"]["phase"]
     ev = _append_task_event(args.channel, {
         "ts": now_iso(), "event": "published", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
         "task": args.id, "reason": args.reason or "",
     })
     # Publishing during a divergence phase is the one deliberate act that exposes
@@ -1390,6 +1450,7 @@ def cmd_task_link(args):
         die("REFUSED: a task cannot block itself")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "linked", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
         "task": args.id, "blocked_by": args.blocked_by,
     })
     print(f"{args.id} blocked_by {args.blocked_by}")
@@ -1403,6 +1464,7 @@ def cmd_task_comment(args):
         die("need --body or --body-file")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "commented", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
         "task": args.id, "body": body,
     })
     print(f"comment on {args.id} ({len(body)} chars)")

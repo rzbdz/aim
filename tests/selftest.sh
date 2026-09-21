@@ -663,6 +663,91 @@ expect_fail "a shared path declared after the fact still refuses the next transi
   bash -c "$AIM channel workspace --as human --channel dev --set beta='$WORK' >/dev/null &&
            $AIM advance --as human --channel dev --to COMMIT --force"
 
+echo "== context_id: one channel, two spellings, and the fold accepts both =="
+# T-0105, and the accept line names the failure it is guarding against: "the fold
+# does not silently drop a task written by an older aim". This is a rename done
+# the way a rename in a store with records already on disk has to be done — the
+# new field is *added* beside the old one, and every reader accepts either. A
+# store that switched spellings instead would leave the records already on disk as
+# the only place `channel` exists, which is how a field becomes optional and then
+# becomes absent with nobody deciding it.
+#
+# Its own channel, so the ids and the chains the blocks above assert on cannot
+# move. [measured: pointing this at `t` first failed on a missing
+# `tasks.jsonl` — `t` is the *message* fixture and has no work items — and then
+# a hand-appended record without a hash made `aim verify` report TAMPER. Both
+# were the fixture's fault, and the second is the interesting one: an older aim
+# wrote a valid chain, so the fixture has to write one too.]
+CTXCH=ctx
+expect_ok   "open a channel for the rename" \
+  $AIM new-channel --id $CTXCH --topic "context_id" --participants alpha,beta --leader human
+expect_ok   "a work item in the current store" \
+  $AIM task new --as alpha --channel $CTXCH --title "written by the current store"
+expect_ok   "a second one, so the ids below are not the first allocation" \
+  $AIM task new --as alpha --channel $CTXCH --title "a second one"
+expect_ok   "and one that moves and is commented on, to exercise every event kind" \
+  bash -c "$AIM task move --as alpha --channel $CTXCH --id T-0001 --to ready >/dev/null &&
+           $AIM task assign --as alpha --channel $CTXCH --id T-0001 --owner beta >/dev/null &&
+           $AIM task comment --as alpha --channel $CTXCH --id T-0001 --body 'a comment' >/dev/null"
+expect_ok   "the store writes context_id beside channel" \
+  bash -c "python3 -c \"
+import json,sys
+e=[json.loads(l) for l in open('$AIM_ROOT/channels/$CTXCH/tasks.jsonl')
+   if json.loads(l).get('event')=='created'][0]
+sys.exit(0 if e.get('context_id')=='$CTXCH' and e.get('channel')=='$CTXCH' else 1)\""
+expect_ok   "every kind of task event carries it, not just the ones that are easy" \
+  bash -c "python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$AIM_ROOT/channels/$CTXCH/tasks.jsonl')]
+sys.exit(0 if ev and all(e.get('context_id')=='$CTXCH' for e in ev) else 1)\""
+# A `created` record exactly as the pre-T-0105 store wrote it, chained the way the
+# store chains — `channel` and no `context_id` — plus a `moved` record for it in
+# the same generation, because the interesting case is a task whose *whole*
+# history predates the rename. Written through the tool's own append_chained
+# rather than by hand: a fixture that writes an unchained record is testing
+# `aim verify`, not the fold.
+export CTX_TASKS="$AIM_ROOT/channels/$CTXCH/tasks.jsonl"
+export CTX_AIM="$AIM"
+python3 - <<'PY'
+import importlib.machinery, importlib.util, json, os
+loader = importlib.machinery.SourceFileLoader("aimtool", os.environ["CTX_AIM"])
+spec = importlib.util.spec_from_loader("aimtool", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)
+path = mod.Path(os.environ["CTX_TASKS"])
+mod.append_chained(path, {
+    "ts": "2026-09-01T00:00:00.000Z", "event": "created", "actor": "alpha",
+    "channel": "ctx", "task": "T-0099", "title": "a work item an older aim wrote",
+    "owner": "alpha", "status": "backlog", "priority": "normal",
+    "visibility": "published", "blocked_by": [],
+})
+mod.append_chained(path, {
+    "ts": "2026-09-01T00:01:00.000Z", "event": "moved", "actor": "alpha",
+    "channel": "ctx", "task": "T-0099", "from": "backlog", "to": "ready",
+})
+print("        (appended two records in the pre-T-0105 shape, properly chained)")
+PY
+expect_ok   "a task written before the rename is still on the board" \
+  bash -c "$AIM task list --as alpha --channel $CTXCH | grep -q 'an older aim wrote'"
+expect_ok   "and its later events folded onto it rather than being dropped" \
+  bash -c "python3 -c \"
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('aimtool', '$AIM')
+spec = importlib.util.spec_from_loader('aimtool', loader)
+mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+t = mod.fold_tasks('$CTXCH')['T-0099']
+sys.exit(0 if t['status']=='ready' and len(t['history'])==2 else 1)\""
+expect_ok   "the fold reports its context under the A2A name, from either spelling" \
+  bash -c "python3 -c \"
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('aimtool', '$AIM')
+spec = importlib.util.spec_from_loader('aimtool', loader)
+mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+b = mod.fold_tasks('$CTXCH')
+sys.exit(0 if b['T-0099']['context_id']=='$CTXCH' and b['T-0001']['context_id']=='$CTXCH' else 1)\""
+expect_ok   "the chain is intact across both generations of writer" \
+  $AIM verify --channel $CTXCH
+
 echo "== a verifier cannot die on the input it exists to judge =="
 # Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
 # whose entire job is to describe damage raised KeyError on a seal that had no
