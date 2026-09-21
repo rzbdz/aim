@@ -748,6 +748,105 @@ sys.exit(0 if b['T-0099']['context_id']=='$CTXCH' and b['T-0001']['context_id']=
 expect_ok   "the chain is intact across both generations of writer" \
   $AIM verify --channel $CTXCH
 
+echo "== the doorbell is an object now, and the hook is still the doorbell =="
+# T-0106, and the accept line has three clauses that pull in different directions:
+# "a push notification config carries url, token and authenticationInfo as the spec
+# defines; the local hook stays the default and the config is additive; a config
+# with no token is refused".
+#
+# The middle clause is the one worth testing rather than asserting, and the only
+# way to test it is to *run the hook* and compare its bytes. A config that changed
+# what the hook prints would have made the local doorbell conditional on a webhook
+# somewhere else — which is the daemon-dependent queue the design rejected, arrived
+# at sideways.
+BELLCH=bell
+expect_ok   "open a channel for the doorbell" \
+  $AIM new-channel --id $BELLCH --topic "doorbell" --participants alpha,beta --leader human
+expect_ok   "a work item for the config to be about" \
+  $AIM task new --as alpha --channel $BELLCH --title "a task with a doorbell"
+expect_ok   "no config yet, so the hook's output now is the baseline" \
+  bash -c "$AIM push --as alpha --to beta --body 'ring ring' >/dev/null &&
+           env AIM_AGENT=beta $PWD/bin/aim-doorbell-hook beta > '$TMPD/hook-before'"
+expect_ok   "a config carries url, token and authenticationInfo, per §4.3.1" \
+  bash -c "$AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+             --url https://hooks.example.invalid/a2a --token s3cret >/dev/null &&
+           python3 -c \"
+import json,sys
+r=[json.loads(l) for l in open('$AIM_ROOT/channels/$BELLCH/push.jsonl')][-1]
+ok = (r['url']=='https://hooks.example.invalid/a2a' and r['token']=='s3cret'
+      and r['authenticationInfo']['scheme']=='Bearer'
+      and r['authenticationInfo']['credentials']=='s3cret')
+sys.exit(0 if ok else 1)\""
+expect_ok   "and the hook still prints exactly what it printed before the config" \
+  bash -c "env AIM_AGENT=beta $PWD/bin/aim-doorbell-hook beta > '$TMPD/hook-after' &&
+           diff -q '$TMPD/hook-before' '$TMPD/hook-after'"
+expect_fail "a config with no token is refused" \
+  $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+    --url https://hooks.example.invalid/b
+expect_ok   "...and the refusal reached the ledger with the verb that caused it" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$AIM_ROOT/channels/$BELLCH/ledger.jsonl')
+    if json.loads(l).get('event')=='refusal']
+sys.exit(0 if any('token' in r['reason'] and r['action']=='task doorbell create'
+                  for r in rs) else 1)\""
+# The token check being the *tool's* refusal rather than argparse's is not
+# cosmetic: with `--token required=True`, rc was 2 from argparse, the usage block
+# went to stderr, `note_context` never ran, and the ledger stayed empty — a
+# refusal with no record, which is the one artifact that answers "did anyone try
+# this". Asserted here as the absence of a usage block, which is what the two
+# paths differ by on the surface.
+expect_fail "and it is a tool refusal, not a usage error" \
+  bash -c "$AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+             --url https://hooks.example.invalid/b 2>&1 | grep -q '^usage:'"
+expect_fail "a config whose two secrets disagree is refused" \
+  $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+    --url https://hooks.example.invalid/c --token one --credentials two
+expect_fail "a webhook that cannot receive an HTTP POST is refused" \
+  $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+    --url file:///tmp/hook --token s3cret
+expect_fail "and a remote webhook over plain http is refused" \
+  $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+    --url http://example.com/hook --token s3cret
+expect_ok   "a local one over plain http is not, because §13.2 says SHOULD" \
+  $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+    --url http://localhost:9000/hook --token s3cret
+expect_ok   "re-creating the same webhook does not add a second config" \
+  bash -c "before=\$(wc -l < '$AIM_ROOT/channels/$BELLCH/push.jsonl');
+           $AIM task doorbell create --as alpha --channel $BELLCH --id T-0001 \
+             --url https://hooks.example.invalid/a2a --token rotated >/dev/null;
+           after=\$(wc -l < '$AIM_ROOT/channels/$BELLCH/push.jsonl');
+           [ \"\$before\" = \"\$after\" ]"
+expect_ok   "no read shape returns the token itself" \
+  bash -c "! $AIM task doorbell list --as alpha --channel $BELLCH --id T-0001 --json | grep -q s3cret"
+expect_ok   "and the mask moves when the token does" \
+  bash -c "before=\$($AIM task doorbell list --as alpha --channel $BELLCH --id T-0001 --json);
+           cid=\$(python3 -c \"
+import json,sys
+print(json.loads('''\$before''')[0]['configId'])\");
+           $AIM task doorbell rotate --as alpha --channel $BELLCH --config-id \"\$cid\" \
+             --token entirely-different >/dev/null;
+           after=\$($AIM task doorbell list --as alpha --channel $BELLCH --id T-0001 --json);
+           [ \"\$before\" != \"\$after\" ]"
+expect_ok   "the config's chain is verified with the channel's other files" \
+  $AIM verify --channel $BELLCH
+expect_ok   "and an edited token in it is reported rather than rendered" \
+  bash -c "python3 -c \"
+import pathlib
+p = pathlib.Path('$AIM_ROOT/channels/$BELLCH/push.jsonl')
+p.write_text(p.read_text().replace('s3cret', 'plaintext-edit'))\" &&
+           ! $AIM verify --channel $BELLCH >/dev/null 2>&1 &&
+           $AIM verify --channel $BELLCH 2>&1 | grep -q TAMPER"
+expect_fail "deleting a config that does not exist is refused" \
+  $AIM task doorbell delete --as alpha --channel $BELLCH --config-id cfg-nope
+expect_ok   "deleting one that does removes it from every read shape" \
+  bash -c "cid=\$(python3 -c \"
+import json
+rows=[json.loads(l) for l in open('$AIM_ROOT/channels/$BELLCH/push.jsonl')]
+print([r for r in rows if r.get('event')=='doorbell_created'][-1]['configId'])\");
+           $AIM task doorbell delete --as alpha --channel $BELLCH --config-id \"\$cid\" >/dev/null &&
+           ! $AIM task doorbell list --as alpha --channel $BELLCH --id T-0001 --json | grep -q \"\$cid\""
+
 echo "== a verifier cannot die on the input it exists to judge =="
 # Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
 # whose entire job is to describe damage raised KeyError on a seal that had no

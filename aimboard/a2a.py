@@ -184,8 +184,15 @@ def agent_card(agent, root, *, description=None) -> dict:
             # rather than pretend). Turning this true without a stream is the
             # single most damaging lie this card could tell.
             "streaming": False,
-            # The doorbell is a webhook in everything but name: a config carries
-            # the URL to call and the token to present (T-0106).
+            # True because the object now exists rather than because the idea
+            # does. Until T-0106 this claim rested on `bin/aim-doorbell-hook` —
+            # harness glue that rings on a session's next turn and knows nothing
+            # about A2A — which made the card claim a capability the tool could
+            # not honour. `aim task doorbell create|list|rotate|delete` is the
+            # object the four operations address, and §3.4 is explicit about the
+            # cost of the opposite: with this false, all four MUST answer
+            # `PushNotificationNotSupportedError`, and a card that said false
+            # while the verb worked would be the same lie facing the other way.
             "pushNotifications": True,
             # No extended card: there is nothing we would say to an authenticated
             # caller that we do not say to an anonymous one, and a capability
@@ -925,3 +932,320 @@ def list_tasks(request_id, *, tasks, viewer, channels, registry,
                            include_artifacts=include_artifacts) for t in page],
         "nextPageToken": next_token,
     }}
+
+
+# --------------------------------------------------------------------------
+# Push notification configs: the doorbell, as an object (T-0106)
+# --------------------------------------------------------------------------
+# `bin/aim-doorbell-hook` is the doorbell and is not this. The hook is *harness
+# glue* — it prints your unread outbox on your next turn — and its own header
+# says the thing that makes it correct: "`aim` must not know how any harness
+# wakes a session". Moving it into `aim` would be the queue-based doorbell the
+# design already rejected, and deleting it would cost nothing. So the hook stays
+# the default and stays where it is; what follows is the *object* beside it.
+#
+# So this is not a rewrite and it is not the delivery mechanism. It is the
+# standard shape `bin/aim-doorbell-hook`'s ad-hoc configuration was missing, and
+# the shape is worth having on its own merits, because it is the only place in
+# this fabric where a *secret* is written down (§13.2: "Authentication tokens in
+# TaskPushNotificationConfig SHOULD be treated as secrets and rotated
+# periodically"). That single fact decides most of the design below.
+#
+# §3.1.7's own state freeze. Read off the spec's text, not assumed, because
+# `pushNotifications` is the schema:
+PUSH_FIELDS = ["taskId", "url", "token", "authenticationInfo", "configId", "id"]
+
+# What we do with a field the spec defines and we do not. Refused rather than
+# ignored, and the reason is the serialization the spec mandates rather than
+# caution: §5.5 adopts ProtoJSON, and ProtoJSON's default decision on an unknown
+# field is to **reject** it — a client sending `{"url_": ...}` has made a typing
+# mistake, and a server that ignores it has accepted a webhook config with no
+# URL in it and reported success.
+UNSUPPORTED_FIELDS = {
+    "id": ("the field is sparsely documented in the revision this binding was "
+           "built against (§4.3.1 and §10.5.1 both state the object as a "
+           "generated table) and we will not guess which id it means: `configId` "
+           "is the one the four operations address a config by, and accepting a "
+           "second spelling of identity is how two ids for one thing start"),
+}
+
+# The credential half of `AuthenticationInfo`. §4.3.2's shape is stated as a
+# generated table too; §6.6's example is the only place the field names appear in
+# the clear (`{"scheme": "Bearer", "credentials": "…"}`, and the payload example
+# builds its header as `Authorization: Bearer <credentials>`). That is the source
+# cited here rather than a name we chose.
+AUTH_INFO_FIELDS = ["scheme", "credentials"]
+
+# A URL we will accept a doorbell at. `file:` and bare paths are deliberately
+# excluded and that is not a policy — §4.3.3 says the notification is "an HTTP
+# POST request to the configured webhook URL", so a scheme that cannot receive
+# one is a config that can never fire. §13.2 adds "Webhook URLs SHOULD use HTTPS
+# to protect payload confidentiality in transit": SHOULD, not MUST, so plain
+# `http://localhost` is accepted and a *remote* `http://` is refused, because the
+# only thing travelling in it is a token AND task content.
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+
+def push_config_id(task_id, config) -> str:
+    """A stable, server-assigned id for one config (§3.1.7's "assigned ID").
+
+    Derived from the task and the URL rather than from a counter or a clock, so
+    that re-creating the identical configuration against a task returns the id
+    the caller already has instead of accumulating a second copy of one webhook
+    — an idempotent create, which is what a retrying client needs and what a
+    counter cannot give. `token` and `credentials` are deliberately **not** in
+    the digest: rotating a secret should not orphan the config that carries it.
+    """
+    material = json.dumps({"task": task_id, "url": config.get("url", "")},
+                          sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    return f"cfg-{digest}"
+
+
+def normalise_auth(auth) -> dict:
+    """§4.3.2, camelCase already at the wire so `normalize_keys` has nothing to do."""
+    if auth in (None, ""):
+        return {}
+    if not isinstance(auth, dict):
+        return {"_malformed": auth}
+    return {str(k): v for k, v in auth.items()}
+
+
+def validate_push_config(config):
+    """Every rule a config must satisfy, as `(field, why)` pairs.
+
+    Returned rather than raised because the caller decides which surface it is
+    answering on: a problem here becomes `fieldViolations` in a `-32602` when the
+    caller is a JSON-RPC client, and a one-line sentence when the caller is
+    `aim`'s own CLI. A validator that exited or raised would make that choice for
+    its caller, in the wrong place, and would make the CLI's answer a traceback.
+
+    The field list is checked *first* and the whole check is skipped if it
+    matched, which is load-bearing rather than tidy: a caller who sent
+    `{"url": …, "toke": "x"}` must be told about the typo, not about the missing
+    token the typo caused.
+    """
+    problems = []
+    for field in sorted(config):
+        if field in UNSUPPORTED_FIELDS:
+            problems.append((field, UNSUPPORTED_FIELDS[field]))
+        elif field not in PUSH_FIELDS:
+            problems.append((field, f"not a field of TaskPushNotificationConfig; "
+                                    f"the object is {', '.join(PUSH_FIELDS)}"))
+    if problems:
+        return problems
+
+    auth = config.get("authenticationInfo")
+    if auth not in (None, "") and not isinstance(auth, dict):
+        return [("authenticationInfo",
+                 f"must be an object with {' and '.join(AUTH_INFO_FIELDS)}, got "
+                 f"{type(auth).__name__}")]
+
+    url = config.get("url") or ""
+    token = config.get("token") or ""
+    info = normalise_auth(auth)
+    credentials = info.get("credentials") or ""
+    if not url:
+        problems.append(("url", "a push notification config needs a URL: a doorbell "
+                                "with nowhere to ring is a config that can never fire"))
+    elif not (url.startswith("https://") or url.startswith("http://")):
+        problems.append(("url", f"'{url[:60]}' is not an http(s) URL; §4.3.3 delivers "
+                                f"a notification as an HTTP POST, so no other scheme "
+                                f"can receive one"))
+    elif url.startswith("http://") and len(url.split("/")) > 2 and not any(
+            host in url.split("/")[2] for host in _LOCAL_HOSTS):
+        problems.append(("url", f"'{url[:60]}' is http:// and not local; §13.2 says "
+                                f"webhook URLs SHOULD use HTTPS, and what travels in "
+                                f"one is a token *and* the task content. Use https://, "
+                                f"or localhost."))
+    if not token:
+        # The accept line's own rule: "a config with no token is refused". §4.3.3
+        # is the reason and it is a reason about identity rather than hygiene —
+        # the agent presents the credentials on every notification, so a config
+        # without any is a webhook any process on the host can ring, and the
+        # receiving end has nothing to tell our agent from that process.
+        problems.append(("token", "a push notification config needs a token: §4.3.3 "
+                                  "has the agent present it as `Authorization: "
+                                  "<scheme> <credentials>`, so without one the "
+                                  "config names a webhook that will accept a ring "
+                                  "from anything"))
+    elif credentials and credentials != token:
+        problems.append(("authenticationInfo.credentials",
+                         "disagrees with `token`; §4.3.3 sends the *credentials* as "
+                         "the header value, so a config carrying two different "
+                         "secrets has one it will never present and a reader who "
+                         "checked the other would see it as valid"))
+    return problems
+
+
+def push_config(task_id, config, *, config_id="", reveal_token=False) -> dict:
+    """One config as the wire object, on a read or on a create.
+
+    `reveal_token=False` is the default and is the whole point. §13.2 calls the
+    token a secret to be rotated; a `GetTaskPushNotificationConfig` that returns
+    it hands the secret to whoever can call the operation, and §3.1.8's own text
+    is why that is not a theoretical worry — "The operation MUST fail if the
+    configuration does not exist **or the client lacks access**", which is a
+    sentence about a config being some client's and not another's. So the read
+    shape masks by default, a create echoes back what the caller just sent (they
+    already have it, and a response that hid it would be lying about what was
+    stored), and the full value is reachable only through one verb that says so
+    in its name.
+
+    The mask is not `"***"`: it keeps the length and four characters of the
+    digest, so `--rotate` has something to compare against and a caller can tell
+    "the same token as last time" from "a different one" without being handed
+    either.
+    """
+    auth = normalise_auth(config.get("authenticationInfo"))
+    token = config.get("token") or ""
+    out = {
+        "taskId": task_id,
+        "configId": config_id or push_config_id(task_id, config),
+        "url": config.get("url", ""),
+    }
+    shown = token if reveal_token else mask_secret(token)
+    if shown:
+        out["token"] = shown
+    if auth or token:
+        out["authenticationInfo"] = {
+            "scheme": auth.get("scheme") or "Bearer",
+            "credentials": (auth.get("credentials") or token) if reveal_token
+            else mask_secret(auth.get("credentials") or token),
+        }
+    if config.get("_created_at"):
+        # Not a spec field, and it is in `metadata` rather than beside `url` for
+        # that reason: §3.1.7 says the configuration "MUST persist until task
+        # completion or explicit deletion", and a reader asking why a config
+        # survived needs to know when it was made. A non-spec field at the top
+        # level is the wire shape a strict ProtoJSON client rejects.
+        out["metadata"] = {"aim": {"createdAt": config["_created_at"],
+                                   "rotation": "the token is masked on every read; "
+                                               "`aim task doorbell --rotate` is the "
+                                               "only verb that returns it in the clear"}}
+    return out
+
+
+def mask_secret(secret) -> str:
+    """The shape a masked secret keeps: length, and something to compare against.
+
+    Not a fixed `"***"`. §13.2 asks for rotation, and rotation is a comparison —
+    a caller who cannot tell a rotated token from an unchanged one will rotate
+    on a schedule instead of on evidence. Printing a digest prefix and the length
+    leaks nothing a holder of the token does not already have and makes the
+    comparison possible.
+    """
+    if not secret:
+        return ""
+    digest = hashlib.sha256(str(secret).encode("utf-8")).hexdigest()[:12]
+    return f"<masked:{len(str(secret))}b:sha256:{digest}>"
+
+
+def push_not_supported(request_id, detail, action="CreateTaskPushNotificationConfig"):
+    """`PushNotificationNotSupportedError`, with the one-line way back.
+
+    §3.4's capability rule, applied to us: the operation is answered with this
+    when `AgentCard.capabilities.pushNotifications` is false — and our card says
+    `true`. So this refusal is only ever emitted on a path where that claim does
+    not hold, and the message says which capability would have to be true. A
+    capability the card claims and the tool cannot honour is the card lying, and
+    T-0102's own note is that the claim carries the obligation to test it.
+    """
+    return error_response("PushNotificationNotSupportedError", request_id, detail,
+                          action=action)
+
+
+def create_push_config(task_id, request_id, *, config, tasks, viewer, channels,
+                       registry, created_at=""):
+    """§3.1.7. Gate first, then validate, then persist — in that order.
+
+    The order is the same argument T-0104's `get_task` makes and §13.1 states:
+    "Authorization checks MUST occur before any database queries or operations
+    that could leak information about the existence of resources outside the
+    caller's authorization scope." A config is *about* a task, so answering
+    "bad url" for a task the caller cannot see has told them the task is there —
+    which is the same leak, moved from the read path to the write one.
+
+    §3.1.7 lists two errors for this operation, `PushNotificationNotSupported`
+    and `TaskNotFoundError`, and neither is "the url is malformed". A malformed
+    config is §3.3.2's *validation* category, whose JSON-RPC word the spec gives
+    in its own table as `-32602 Invalid params`, and §3.3.2 requires the details
+    to carry `fieldViolations` — so a caller is told which field, not just that
+    something was wrong.
+    """
+    got = get_task(task_id, request_id, tasks=tasks, viewer=viewer,
+                   channels=channels, registry=registry)
+    if got.get("error"):
+        return got
+    problems = validate_push_config(dict(config))
+    if problems:
+        return {
+            "jsonrpc": "2.0", "id": request_id,
+            "error": {
+                "code": -32602, "message": "Invalid params",
+                "data": [{
+                    "@type": "type.googleapis.com/google.rpc.BadRequest",
+                    "fieldViolations": [{"field": field, "description": why}
+                                        for field, why in problems],
+                }],
+            },
+        }
+    stored = dict(config)
+    stored["_created_at"] = created_at
+    cid = push_config_id(task_id, stored)
+    return {"jsonrpc": "2.0", "id": request_id,
+            "result": push_config(task_id, stored, config_id=cid, reveal_token=True)}
+
+
+def config_id_of(task_id, config) -> str:
+    """The id a stored config is addressed by, whichever generation wrote it.
+
+    One function so the four operations agree by construction rather than by four
+    call sites remembering the same fallback. A stored config carries `configId`
+    because `bin/aim` wrote it; a config the suite hands in from the wire may not,
+    and the id is then derived the same way a create would have derived it.
+    """
+    return config.get("configId") or push_config_id(task_id, config)
+
+
+def get_push_config(config_id, request_id, *, configs, task_id="", reveal_token=False):
+    """§3.1.8. `TaskNotFoundError` when the config does not exist or is not theirs.
+
+    §3.1.8 states the error as `TaskNotFoundError` for a missing *config*, which
+    reads oddly and is the spec's own choice: the four push operations are
+    addressed by task, so the thing that was not found is named in the task's
+    error type. We follow it rather than inventing a config-shaped error, because
+    a client branching on `-32001` is the client the spec is written for.
+    """
+    for task, config in configs:
+        if task == task_id and config_id_of(task, config) == config_id:
+            return {"jsonrpc": "2.0", "id": request_id,
+                    "result": push_config(task, config, config_id=config_id,
+                                          reveal_token=reveal_token)}
+    return error_response("TaskNotFoundError", request_id,
+                          action="GetTaskPushNotificationConfig",
+                          reason="no such push notification configuration")
+
+
+def list_push_configs(task_id, request_id, *, configs, reveal_token=False):
+    """§3.1.9. Every active config for a task, and this is where the mask matters most.
+
+    Listing is the operation that would otherwise hand over every secret a task
+    holds in one response, to a caller who may only be asking what is configured —
+    which is a different question and does not need the answer to this one.
+    """
+    rows = [push_config(task, config, config_id=config_id_of(task, config),
+                        reveal_token=reveal_token)
+            for task, config in configs if task == task_id]
+    return {"jsonrpc": "2.0", "id": request_id, "result": {"configs": rows}}
+
+
+def delete_push_config(config_id, request_id, *, configs, task_id=""):
+    """§3.1.10. The "explicit deletion" half of §3.1.7's persistence rule."""
+    for task, config in configs:
+        if task == task_id and config_id_of(task, config) == config_id:
+            return {"jsonrpc": "2.0", "id": request_id,
+                    "result": {"deleted": True, "configId": config_id, "taskId": task}}
+    return error_response("TaskNotFoundError", request_id,
+                          action="DeleteTaskPushNotificationConfig",
+                          reason="no such push notification configuration")

@@ -1545,6 +1545,207 @@ def cmd_task_list(args):
               f"to you in {phase})")
 
 
+def _push_configs_path(ch=None):
+    """Where the push notification configs live.
+
+    Beside the work items rather than inside `manifest.json`, and the reason is
+    a property of the object rather than taste: a config is created, read,
+    listed, rotated and deleted, and every one of those is an append. A manifest
+    is a read-modify-write, which is the lost update this project has already
+    measured once (5 concurrent registrations, 1 survivor, well-formed file). The
+    board keeps no board file for the same reason; neither does this.
+
+    A channel's configs live in the channel's directory, so a config is subject
+    to the same permissions as everything else in that channel and `aim verify`
+    covers it with the rest of the channel's files.
+    """
+    return channel_dir(ch or _CTX.get("channel") or "") / "push.jsonl"
+
+
+def _push_config_recs(ch=None):
+    """Every config record on disk, newest state per config id.
+
+    A fold rather than a list, because rotation and deletion are appends: a
+    `doorbell_rotated` record does not erase the token it replaced, it supersedes
+    it, and that is deliberate — the token that was in force during a window is a
+    fact about that window, and a ledger that forgets it cannot answer "which
+    secret was live when this was delivered". What a *read* returns is the
+    current state; what is on disk is the history.
+    """
+    recs = read_jsonl(_push_configs_path(ch))
+    live = {}
+    for r in recs:
+        cid = r.get("configId")
+        if not cid:
+            continue
+        if r.get("event") == "deleted":
+            live.pop(cid, None)
+            continue
+        live[cid] = r
+    return recs, live
+
+
+def cmd_task_doorbell(args):
+    """The doorbell as a spec object: TaskPushNotificationConfig (T-0106).
+
+    `bin/aim-doorbell-hook` is the doorbell and stays the default. It prints your
+    unread outbox on your next turn, it is harness glue, and its own header says
+    `aim` must not know how any harness wakes a session — moving it in here would
+    be the daemon the design already rejected. This verb adds the *object* the
+    design says the hook was missing: url, token, authenticationInfo, and the
+    four operations addressed by a config id.
+
+    Deliberately not the whole A2A surface. `validate_push_config` is shared with
+    `aimboard/a2a.py`, which returns the same verdicts as `-32602
+    fieldViolations` for a JSON-RPC client, so there is one implementation of the
+    rules and two spellings of the answer. Writing the rule here and a second
+    copy there is the failure this project keeps finding.
+
+    The token is a secret in a store where every other refusal path reads files
+    as root, and that is stated rather than implied: masking it on every read
+    shape is defence against the *response*, not against the filesystem, and
+    §13.2's "treat as secrets and rotate periodically" is served by the rotation
+    verb and the mask rather than by a permission model this fabric does not have.
+    """
+    who, kind = resolve_actor(args)
+    load_manifest(args.channel)               # refuses an unknown channel
+    sub = args.doorbell_cmd
+
+    def _module():
+        """The translation, imported late so a broken `aimboard` costs one verb."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from aimboard.a2a import (validate_push_config, push_config_id,  # noqa: E402
+                                      mask_secret)
+            return validate_push_config, push_config_id, mask_secret
+        except Exception as exc:  # pragma: no cover - only on a broken checkout
+            die(f"REFUSED: cannot use the push notification object: aimboard.a2a "
+                f"did not import ({exc}).\nThe config's shape is a translation of "
+                f"a foreign spec and it lives beside the renderer; if that module "
+                f"is missing, so is the translation.")
+
+    if sub == "create":
+        validate, config_id_of, _ = _module()
+        _, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+        config = {"taskId": args.id, "url": args.url, "token": args.token}
+        auth = {}
+        if args.scheme:
+            auth["scheme"] = args.scheme
+        if args.credentials:
+            auth["credentials"] = args.credentials
+        if auth:
+            config["authenticationInfo"] = auth
+        problems = validate(config)
+        if problems:
+            # The first line carries the field names, not just a verdict. The
+            # ledger records `msg.split("\n")[0]`, and `_BARRIER_ERRORS` maps a
+            # refusal onto an A2A error by matching a substring of *that* line — so
+            # a refusal whose specific cause lives on line 2 is a refusal the
+            # mapping table cannot see, and an unmappable refusal is one that
+            # answers every client the same generic way. Caught by the T-0106
+            # conformance check that reads the ledger back and looks for the field
+            # it expected. [measured: with the detail only on line 2, the recorded
+            # reason was "REFUSED: T-0001's push notification config is not usable."
+            # and nothing downstream could tell which field was wrong]
+            where = "; ".join(f"{field}: {why}" for field, why in problems)
+            fields = ", ".join(field for field, _ in problems)
+            die(f"REFUSED: {args.id}'s push notification config is not usable — {fields}\n"
+                f"{where}\n"
+                f"The object is the spec's (§4.3.1, §4.3.3, §13.2) and it is "
+                f"refused rather than partly stored, because a config that is "
+                f"half written is one that reports success and never fires.")
+        cid = config_id_of(args.id, config)
+        recs, live = _push_config_recs(args.channel)
+        if cid in live:
+            # Idempotent on purpose. `push_config_id` is derived from the task and
+            # the url and never from the token, so re-running this with a rotated
+            # token would otherwise append a second config for one webhook and
+            # the doorbell would ring twice.
+            print(f"{args.id}: {cid} already configured for {live[cid]['url']}; "
+                  f"the token was not changed (use --rotate)")
+            return
+        with Lock(channel_dir(args.channel) / ".lock"):
+            append_chained(_push_configs_path(args.channel), {
+                "ts": now_iso(), "event": "doorbell_created", "actor": who,
+                "channel": args.channel, "context_id": args.channel,
+                "task": args.id, "configId": cid, "url": args.url,
+                "token": args.token,
+                "authenticationInfo": auth or {"scheme": "Bearer",
+                                               "credentials": args.token},
+            })
+        print(f"{args.id}: {cid} -> {args.url}  (token {_mask_hint(args.token)})")
+
+    elif sub == "list":
+        _, _, mask = _module()
+        _, live = _push_config_recs(args.channel)
+        rows = [r for r in live.values() if r.get("task") == args.id]
+        if args.json:
+            print(json.dumps([
+                {"taskId": r["task"], "configId": r["configId"], "url": r["url"],
+                 "token": r["token"] if args.show_token else mask(r["token"]),
+                 "createdAt": r.get("ts", ""), "createdBy": r.get("actor", "")}
+                for r in rows], indent=2, ensure_ascii=False))
+            return
+        if not rows:
+            print(f"{args.id}: no push notification configs")
+            return
+        for r in rows:
+            token = r["token"] if args.show_token else mask(r["token"])
+            print(f"{r['configId']}  {r['url']}  token={token}  "
+                  f"by {r.get('actor', '')} {r.get('ts', '')[:19]}")
+
+    elif sub == "rotate":
+        _, config_id_of, _ = _module()
+        _, live = _push_config_recs(args.channel)
+        cid = args.config_id
+        if cid not in live:
+            die(f"REFUSED: no push notification config '{cid}' on that task in "
+                f"'{args.channel}'. `aim task doorbell --help` lists them.")
+        with Lock(channel_dir(args.channel) / ".lock"):
+            append_chained(_push_configs_path(args.channel), {
+                "ts": now_iso(), "event": "doorbell_rotated", "actor": who,
+                "channel": args.channel, "context_id": args.channel,
+                "task": live[cid]["task"], "configId": cid,
+                "url": live[cid]["url"], "token": args.token,
+                "previous_token_sha256": sha256_hex(str(live[cid]["token"]).encode()),
+                "authenticationInfo": dict(
+                    live[cid].get("authenticationInfo") or {}, credentials=args.token),
+            })
+        # The one verb that prints the new token, and it says so in its name:
+        # §13.2 asks for rotation, and a rotation whose result the caller cannot
+        # read has rotated nothing they can use.
+        print(f"{cid}: token rotated ({_mask_hint(args.token)}) — this is the only "
+              f"read shape that returns it, and it will not be printed again")
+
+    elif sub == "delete":
+        _, _, _ = _module()
+        _, live = _push_config_recs(args.channel)
+        cid = args.config_id
+        if cid not in live:
+            die(f"REFUSED: no push notification config '{cid}' on that task in "
+                f"'{args.channel}'")
+        with Lock(channel_dir(args.channel) / ".lock"):
+            append_chained(_push_configs_path(args.channel), {
+                "ts": now_iso(), "event": "deleted", "actor": who,
+                "channel": args.channel, "context_id": args.channel,
+                "task": live[cid]["task"], "configId": cid,
+                "url": live[cid]["url"], "token": "(removed with the config)",
+                "reason": args.reason or "",
+            })
+        print(f"{cid}: deleted — §3.1.7's configuration no longer exists; the "
+              f"record of it does, in {_push_configs_path(args.channel).name}")
+
+
+def _mask_hint(secret):
+    """A length and a digest prefix. Never the secret, never a fixed `***`.
+
+    The same reasoning as `aimboard.a2a.mask_secret`, spelled here because
+    `bin/aim` must not import the package at module load: a caller needs to tell
+    "the token I just set" from "the token that was there", and `***` cannot.
+    """
+    return f"<masked:{len(str(secret))}b:sha256:{sha256_hex(str(secret).encode())[:12]}>"
+
+
 def cmd_reveal(args):
     """Voluntarily disclose the reasoning behind one sealed claim.
 
@@ -2155,7 +2356,16 @@ def _render_card(agent, target):
 
 def cmd_verify(args):
     ok = True
-    for rel in ("log.jsonl", "ledger.jsonl", "tasks.jsonl"):
+    # `push.jsonl` is checked with the rest because it is written with the same
+    # `append_chained`, and an unverified chain is a decoration: the file would
+    # carry `prev` and `hash` fields that nothing ever reads, which reads as
+    # tamper-evidence and is not. It holds a secret, and that is an argument for
+    # checking it rather than against — a rotated token is superseded by a later
+    # record, so the *history* is what makes 'which secret was live then'
+    # answerable, and a history nobody verifies is a history anyone may rewrite.
+    # Only TAMPER lines are printed, never contents, so verifying it prints no
+    # secret.
+    for rel in ("log.jsonl", "ledger.jsonl", "tasks.jsonl", "push.jsonl"):
         p = channel_dir(args.channel) / rel
         try:
             recs = read_jsonl(p)
@@ -2426,6 +2636,50 @@ def main():
     q.add_argument("--count-hidden", dest="count_hidden", action="store_true",
                    help="how many items exist but are withheld from you, without their titles")
 
+    # The doorbell as an object rather than as glue. `--as` and `--channel` sit on
+    # the subcommands rather than on `doorbell` because everything else under
+    # `task` names them per-verb, and a config is as much a fact about a task in a
+    # channel as a move is.
+    dp = tsub.add_parser("doorbell", help="push notification configs: the doorbell as the spec's object")
+    dsub = dp.add_subparsers(dest="doorbell_cmd", required=True)
+
+    def dadd(name, fn):
+        r = dsub.add_parser(name)
+        r.set_defaults(func=fn)
+        r.add_argument("--as", dest="actor", required=True)
+        r.add_argument("--channel", required=True)
+        return r
+
+    r = dadd("create", cmd_task_doorbell)
+    r.add_argument("--id", required=True, help="the task this config is for")
+    r.add_argument("--url", required=True, help="where the doorbell rings (http(s))")
+    # Deliberately *not* `required=True`. The accept line is "a config with no
+    # token is refused", and argparse's refusal is a usage error: it exits 2
+    # before `note_context` has run, so nothing reaches the ledger and the one
+    # artifact that answers "did anyone try this" is empty. A missing token is a
+    # decision this tool makes, and a decision this tool makes belongs in
+    # `validate_push_config` with the rest of them. [measured: with
+    # `required=True` the refusal printed a usage block, rc=2, and no ledger line]
+    r.add_argument("--token", default="",
+                   help="the secret the agent presents on every notification (required)")
+    r.add_argument("--scheme", default="", help="authenticationInfo.scheme (default Bearer)")
+    r.add_argument("--credentials", default="",
+                   help="authenticationInfo.credentials, if it differs from --token")
+
+    r = dadd("list", cmd_task_doorbell)
+    r.add_argument("--id", required=True)
+    r.add_argument("--json", action="store_true")
+    r.add_argument("--show-token", dest="show_token", action="store_true",
+                   help="print the secret itself; every other read shape masks it")
+
+    r = dadd("rotate", cmd_task_doorbell)
+    r.add_argument("--config-id", dest="config_id", required=True)
+    r.add_argument("--token", required=True, help="the new secret")
+
+    r = dadd("delete", cmd_task_doorbell)
+    r.add_argument("--config-id", dest="config_id", required=True)
+    r.add_argument("--reason", default="")
+
     p = add("reveal", cmd_reveal)
     p.add_argument("--as", dest="actor", required=True)
     p.add_argument("--channel", required=True)
@@ -2481,6 +2735,13 @@ def main():
     action = args.cmd
     if args.cmd == "task":
         action = f"task {getattr(args, 'task_cmd', '?')}"
+        # `task doorbell create` is one verb to a user and two to the ledger, and
+        # the ledger is what a reader audits. `task doorbell` alone would make
+        # four different actions — create, list, rotate, delete — indistinguishable
+        # in the one field `_BARRIER_ERRORS` keys on, and rotate is the verb that
+        # moves a secret.
+        if getattr(args, "task_cmd", "") == "doorbell":
+            action = f"task doorbell {getattr(args, 'doorbell_cmd', '?')}"
     elif args.cmd == "channel":
         action = f"channel {getattr(args, 'channel_cmd', '?')}"
     note_context(channel=getattr(args, "channel", None), action=action)

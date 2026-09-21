@@ -428,6 +428,233 @@ def main():
     finally:
         shutil.rmtree(a2a_root, ignore_errors=True)
 
+    print("== T-0106: the doorbell hook becomes a TaskPushNotificationConfig ==")
+    bell_root, bell_state, _ = build_a2a_state()
+    try:
+        bell = str(HERE / "bin" / "aim")
+
+        def run_bell(*argv, env_extra=None):
+            env = os.environ | {"AIM_ROOT": bell_root} | (env_extra or {})
+            return subprocess.run([bell, *argv], env=env, capture_output=True,
+                                  text=True, timeout=30)
+
+        # (1) The accept line's first half: url, token and authenticationInfo as
+        # the spec defines. Built through the verb, then read back off disk, so a
+        # config the CLI accepted but never wrote fails here rather than passing
+        # on the CLI's own echo.
+        created = run_bell("task", "doorbell", "create", "--as", "alpha",
+                           "--channel", "t", "--id", "T-0001",
+                           "--url", "https://hooks.example.invalid/a2a",
+                           "--token", "s3cret-token")
+        check("a push notification config is created against a task",
+              created.returncode == 0, f"rc={created.returncode} {created.stderr[:200]}")
+        stored = None
+        push_path = Path(bell_root) / "channels" / "t" / "push.jsonl"
+        for line in push_path.read_text().splitlines():
+            rec = json.loads(line)
+            if rec.get("event") == "doorbell_created":
+                stored = rec
+        check("what it wrote carries url, token and authenticationInfo",
+              stored is not None
+              and stored.get("url") == "https://hooks.example.invalid/a2a"
+              and stored.get("token") == "s3cret-token"
+              and (stored.get("authenticationInfo") or {}).get("scheme") == "Bearer"
+              and (stored.get("authenticationInfo") or {}).get("credentials") == "s3cret-token",
+              f"got {json.dumps(stored)[:260]}")
+        # §4.3.3 presents the *credentials* as the header value, so a config whose
+        # two secrets disagree has one it will never send. Refused rather than
+        # stored, because a caller who checks the other one would see it as valid.
+        check("a config whose token and credentials disagree is refused",
+              run_bell("task", "doorbell", "create", "--as", "alpha", "--channel", "t",
+                       "--id", "T-0001", "--url", "https://hooks.example.invalid/b",
+                       "--token", "one", "--credentials", "two").returncode == 2,
+              "the command accepted two different secrets for one header")
+
+        # (2) The accept line's second half, and the measured fix behind it: the
+        # token check must be the *tool's* refusal, not argparse's. With
+        # `--token required=True` this exited 2 from argparse, printed a usage
+        # block, never reached `note_context`, and left the ledger empty — a
+        # refusal with no record, which is the one artifact that answers "did
+        # anyone try this". [measured: that is what the first version did]
+        no_token = run_bell("task", "doorbell", "create", "--as", "alpha",
+                            "--channel", "t", "--id", "T-0001",
+                            "--url", "https://hooks.example.invalid/c")
+        refusals = []
+        for line in (Path(bell_root) / "channels" / "t" / "ledger.jsonl").read_text().splitlines():
+            rec = json.loads(line)
+            if rec.get("event") == "refusal":
+                refusals.append(rec)
+        check("a config with no token is refused by the tool, and recorded",
+              no_token.returncode == 2
+              and "usage:" not in no_token.stderr
+              and any(r.get("action") == "task doorbell create"
+                      and "token" in r.get("reason", "") for r in refusals),
+              f"rc={no_token.returncode} stderr={no_token.stderr[:200]} "
+              f"refusals={[r.get('action') for r in refusals]}")
+
+        # (3) "The config is additive" is a claim about the hook, and the only
+        # way to test it is to run the hook. A config that changed the hook's
+        # output would have made the local doorbell conditional on a webhook
+        # somewhere else, which is the dependency the design rejected.
+        run_bell("push", "--as", "alpha", "--to", "beta", "--body", "ring ring")
+        hook_env = {"AIM_ROOT": bell_root, "AIM_BIN": bell, "AIM_AGENT": "beta"}
+
+        def ring():
+            return subprocess.run([str(HERE / "bin" / "aim-doorbell-hook"), "beta"],
+                                  env=os.environ | hook_env, capture_output=True,
+                                  text=True, timeout=30)
+
+        before = ring()
+        check("the local hook rings with no config anywhere",
+              before.returncode == 0 and "unread message" in before.stdout,
+              f"rc={before.returncode} out={before.stdout[:200]!r}")
+        check("and creating a config does not change one byte of what it prints",
+              ring().stdout == before.stdout,
+              "the hook's output depends on whether a webhook is configured")
+
+        # (4) `aim verify` covers the config chain. An unverified chain is a
+        # decoration: the file carries `prev` and `hash` that nothing reads,
+        # which looks like tamper-evidence and is not.
+        check("the config file's chain is verified with the channel's other files",
+              run_bell("verify", "--channel", "t").returncode == 0,
+              "aim verify does not cover push.jsonl")
+        # ...and the claim is that it *would* notice. A chain nobody can break in
+        # a test is a chain nobody has shown is being read.
+        push_path.write_text(push_path.read_text().replace("s3cret-token", "rotated!!!"))
+        tampered = run_bell("verify", "--channel", "t")
+        check("and an edited token is reported rather than rendered",
+              tampered.returncode == 1 and "TAMPER" in tampered.stdout
+              and "rotated!!!" not in tampered.stdout,
+              f"rc={tampered.returncode} out={tampered.stdout[:200]}")
+        # Restore, so the checks after this one judge the rest of the fabric and
+        # not this deliberate edit. [measured: leaving it edited turned the next
+        # check red for a reason that had nothing to do with it]
+        push_path.write_text(push_path.read_text().replace("rotated!!!", "s3cret-token"))
+
+        # (5) The rules are implemented once, in `aimboard/a2a.py`, and the verb
+        # reads them. Two implementations of one rule is what this project keeps
+        # finding, so the check is that the same input makes both refuse for the
+        # same *field* — the CLI's sentence and the module's `fieldViolations`.
+        cases = [
+            ({"url": "file:///tmp/hook", "token": "x"}, "url",
+             ["--url", "file:///tmp/hook", "--token", "x"]),
+            ({"url": "https://ok.invalid/h", "token": ""}, "token",
+             ["--url", "https://ok.invalid/h"]),
+        ]
+        for config, field, argv in cases:
+            module = getattr(a2a, "validate_push_config", lambda c: [("", "missing")])(config)
+            out = run_bell("task", "doorbell", "create", "--as", "alpha", "--channel", "t",
+                           "--id", "T-0001", *argv)
+            check(f"the verb and the module refuse {field!r} for the same reason",
+                  module and module[0][0] == field and out.returncode == 2
+                  and field in out.stderr,
+                  f"module={module} cli_rc={out.returncode} err={out.stderr[:180]!r}")
+
+        # (6) The four operations, module half: the gate runs before the config is
+        # read, so a caller who may not see the task cannot learn that a webhook
+        # is configured for it — §13.1's ordering rule applied to the write path.
+        as_gamma = getattr(a2a, "create_push_config", lambda *a, **k: {})(
+            "T-0001", "r1", config={"url": "https://x.invalid/h", "token": "t"},
+            tasks=bell_state["tasks"], viewer="gamma",
+            channels=bell_state["channels"], registry=bell_state["registry"])
+        check("a caller who cannot read the task cannot configure a doorbell for it",
+              (as_gamma.get("error") or {}).get("code") == -32001,
+              f"got {json.dumps(as_gamma)[:200]}")
+        # And for a caller who *can*, a refused config is §3.3.2's validation
+        # category — `-32602` with `fieldViolations` — not one of the nine. None
+        # of the nine means "your url is malformed", and dressing it in one would
+        # be a semantic the request never had. The caller here is `beta`, who
+        # *owns* T-0001 in the renderer's fold; see the divergence check below for
+        # why the owner and not the creator is the one the module can answer.
+        as_beta = getattr(a2a, "create_push_config", lambda *a, **k: {})(
+            "T-0001", "r2", config={"url": "not-a-url", "token": "t"},
+            tasks=bell_state["tasks"], viewer="beta",
+            channels=bell_state["channels"], registry=bell_state["registry"])
+        viol = (((as_beta.get("error") or {}).get("data") or [{}])[0]
+                .get("fieldViolations") or [])
+        check("a config for a task the caller can read fails as -32602 fieldViolations",
+              (as_beta.get("error") or {}).get("code") == -32602
+              and viol and viol[0].get("field") == "url",
+              f"got {json.dumps(as_beta)[:220]}")
+
+        # The CLI side of the same two answers, read out of the ledger: the
+        # refusal a *participant who cannot see the task* gets must map onto
+        # `TaskNotFoundError`, which is T-0104's rule reaching the push path. The
+        # whole point of `class: barrier` being decided at the refusal site rather
+        # than read off the message is that this mapping works for a verb nobody
+        # had written when the table was made.
+        as_gamma_cli = run_bell("task", "doorbell", "create", "--as", "gamma",
+                                "--channel", "t", "--id", "T-0001",
+                                "--url", "https://x.invalid/h", "--token", "t")
+        mapped = None
+        for line in (Path(bell_root) / "channels" / "t" / "ledger.jsonl").read_text().splitlines():
+            rec = json.loads(line)
+            if (rec.get("event") == "refusal"
+                    and rec.get("action") == "task doorbell create"
+                    and "draft owned by someone else" in rec.get("reason", "")):
+                mapped = getattr(a2a, "mapped_error", lambda *a, **k: None)(
+                    rec["reason"], action=rec["action"], refusal_class=rec["class"])
+        check("a participant who cannot see the task is refused, and maps to TaskNotFoundError",
+              as_gamma_cli.returncode == 2 and mapped == "TaskNotFoundError",
+              f"rc={as_gamma_cli.returncode} mapped={mapped}")
+
+        # The divergence, measured rather than assumed, and this is the `created_by`
+        # gap landing on a second surface. `alpha` created T-0001 and handed it to
+        # `beta`; the CLI lets alpha configure a doorbell for it (its fold carries
+        # `created_by`), and the module answers alpha `-32001` (the renderer's fold
+        # does not). Both are the same access rule reading the same task.
+        #
+        # The check is written *as a divergence* rather than as an expectation of
+        # either answer, so that fixing `aimboard/fold.py` turns it red and someone
+        # updates it on purpose. A check that asserted the module's answer would
+        # freeze the bug; one that asserted the CLI's would be red today for a
+        # reason this suite cannot fix from here.
+        #
+        # T-0001 and not the published T-0002, which is the mistake the first
+        # version made: a published task is visible to everyone under every rule,
+        # so the two answers agreed and the check was green for a reason that had
+        # nothing to do with the divergence. [measured: with T-0002 both returned a
+        # config, and the check failed on its own fixture rather than on the bug]
+        cli_wrote = run_bell("task", "doorbell", "create", "--as", "alpha",
+                             "--channel", "t", "--id", "T-0001",
+                             "--url", "https://x.invalid/gate", "--token", "t")
+        mod_says = getattr(a2a, "create_push_config", lambda *a, **k: {})(
+            "T-0001", "r5", config={"url": "https://x.invalid/gate", "token": "t"},
+            tasks=bell_state["tasks"], viewer="alpha",
+            channels=bell_state["channels"], registry=bell_state["registry"])
+        check("the two folds disagree for the creator of a handed-over task, and only there",
+              cli_wrote.returncode == 0
+              and (mod_says.get("error") or {}).get("code") == -32001,
+              f"cli_rc={cli_wrote.returncode} module={json.dumps(mod_says)[:160]}")
+
+        # (7) The secret, on the read shapes. §13.2 calls the token something to
+        # treat as a secret and rotate; a Get that returns it hands it to whoever
+        # can call the operation. So a read masks and a create echoes, and the
+        # mask is a comparison rather than a fixed `***` — a caller who cannot
+        # tell a rotated token from an unchanged one will rotate blind.
+        live = [{"taskId": "T-0001", "configId": "cfg-x", "url": "https://x.invalid/h",
+                 "token": "topsecret", "authenticationInfo": {"scheme": "Bearer",
+                                                              "credentials": "topsecret"}}]
+        read = getattr(a2a, "get_push_config", lambda *a, **k: {})(
+            "cfg-x", "r3", configs=[("T-0001", live[0])], task_id="T-0001")
+        listed = getattr(a2a, "list_push_configs", lambda *a, **k: {})(
+            "T-0001", "r4", configs=[("T-0001", live[0])])
+        blob = json.dumps([read, listed])
+        check("no read shape returns the token itself",
+              "topsecret" not in blob and "masked" in blob,
+              f"got {blob[:240]}")
+        # Equal *lengths* on purpose: two secrets of different lengths would mask
+        # differently for a reason that has nothing to do with the digest, and the
+        # check would pass on a mask that is nothing but a length.
+        check("and the mask distinguishes one token from another",
+              getattr(a2a, "mask_secret", lambda s: "")("topsecret")
+              != getattr(a2a, "mask_secret", lambda s: "")("topsecre2")
+              and getattr(a2a, "mask_secret", lambda s: "")("topsecret")
+              == getattr(a2a, "mask_secret", lambda s: "")("topsecret"),
+              "the mask cannot tell two secrets apart, so a rotation is invisible")
+    finally:
+        shutil.rmtree(bell_root, ignore_errors=True)
+
     print("== the JSON-RPC surface ==")
     root, proc, url = start_server()
     try:
