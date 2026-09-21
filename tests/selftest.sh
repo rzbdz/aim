@@ -148,6 +148,34 @@ expect_ok   "a refusal record names the agent, the action and the phase" \
 import json,sys
 rs=[json.loads(l) for l in open('$LEDGER') if 'refusal' in l]
 sys.exit(0 if all(r.get('agent') is not None and r.get('action') and r.get('phase') for r in rs) else 1)\""
+# The class field is a claim about *substance*: design/05 §1 sells it to the
+# leader as "whether it was a phase refusal or a malformed request", and it used
+# to be derived from the message instead — `"barrier" if msg.startswith("REFUSED")
+# else "form"`. That rule is about spelling and the promise is about meaning, so
+# the two disagree in both directions on a live fabric. Both assertions below
+# were red before the class moved to the refusal site, and on `t4` neither
+# refusal reached the ledger at all, because `die()` only recorded when the
+# message happened to carry the prefix the classifier was reading.
+#
+# [measured against the pre-fix bin/aim: `advance` by alpha -> no record at all;
+#  `task new --owner nobody` -> no record at all; on channel `t` the same
+#  `sealing is closed in SYNTHESIS` refusal was recorded as class=form.]
+expect_fail "a non-leader cannot advance this channel either" \
+  $AIM advance --as alpha --channel t4 --to SYNTHESIS
+expect_ok   "a phase rule written without the REFUSED: prefix is still the barrier" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$AIM_ROOT/channels/t4/ledger.jsonl') if 'refusal' in l]
+m=[r for r in rs if r['action']=='advance' and r['agent']=='alpha']
+sys.exit(0 if m and m[-1]['class']=='barrier' else 1)\""
+expect_fail "a malformed request on the same channel" \
+  $AIM task new --as alpha --channel t4 --title x --owner nobody
+expect_ok   "a REFUSED: line that is not about the barrier is classed form" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$AIM_ROOT/channels/t4/ledger.jsonl') if 'refusal' in l]
+m=[r for r in rs if r['action']=='task new']
+sys.exit(0 if m and m[-1]['class']=='form' else 1)\""
 expect_ok   "the refusal chain does not break the ledger chain" $AIM verify --channel t
 
 echo "== the seal actually binds the private log =="

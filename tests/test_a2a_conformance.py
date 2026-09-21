@@ -9,6 +9,7 @@ against a reading of the spec.
 Run: python3 tests/test_a2a_conformance.py     (exit code = number of failures)
 """
 import re
+import shutil
 import sys
 import json
 import os
@@ -92,15 +93,47 @@ def main():
           f"got {getattr(a2a, 'ERROR_CODES', {})}")
 
     response = getattr(a2a, "error_response", lambda *_: None)("TaskNotFoundError", "req-1")
-    check("an error response is a JSON-RPC 2.0 error object",
+    # Shape per §9.5 and §3.3.2: the payload must convey an error *code*, a
+    # human-readable *message*, and *details* as an array where each object carries
+    # `@type`. The previous assertion required `data` to be a dict with
+    # `{"type": <name>}`, which is a contract the spec does not define — §9.5's own
+    # example has `data` as a list whose element is a `google.rpc.ErrorInfo`. The
+    # machine-readable identifier of *which* A2A error this is, is the code; the
+    # `reason` in `data` repeats it structurally. So the message is asserted to be
+    # prose, not the enum name, because that is what the example shows
+    # (`"code": -32001, "message": "Task not found"`).
+    #
+    # `reason` is `TASK_NOT_FOUND`, not `TaskNotFoundError`, and that changed after
+    # the first version of this check passed at 21/32. §9.5's example, §10.6's
+    # gRPC table and §11.6's HTTP/REST table say the same thing in the same words:
+    # "The A2A error type in UPPER_SNAKE_CASE **without the 'Error' suffix**". The
+    # assertion below was checking our own type name, so it passed against a wire
+    # format the spec states differently — a green check that certified the bug.
+    info = (response.get("error") or {}).get("data")
+    has_errorinfo = (isinstance(info, list) and len(info) == 1
+                     and isinstance(info[0], dict)
+                     and info[0].get("@type") == "type.googleapis.com/google.rpc.ErrorInfo"
+                     and info[0].get("reason") == "TASK_NOT_FOUND"
+                     and info[0].get("domain") == "a2a-protocol.org")
+    msg = (response.get("error") or {}).get("message")
+    check("an error response is a JSON-RPC 2.0 error object (code + message + data[])",
           isinstance(response, dict)
           and response.get("jsonrpc") == "2.0"
           and response.get("id") == "req-1"
           and isinstance(response.get("error"), dict)
           and response["error"].get("code") == -32001
-          and response["error"].get("message") == "TaskNotFoundError"
-          and response["error"].get("data", {}).get("type") == "TaskNotFoundError",
+          and isinstance(msg, str) and msg and msg != "TaskNotFoundError"
+          and has_errorinfo,
           f"got {response}")
+
+    check("every error type spells its reason the way §9.5 does",
+          getattr(a2a, "error_reason", lambda *_: None)("TaskNotFoundError") == "TASK_NOT_FOUND"
+          and getattr(a2a, "error_reason", lambda *_: None)("PushNotificationNotSupportedError")
+          == "PUSH_NOTIFICATION_NOT_SUPPORTED"
+          and getattr(a2a, "error_reason", lambda *_: None)("VersionNotSupportedError")
+          == "VERSION_NOT_SUPPORTED",
+          "the rule is mechanical, so it is one function over ERROR_CODES rather "
+          "than a second table that can drift from the first")
 
     check("field names normalize from snake_case to camelCase",
           getattr(a2a, "normalize_keys", lambda x: x)({
@@ -192,6 +225,87 @@ def main():
           card1 == card2,
           "a card that changes between two reads of an unchanged registry cannot be cached")
 
+    print("== T-0103: the five mandated refusal classes (design/05 §5) ==")
+    # The accept line has two halves and both are asserted here from one object:
+    # the mapped A2A error type *and* the ledger record. The fixture drives the
+    # real verb in a real fabric, because a mapping asserted against a refusal
+    # sentence I typed into the test would pass even if `bin/aim` had never
+    # emitted that sentence. [measured: the first version of this fixture reused
+    # the selftest's channels with no tasks in them, so `task move` refused with
+    # "no such task" — a form error — and the check certified an untested path]
+    fabric_root, refusals = build_refusals()
+    try:
+        check("the five mandated refusals all reached the ledger",
+              len(refusals) == 5, f"got {len(refusals)}: {[r['label'] for r in refusals]}")
+
+        print("== T-0103: half one — the mapped A2A error type ==")
+        for r in refusals:
+            mapped = getattr(a2a, "mapped_error", lambda *a, **k: None)(
+                r["reason"], r["action"], r["class"])
+            check(f"the {r['label']} refusal maps onto {r['expect']}",
+                  mapped == r["expect"],
+                  f"got {mapped!r} for action={r['action']!r} class={r['class']!r} "
+                  f"reason={r['reason'][:70]!r}")
+
+        # A refusal that maps onto nothing is a *decision*, not an omission, and
+        # the two are indistinguishable from a None return. So the unmapped
+        # classes are named in the module (NATIVE_ONLY) and a refusal that maps
+        # to nothing must be one of them — otherwise `None` is how a missing row
+        # hides.
+        unmapped = [r for r in refusals if r["expect"] is None]
+        check("a refusal A2A has no word for is a named decision, not a missing row",
+              all(r["class"] in getattr(a2a, "NATIVE_ONLY", {}) for r in unmapped)
+              and bool(getattr(a2a, "NATIVE_ONLY", {})),
+              f"unmapped classes {[r['class'] for r in unmapped]}, "
+              f"NATIVE_ONLY covers {sorted(getattr(a2a, 'NATIVE_ONLY', {}))}")
+
+        print("== T-0103: half two — the ledger still keeps our own shape ==")
+        # Per channel, because the five refusals are not all in one: the phase
+        # rules fire on `t4` and the board rules on `t`. The first version of this
+        # check read only `t`, so a refusal recorded in `t4` would have been
+        # reported as missing. [measured: it failed on the fifth row, which is
+        # exactly that]
+        def ledger_rows(ch):
+            p = Path(fabric_root) / "channels" / ch / "ledger.jsonl"
+            return [json.loads(l) for l in p.read_text().splitlines() if '"refusal"' in l]
+
+        for r in refusals:
+            rows = ledger_rows(r["channel"])
+            check(f"the {r['label']} refusal is in the ledger with its class",
+                  any(rec.get("reason", "").startswith(r["reason"][:60])
+                      and rec.get("class") == r["class"]
+                      and rec.get("phase") == r["phase"]
+                      for rec in rows),
+                  f"ledger in {r['channel']} holds "
+                  f"{[(rec.get('class'), rec.get('reason', '')[:40]) for rec in rows][-3:]}")
+
+        check("the ledger's class agrees with the mapping table's own key",
+              all(getattr(a2a, "mapped_error", lambda *a, **k: None)(r["reason"], r["action"],
+                                                                    r["class"]) == r["expect"]
+                  for r in refusals),
+              "a record whose class says `barrier` while the mapper treats it as "
+              "`form` is the two halves disagreeing about one event")
+
+        # One response, both halves — §5.4 requires a custom binding to say how
+        # it represents A2A errors natively, and our native form is the ledger
+        # record. So the refusal travels *with* the error a foreign client reads.
+        sample = [r for r in refusals if r["expect"] == "TaskNotFoundError"][0]
+        response = getattr(a2a, "error_response", lambda *a, **k: {})(sample["expect"], "req-2",
+                                                                    sample["reason"],
+                                                                    action=sample["action"],
+                                                                    reason=sample["reason"],
+                                                                    native=getattr(a2a, "native_error")(sample["reason"], cls=sample["class"], action=sample["action"]))
+        data = (response.get("error") or {}).get("data") or []
+        check("an A2A error carries our refusal record beside the ErrorInfo",
+              len(data) == 2
+              and data[0].get("@type") == "type.googleapis.com/google.rpc.ErrorInfo"
+              and data[1].get("refusal") == sample["reason"]
+              and data[1].get("class") == "barrier"
+              and "ledger.jsonl" in str(data[1].get("recorded", "")),
+              f"got {json.dumps(data)[:300]}")
+    finally:
+        shutil.rmtree(fabric_root, ignore_errors=True)
+
     print("== the JSON-RPC surface ==")
     root, proc, url = start_server()
     try:
@@ -228,6 +342,103 @@ REQUESTS = [
     ("DeleteTaskPushNotificationConfig", {"taskId": "T-0001", "configId": "cfg1"}, False),
     ("GetExtendedAgentCard", {}, False),
 ]
+
+
+REFUSALS = [
+    # (label, argv, the A2A error type this refusal must map onto; None = the
+    #  binding has no A2A word for it and says so in NATIVE_ONLY)
+    #
+    # Order matters: the board row comes after the two that create and publish a
+    # task, so it has exactly one draft to be refused over, and the workflow row
+    # moves T-0002 — the *published* one. Pointing it at T-0001 would refuse with
+    # "a draft owned by someone else", a barrier refusal standing in for a
+    # workflow one, which is precisely the substitution this fixture exists to
+    # prevent. [measured: that is what the first run of this table did]
+    ("publishing a work item in a divergence phase",
+     ["task", "new", "--as", "beta", "--channel", "t", "--title", "leak",
+      "--visibility", "published"],
+     "UnsupportedOperationError"),
+    ("moving a task to blocked without a reason",
+     ["task", "move", "--as", "beta", "--channel", "t", "--id", "T-0002",
+      "--to", "blocked"],
+     None),
+    ("assigning a task to an unregistered agent",
+     ["task", "assign", "--as", "alpha", "--channel", "t", "--id", "T-0002",
+      "--owner", "nobody"],
+     None),
+    ("reading a peer's draft on the board",
+     ["task", "list", "--as", "beta", "--channel", "t", "--json"],
+     "TaskNotFoundError"),
+    ("sealing after the positions are committed",
+     ["seal", "--as", "alpha", "--channel", "t4", "--summary", "a late position"],
+     "UnsupportedOperationError"),
+]
+
+
+def build_refusals():
+    """Drive the five design/05 §5 refusals through `bin/aim` and read the ledger.
+
+    What comes back is what the *tool* wrote — class and sentence included — not
+    what the test expected. The expectation (`expect`) is compared against it in
+    `main`, so a fixture that fails to provoke a refusal cannot silently certify
+    the previous row's record: each row asserts its own command failed *and* that
+    the ledger grew by exactly one refusal. That failure mode is not hypothetical
+    here; the first version of this fixture reused channels with no tasks in them
+    and `task move` refused with "no such task", a form error, so the class check
+    was reading a refusal the row never provoked.
+    """
+    root = tempfile.mkdtemp(prefix="a2a-refusals-")
+    env = os.environ | {"AIM_ROOT": root}
+    aim = str(HERE / "bin" / "aim")
+
+    def run(*argv):
+        return subprocess.run([aim, *argv], env=env, capture_output=True, text=True, timeout=30)
+
+    def must(*argv):
+        done = run(*argv)
+        assert done.returncode == 0, f"{argv} failed: {done.stderr}"
+
+    must("init")
+    for who, kind in (("human", "human"), ("alpha", "claude"), ("beta", "codex")):
+        must("register", "--as", who, "--kind", kind)
+    for ch in ("t", "t4"):
+        must("new-channel", "--id", ch, "--topic", "refusals",
+             "--participants", "alpha,beta", "--leader", "human")
+
+    # `t` holds one draft owned by alpha (so the board refusal has something to
+    # withhold) and one published task (so the workflow refusals have a task both
+    # participants may act on, and are not answering "no such task").
+    must("task", "new", "--as", "alpha", "--channel", "t", "--title", "alpha's own line of work")
+    must("task", "new", "--as", "alpha", "--channel", "t", "--title", "the shared one")
+    must("task", "publish", "--as", "alpha", "--channel", "t", "--id", "T-0002")
+
+    # `t4` is carried to SYNTHESIS by the leader, which is the only way to reach
+    # the phase where sealing is closed.
+    must("say", "--as", "alpha", "--channel", "t4", "--body", "alpha's position, in alpha's own words, at some length")
+    must("seal", "--as", "alpha", "--channel", "t4", "--summary", "alpha; confidence 0.7")
+    must("seal", "--as", "beta", "--channel", "t4", "--summary", "beta; confidence 0.4")
+    must("advance", "--as", "human", "--channel", "t4", "--to", "COMMIT")
+    must("advance", "--as", "human", "--channel", "t4", "--to", "SYNTHESIS", "--synthesizer", "human")
+
+    def ledger(ch):
+        p = Path(root) / "channels" / ch / "ledger.jsonl"
+        return [json.loads(l) for l in p.read_text().splitlines() if '"refusal"' in l]
+
+    out = []
+    for label, argv, expect in REFUSALS:
+        ch = argv[argv.index("--channel") + 1]
+        before = len(ledger(ch))
+        done = run(*argv)
+        fresh = ledger(ch)[before:]
+        assert done.returncode != 0, f"expected a refusal from {argv}, got rc=0"
+        assert len(fresh) == 1, (
+            f"{argv} wrote {len(fresh)} refusal record(s), expected 1 — the row below "
+            f"would then be reading another row's record")
+        rec = fresh[0]
+        out.append({"label": label, "argv": " ".join(argv), "class": rec.get("class"),
+                    "reason": rec.get("reason", ""), "action": rec.get("action", ""),
+                    "phase": rec.get("phase", ""), "channel": ch, "expect": expect})
+    return root, out
 
 
 def build_card(twice=False):

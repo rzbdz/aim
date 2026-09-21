@@ -127,6 +127,36 @@ def sha256_hex(data):
 # choke point every refusal passes through — but it is called from ~40 places
 # that each know something different. So the command records its context first
 # and `die()` reads it. One process = one command = one context.
+#
+# The ledger's `class` field is decided the same way, and it is decided *at the
+# refusal site* rather than derived, because deriving it was measured wrong.
+# It used to be `"barrier" if msg.startswith("REFUSED") else "form"` — a rule
+# about spelling, where design/05 §1 promises a rule about substance ("whether
+# it was a phase refusal or a malformed request"). The two disagreed on the very
+# first live fabric I asked, and the disagreement was not a corner case: every
+# phase rule that did not happen to be spelled with a `REFUSED:` prefix was
+# filed as a malformed request, and three of them were not filed at all.
+#
+#   [measured, temp AIM_ROOT, 2026-09-21; the same refusals tests/selftest.sh
+#    asserts on. `no record` means `die()` ran and the ledger kept nothing at
+#    all, which is the worse failure of the two. Middle column = the class the
+#    old inference wrote; right column = the class this file writes now.]
+#
+#     inbox during SEALED_DIVERGENT        the barrier refusing   no record  -> barrier
+#     say on the public channel            the barrier refusing   no record  -> barrier
+#     reveal before CROSS_EXAMINE          the barrier refusing   no record  -> barrier
+#     `sealing is closed in SYNTHESIS`     the barrier refusing   form       -> barrier
+#     `may not advance the barrier`        the barrier refusing   form       -> barrier
+#     `synthesis may only be published …`  the barrier refusing   form       -> barrier
+#     `moving to 'blocked' requires --reason`  a workflow rule    barrier    -> form
+#     `owner 'nobody' is not a registered agent`  malformed input barrier   -> form
+#
+# Not one of those rows is contrived; each is the refusal its own test names.
+# So: `cls="barrier"` at the sites that enforce the barrier, default `form`
+# everywhere else, and a test that reads the ledger the tool actually wrote.
+# Only a reader who can tell a phase refusal from a malformed request can use
+# the ledger to answer "did anyone lean on the barrier" — which is the whole
+# reason the field exists, and the sentence README §3 makes to the leader.
 _CTX = {"channel": None, "actor": None, "action": None}
 
 
@@ -136,7 +166,7 @@ def note_context(channel=None, actor=None, action=None):
             _CTX[key] = val
 
 
-def _record_refusal(msg):
+def _record_refusal(msg, cls="form"):
     """Write the refusal to the ledger. Never raises.
 
     A refusal is the most legible event this system produces: it is the only
@@ -159,17 +189,15 @@ def _record_refusal(msg):
                 "agent": _CTX.get("actor") or "",
                 "action": _CTX.get("action") or "",
                 "phase": manifest.get("barrier", {}).get("phase", ""),
-                # "barrier" = the phase gate refused (the interesting class);
-                # "form" = a malformed or out-of-policy request was refused.
-                "class": "barrier" if msg.startswith("REFUSED") else "form",
+                "class": cls,
                 "reason": msg.split("\n")[0][:400],
             })
     except Exception as exc:                                # never mask the refusal
         print(f"aim: warning: refusal not recorded: {exc}", file=sys.stderr)
 
 
-def die(msg, code=2):
-    _record_refusal(msg)
+def die(msg, code=2, cls="form"):
+    _record_refusal(msg, cls)
     print(f"aim: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -377,30 +405,42 @@ def resolve_actor(args, manifest=None):
 
 def require_leader(who, kind, manifest):
     if kind != "human" or who != manifest["leader"]:
+        # `cls="barrier"` because this is a rule *about the barrier*: only the
+        # leader moves the phase. It is not a malformed request — the request is
+        # well-formed and is refused for who sent it.
         die(
             f"'{who}' may not advance the barrier. only the human team leader "
             f"'{manifest['leader']}' controls phase transitions.\n"
-            f"(agents may ask with: aim request-advance ...)"
+            f"(agents may ask with: aim request-advance ...)",
+            cls="barrier",
         )
 
 
 def gate(manifest, who, action):
-    """The barrier itself. Refuse, and say why."""
+    """The barrier itself. Refuse, and say why.
+
+    Every refusal here is `cls="barrier"` by construction: this function exists
+    only to enforce a `PHASE_RULES` entry, so a refusal from it is the barrier
+    doing its job. That is the definition design/05 §1 gives the field, and it
+    is why the class is decided here rather than read off the message.
+    """
     phase = manifest["barrier"]["phase"]
     rules = PHASE_RULES[phase]
     if action == "read_others" and not rules["read_others"]:
         die(
             f"REFUSED: channel is in {phase}; cross-reading is closed until "
             f"CROSS_EXAMINE.\nThis is the barrier doing its job: independent "
-            f"positions must be committed before exposure."
+            f"positions must be committed before exposure.",
+            cls="barrier",
         )
     if action == "channel_say" and not rules["channel_say"]:
         die(
             f"REFUSED: channel is in {phase}; the public channel is closed.\n"
-            f"Write to your private log instead (kinds: note/claim/evidence/position)."
+            f"Write to your private log instead (kinds: note/claim/evidence/position).",
+            cls="barrier",
         )
     if action == "private_say" and not rules["private_say"]:
-        die(f"REFUSED: private log is closed in {phase}.")
+        die(f"REFUSED: private log is closed in {phase}.", cls="barrier")
     return True
 
 
@@ -565,10 +605,15 @@ def cmd_say(args):
     if kind_of == "ruling":
         require_leader(who, kind, m)
     elif kind_of == "synthesis":
+        # Both of these are the barrier's own rules, not form errors: one is
+        # about who may speak for the channel, the other about when. A
+        # `synthesis` typed `send` in SEALED_DIVERGENT is an attempt to publish
+        # a merged position before anyone committed one.
         if who != m.get("synthesizer") and kind != "human":
-            die(f"only the appointed synthesizer ('{m.get('synthesizer') or 'unset'}') publishes synthesis")
+            die(f"only the appointed synthesizer ('{m.get('synthesizer') or 'unset'}') publishes synthesis",
+                cls="barrier")
         if phase != "SYNTHESIS":
-            die("synthesis may only be published in SYNTHESIS phase")
+            die("synthesis may only be published in SYNTHESIS phase", cls="barrier")
     else:
         if phase == "CROSS_EXAMINE":
             if kind_of not in CROSS_EXAMINE_KINDS:
@@ -679,7 +724,10 @@ def cmd_seal(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
     if m["barrier"]["phase"] not in ("SEALED_DIVERGENT", "COMMIT"):
-        die(f"sealing is closed in {m['barrier']['phase']}")
+        # A phase rule, and the one that name-and-position it is: sealing is how
+        # a position is committed, and the phases after COMMIT are the ones
+        # where committing a new one would change what the record means.
+        die(f"sealing is closed in {m['barrier']['phase']}", cls="barrier")
     if who not in m["participants"]:
         die(f"'{who}' is not a participant")
     text = args.body_file and Path(args.body_file).read_text(encoding="utf-8") or (args.summary or "")
@@ -788,23 +836,29 @@ def cmd_advance(args):
         missing = [p for p in m["participants"]
                    if not (channel_dir(args.channel) / "seals" / f"{p}.json").exists()]
         if missing and not args.force:
+            # The barrier's own precondition, and the one `aim tension` repeats
+            # from the other side: there is nothing to synthesize until every
+            # position is committed, and entering the phase anyway would let the
+            # leader read one side before the other exists.
             die(
                 "REFUSED: cannot enter SYNTHESIS before every participant has sealed.\n"
                 f"missing: {', '.join(missing)}\n"
                 "Sealing first is the whole point: a position committed before exposure "
-                "cannot be quietly retrofitted afterwards."
+                "cannot be quietly retrofitted afterwards.",
+                cls="barrier",
             )
     if to == "SYNTHESIS" and not m.get("synthesizer") and not args.synthesizer:
         if not args.force:
             die("REFUSED: SYNTHESIS needs a synthesizer (--synthesizer <agent>) — "
-                "someone who did not argue either side")
+                "someone who did not argue either side", cls="barrier")
     if args.synthesizer:
         if args.synthesizer in m["participants"]:
             die(
                 f"REFUSED: '{args.synthesizer}' is a participant in this channel.\n"
                 "The synthesizer's whole value is that they did not argue either side. "
                 "An advocate summarizing the disagreement is the first speaker wearing "
-                "a lab coat."
+                "a lab coat.",
+                cls="barrier",
             )
         if agent_kind(args.synthesizer) is None:
             die(f"'{args.synthesizer}' is not a registered agent")
@@ -851,9 +905,11 @@ def cmd_synthesis_input(args):
     if who != m.get("synthesizer") and kind != "human":
         die(f"REFUSED: only the synthesizer ('{m.get('synthesizer') or 'unset'}') may read mixed inputs.\n"
             "A participant reading the other side's reasoning before committing their own "
-            "is precisely the contamination the barrier exists to prevent.")
+            "is precisely the contamination the barrier exists to prevent.",
+            cls="barrier")
     if m["barrier"]["phase"] != "SYNTHESIS":
-        die(f"REFUSED: synthesis input is only available in SYNTHESIS (now {m['barrier']['phase']})")
+        die(f"REFUSED: synthesis input is only available in SYNTHESIS (now {m['barrier']['phase']})",
+            cls="barrier")
     bundle = {"channel": args.channel, "topic": m["topic"], "participants": []}
     for p in m["participants"]:
         s = read_json(channel_dir(args.channel) / "seals" / f"{p}.json", {}) or {}
@@ -1012,12 +1068,16 @@ def cmd_task_new(args):
         die(f"REFUSED: owner '{args.owner}' is not a registered agent")
     vis = args.visibility
     if vis == "published" and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
+        # The board's version of the cross-read rule: a work item born published
+        # during a divergence phase states a position before anyone has sealed
+        # one, which is what the barrier exists to prevent.
         die(
             f"REFUSED: cannot publish a work item while the channel is in "
             f"{m['barrier']['phase']}.\n"
             "A task title states a position in the least suspicious form the fabric "
             "contains. Work items are born draft; `aim task publish` exposes one "
-            "deliberately, and that act is recorded."
+            "deliberately, and that act is recorded.",
+            cls="barrier",
         )
     if args.blocked_by and args.blocked_by not in fold_tasks(args.channel):
         die(f"REFUSED: no such task to depend on: {args.blocked_by}")
@@ -1055,7 +1115,8 @@ def _load_task_or_die(ch, tid, who, kind):
             f"REFUSED: '{tid}' is a draft owned by someone else and the channel is in "
             f"{m['barrier']['phase']}.\n"
             "Reading a peer's work item before cross-examination is the board's "
-            "version of reading their private log."
+            "version of reading their private log.",
+            cls="barrier",
         )
     return m, board, t
 
@@ -1218,7 +1279,8 @@ def cmd_task_list(args):
             f"Reading a peer's work item before cross-examination is the board's "
             f"version of reading their private log. Use --count-hidden for the counts "
             f"without the titles, --owner {who} for your own work, or wait for "
-            f"CROSS_EXAMINE."
+            f"CROSS_EXAMINE.",
+            cls="barrier",
         )
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
@@ -1249,7 +1311,11 @@ def cmd_reveal(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
     if m["barrier"]["phase"] not in ("CROSS_EXAMINE", "RESOLVE"):
-        die(f"REFUSED: reveal is only open from CROSS_EXAMINE on (now {m['barrier']['phase']})")
+        # `reveal` is the one verb whose entire purpose is to undo part of the
+        # barrier deliberately, so the phase it is open in is the barrier's own
+        # boundary rather than a formality about the command.
+        die(f"REFUSED: reveal is only open from CROSS_EXAMINE on (now {m['barrier']['phase']})",
+            cls="barrier")
     seal = read_json(channel_dir(args.channel) / "seals" / f"{who}.json")
     if seal is None:
         die("you have no seal in this channel")
@@ -1663,7 +1729,8 @@ def cmd_tension(args):
         die(
             f"REFUSED: the tension report is visible to the leader ('{m['leader']}') and "
             f"the synthesizer only.\nIt is a summary of the other side's reasoning. "
-            f"Reading it before CROSS_EXAMINE is exposure by another name."
+            f"Reading it before CROSS_EXAMINE is exposure by another name.",
+            cls="barrier",
         )
     parts = list(args.participants.split(",")) if args.participants else m["participants"]
     if len(parts) != 2:
@@ -1672,7 +1739,11 @@ def cmd_tension(args):
     for p in parts:
         s = read_json(channel_dir(args.channel) / "seals" / f"{p}.json")
         if s is None:
-            die(f"REFUSED: '{p}' has not sealed. There is nothing to compare yet.")
+            # The same rule as `advance --to SYNTHESIS`: the leader may not see a
+            # comparison of positions until there are positions to compare. It
+            # is the barrier's precondition, not a missing argument.
+            die(f"REFUSED: '{p}' has not sealed. There is nothing to compare yet.",
+                cls="barrier")
         seals[p] = s
     a, b = parts
     la = "\n".join(r["body"] for r in read_jsonl(channel_dir(args.channel) / "private" / f"{a}.jsonl"))
