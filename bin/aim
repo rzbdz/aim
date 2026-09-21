@@ -293,16 +293,47 @@ def cmd_init(args):
 
 
 def cmd_register(args):
+    """Claim an agent id. Registration is the only identity the fabric has.
+
+    Anything that can run `aim` can claim any unused id, so attribution is
+    reliable only under a cooperative threat model — stated plainly rather than
+    implied. What the fabric *can* refuse is silently replacing someone who is
+    already here: without that, a second session can take over an id, keep its
+    name, and inherit everything the ledger says about it, and no record would
+    show the switch.
+    """
     reg = load_registry()
-    reg["agents"][args.actor] = {
+    prior = reg["agents"].get(args.actor)
+    if prior and not args.force:
+        die(
+            f"REFUSED: '{args.actor}' is already registered "
+            f"({prior['kind']}, first seen {prior['registered_at']}).\n"
+            f"Registration overwrites the only identity the fabric has, so taking "
+            f"an id over is recorded as a distinct event rather than done quietly.\n"
+            f"If you are that agent coming back, keep using the id. If you are "
+            f"replacing it, say so: aim register --as {args.actor} "
+            f"--kind {args.kind} --force --session '<why>'"
+        )
+    rec = {
         "id": args.actor,
         "kind": args.kind,
         "model": args.model or "",
         "session": args.session or "",
         "registered_at": now_iso(),
     }
+    if prior:
+        rec["registration_events"] = (prior.get("registration_events") or [{
+            "at": prior["registered_at"], "kind": prior["kind"],
+            "session": prior.get("session", ""), "reason": "initial registration",
+        }]) + [{"at": rec["registered_at"], "kind": args.kind,
+                "session": args.session or "", "reason": "forced takeover"}]
+    reg["agents"][args.actor] = rec
     save_registry(reg)
-    print(f"registered {args.actor} ({args.kind})")
+    if prior:
+        print(f"registered {args.actor} ({args.kind}) — TAKEOVER of an existing id, "
+              f"recorded in the registry")
+    else:
+        print(f"registered {args.actor} ({args.kind})")
 
 
 def cmd_new_channel(args):
@@ -1258,6 +1289,8 @@ def main():
     p.add_argument("--kind", required=True, choices=["claude", "codex", "human", "other"])
     p.add_argument("--model", default="")
     p.add_argument("--session", default="")
+    p.add_argument("--force", action="store_true",
+                   help="take over an id that is already registered (recorded as a takeover)")
 
     p = add("new-channel", cmd_new_channel)
     p.add_argument("--id", required=True)

@@ -102,6 +102,24 @@ echo "== RESOLVE closes the floor =="
 expect_ok   "advance to RESOLVE" $AIM advance --as human --channel t --to RESOLVE
 expect_fail "speech after RESOLVE" $AIM say --as alpha --channel t --kind rebuttal --responds-to m0001 --body "one last word"
 
+echo "== SYNTHESIS needs a synthesizer who did not argue either side =="
+expect_ok   "open a channel for the synthesizer rule" \
+  $AIM new-channel --id t4 --topic "who may synthesize" --participants alpha,beta --leader human
+# Both participants must have sealed before SYNTHESIS is even reachable, so this
+# block has to reach COMMIT first; otherwise every assertion below would be
+# testing the transition rule and passing for the wrong reason.
+expect_ok   "advance t4 to COMMIT" $AIM advance --as human --channel t4 --to COMMIT
+expect_ok   "alpha seals t4" $AIM seal --as alpha --channel t4 --summary "alpha t4"
+expect_ok   "beta seals t4"  $AIM seal --as beta  --channel t4 --summary "beta t4"
+expect_fail "SYNTHESIS without naming a synthesizer is refused" \
+  $AIM advance --as human --channel t4 --to SYNTHESIS
+expect_fail "a participant cannot be appointed synthesizer" \
+  $AIM advance --as human --channel t4 --to SYNTHESIS --synthesizer alpha
+expect_ok   "the refusal says why, in the words that matter" \
+  bash -c "$AIM advance --as human --channel t4 --to SYNTHESIS --synthesizer alpha 2>&1 | grep -q 'argue either side'"
+expect_fail "an unregistered agent cannot be appointed" \
+  $AIM advance --as human --channel t4 --to SYNTHESIS --synthesizer ghost
+
 echo "== refusals are recorded, not just printed =="
 # The README used to claim refusals were "recorded in the ledger". They were
 # not: die() wrote to stderr and exited, so the one event that proves an agent
@@ -243,6 +261,26 @@ expect_ok   "the refusal says what is wrong, not just 'no'" \
   bash -c "$AIM confirm --as beta --msg-id '$MSGID' 2>&1 | grep -q 'does not hash'"
 expect_fail "confirming a message you never received is refused" \
   $AIM confirm --as beta --msg-id 20200101T000000.000Z-nobody
+
+echo "== identity: an id cannot be taken over quietly =="
+# Registration overwrites the only identity the fabric has. Before this, a second
+# session could claim an existing id and inherit everything the ledger recorded
+# about it, with no trace of the switch — a silent hole in exactly the property
+# the rest of this tool is built to protect.
+expect_fail "re-registering a live id is refused" \
+  $AIM register --as alpha --kind human
+expect_ok   "the refusal says how to take it over deliberately" \
+  bash -c "$AIM register --as alpha --kind codex 2>&1 | grep -q 'TAKEOVER\|--force'"
+expect_ok   "a forced takeover is allowed" \
+  $AIM register --as alpha --kind human --force --session "deliberate replacement"
+expect_ok   "and it is recorded, with the previous identity preserved" \
+  bash -c "python3 -c \"
+import json,sys
+r=json.load(open('$AIM_ROOT/registry.json'))['agents']['alpha']
+ev=r.get('registration_events') or []
+sys.exit(0 if len(ev)>=2 and ev[-1]['reason']=='forced takeover' and ev[0]['kind']=='claude' else 1)\""
+expect_ok   "restore alpha for the blocks above" \
+  $AIM register --as alpha --kind claude --force --session "restored"
 
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
