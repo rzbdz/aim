@@ -879,7 +879,8 @@ def fold_tasks(ch):
                 "estimate_pts": e.get("estimate_pts", 0), "start": e.get("start", ""),
                 "due": e.get("due", ""), "milestone": e.get("milestone", ""),
                 "tags": e.get("tags", []), "accept": e.get("accept", ""),
-                "visibility": e.get("visibility", "draft"), "blocked_by": [],
+                "visibility": e.get("visibility", "draft"),
+                "blocked_by": list(e.get("blocked_by") or []),
                 "created_by": e.get("actor", ""), "created_at": e.get("ts", ""),
                 "history": [],
             }
@@ -896,9 +897,15 @@ def fold_tasks(ch):
         elif ev == "published":
             t["visibility"] = "published"
         elif ev == "linked":
-            dep = e.get("blocked_by")
-            if dep and dep not in t["blocked_by"]:
-                t["blocked_by"].append(dep)
+            # A string, because that is what the verb takes; normalised on the way
+            # in so the fold never has to ask which generation wrote the event.
+            # `set("T-0001")` is a set of six characters, which is how a dependency
+            # list turns into six dependencies and nobody notices.
+            deps = e.get("blocked_by")
+            deps = [deps] if isinstance(deps, str) else list(deps or [])
+            for dep in deps:
+                if dep and dep not in t["blocked_by"]:
+                    t["blocked_by"].append(dep)
         elif ev == "dropped":
             t["status"] = "dropped"
     return board
@@ -914,16 +921,59 @@ def _visible_to(task, who, phase):
 
 
 def _next_task_id(ch):
-    used = [t for t in fold_tasks(ch) if t.startswith("T-")]
-    n = max((int(t.split("-")[1]) for t in used if t.split("-")[1].isdigit()), default=0)
+    """Allocate the next task id.
+
+    The old version took max(fold(...)) + 1, and the fold collapses duplicate
+    ids. So after a collision left two records claiming T-0005, the fold showed
+    one T-0005 and the next allocation handed out T-0006 — the counter never
+    recovered, and every later id was allocated on a board that was missing a
+    record. Codex found this by racing 8 creators and reading the log rather
+    than the board.
+
+    Reading the ids out of the *events* instead of the fold means a duplicate
+    raises the high-water mark rather than hiding below it. That is a repair for
+    a fault that should no longer happen, not the fix for it: the fix is that
+    the caller passes a seed.
+
+    Determinism is the actual point. Two agents that both call this with the
+    same observed seed get the same id, and the second append is the one the
+    lock waits for — so it can see that its id is taken and take the next. With
+    no seed there is nothing to compare, which is exactly how two writers both
+    end up holding T-0011.
+    """
+    n = 0
+    for e in task_events(ch):
+        tid = e.get("task")
+        if not tid or not str(tid).startswith("T-"):
+            continue
+        suffix = str(tid).split("-", 1)[1]
+        if suffix.isdigit():
+            n = max(n, int(suffix))
     return f"T-{n + 1:04d}"
 
 
-def _append_task_event(ch, ev):
+def _append_task_event(ch, ev, seed=None):
+    """Append one task event, allocating `ev['task']` under the write lock.
+
+    The previous version allocated the id under `.lock.lock` and appended under
+    `.lock` — two different files, so the id was chosen and the append happened
+    outside the same critical section. Between them another process could take
+    the same id, and the two creators both appended, both with a good hash and a
+    good `prev`. `aim verify` said `chain OK` because the chain *is* intact: two
+    records, one id, nothing tampered with.
+
+    A lock is only a lock over the thing it guards, which is why the id is now
+    allocated after the append lock is held. The seed is passed in because it
+    has to come from the caller's fold, and the lock has to be the one the other
+    writers take.
+    """
     p = tasks_path(ch)
     with Lock(channel_dir(ch) / ".lock"):
-        # The id is assigned inside the lock, so two agents creating a task at
-        # the same instant cannot both be handed T-0016.
+        if seed is not None and ev.get("task") == seed:
+            existing = _next_task_id(ch)
+            if existing != seed:
+                ev["task"] = existing
+                ev["id_reallocated_from"] = seed
         append_chained(p, ev)
     return ev
 
@@ -948,8 +998,9 @@ def cmd_task_new(args):
             "contains. Work items are born draft; `aim task publish` exposes one "
             "deliberately, and that act is recorded."
         )
-    with Lock(channel_dir(args.channel) / ".lock.lock"):
-        tid = _next_task_id(args.channel)
+    if args.blocked_by and args.blocked_by not in fold_tasks(args.channel):
+        die(f"REFUSED: no such task to depend on: {args.blocked_by}")
+    tid = _next_task_id(args.channel)
     ev = {
         "ts": now_iso(), "event": "created", "actor": who, "channel": args.channel,
         "task": tid, "title": args.title, "owner": args.owner or who,
@@ -957,8 +1008,18 @@ def cmd_task_new(args):
         "estimate_pts": args.estimate or 0, "start": args.start or "", "due": args.due or "",
         "milestone": args.milestone or "", "tags": args.tag or [], "accept": args.accept or "",
         "visibility": vis,
+        # `--blocked-by` is documented in design/05 §5 and was accepted and then
+        # dropped on the floor: the flag was parsed and never read, so a task
+        # created with a blocker had none, and `move --to done` waved it through.
+        # A dependency that only exists in the command line is worse than a
+        # missing one, because the board looks right.
+        "blocked_by": [args.blocked_by] if args.blocked_by else [],
     }
-    _append_task_event(args.channel, ev)
+    ev = _append_task_event(args.channel, ev, seed=tid)
+    tid = ev["task"]
+    if ev.get("id_reallocated_from"):
+        print(f"note: {ev['id_reallocated_from']} was taken while this was being "
+              f"written; recorded as {tid}")
     print(f"{tid} created ({ev['status']}, {ev['visibility']}) — {ev['title'][:60]}")
 
 
@@ -1026,10 +1087,33 @@ def cmd_task_publish(args):
     if t["visibility"] == "published":
         print(f"{args.id} is already published")
         return
-    _append_task_event(args.channel, {
+    phase = m["barrier"]["phase"]
+    ev = _append_task_event(args.channel, {
         "ts": now_iso(), "event": "published", "actor": who, "channel": args.channel,
         "task": args.id, "reason": args.reason or "",
     })
+    # Publishing during a divergence phase is the one deliberate act that exposes
+    # a work item to a peer while the barrier is supposed to be closed, and until
+    # codex ran a barrier audit over it, nothing the audit *reads* knew it had
+    # happened. The `published` event in the task store was the only trace, so
+    # "read the ledger, count the refusals" could not tell a channel where nobody
+    # leaned on the barrier from one where an agent opened a draft to its peer.
+    # The ledger is where README §3 says that question gets answered, so the
+    # answer goes there: a leak is not a refusal, and it is not a `task.published`
+    # line, it is its own event class.
+    if phase in DIVERGENCE_PHASES:
+        with Lock(channel_dir(args.channel) / ".ledger.lock"):
+            append_chained(channel_dir(args.channel) / "ledger.jsonl", {
+                "ts": ev["ts"], "event": "task_published_during_divergence",
+                "agent": who, "action": "task publish", "phase": phase,
+                "class": "barrier", "task": args.id,
+                "reason": args.reason or "",
+                "visibility_written": "published",
+            })
+        print(f"{args.id} published DURING {phase} — it is now readable by every "
+              f"participant in {args.channel}, and this is recorded in the ledger as "
+              f"a barrier event")
+        return
     print(f"{args.id} published — it is now readable by every participant in "
           f"{args.channel}, and the act is on the record")
 
@@ -1067,9 +1151,11 @@ def cmd_task_list(args):
     board = fold_tasks(args.channel)
     phase = m["barrier"]["phase"]
     rows = []
+    withheld = 0
     for tid in sorted(board):
         t = board[tid]
         if not _visible_to(t, who, phase) and kind != "human":
+            withheld += 1
             continue
         if args.owner and t["owner"] != args.owner:
             continue
@@ -1078,6 +1164,41 @@ def cmd_task_list(args):
         if args.milestone and t["milestone"] != args.milestone:
             continue
         rows.append(t)
+    if args.count_hidden:
+        # The one shape of this read that is not a refusal, because it answers a
+        # question that does not require reading a peer's work: how much work is
+        # there. Counts, never titles — the same thing the renderer's gate emits.
+        print(json.dumps({"visible": len(rows), "withheld": withheld,
+                          "phase": phase, "channel": args.channel}))
+        return
+    # `[]` and "there is no work here" were the same bytes. Codex read
+    # `task list --json` on a channel with nine items in it, got `[]`, rc=0 and
+    # no ledger line, and the only thing wrong with that answer is that it was
+    # false. A caller cannot tell a withheld board from an empty one, which is
+    # the well-formed-file-missing-a-fact failure this project has a name for.
+    #
+    # My first version of this fix refused only when *nothing* was visible, and
+    # returned the visible subset with a note on stderr otherwise. That is not
+    # the contract: design/05 §5 says the read is refused and recorded, and a
+    # JSON consumer that parses stdout cannot see a stderr note, so the array
+    # still reads as "this is the whole board". Codex's contract suite caught it
+    # (`task list --json` -> rc=0 on a channel holding one draft owned by
+    # someone else). The rule is now the one the note froze: while the barrier
+    # is closed, asking for a peer's draft through this verb is refused and
+    # recorded, and `--count-hidden` is how you ask for the size without the
+    # contents. `--owner <yourself>` is exempt, because a result that can only
+    # contain your own rows cannot leak a peer's.
+    self_read = args.owner == who and who in m["participants"]
+    if withheld and not self_read:
+        me = f" (you own {len(rows)} of them)" if rows else ""
+        die(
+            f"REFUSED: {withheld} work item(s) in '{args.channel}' are drafts owned by "
+            f"someone else, and the channel is in {phase}{me}.\n"
+            f"Reading a peer's work item before cross-examination is the board's "
+            f"version of reading their private log. Use --count-hidden for the counts "
+            f"without the titles, --owner {who} for your own work, or wait for "
+            f"CROSS_EXAMINE."
+        )
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         return
@@ -1085,17 +1206,16 @@ def cmd_task_list(args):
         print(f"aim: no visible work items in '{args.channel}'"
               + (f" matching those filters" if (args.owner or args.status or args.milestone) else ""))
         return
-    hidden = len(board) - len(rows)
     for t in rows:
         badge = "" if t["visibility"] == "published" else "  [draft]"
         block = f"  blocked_by={','.join(t['blocked_by'])}" if t["blocked_by"] else ""
         due = f"  due={t['due']}" if t["due"] else ""
         print(f"{t['id']}  {t['status']:<8} {t['owner']:<16} {t['priority']:<6} "
               f"{t['title'][:52]}{badge}{block}{due}")
-    if hidden:
+    if withheld:
         # Counted, never shown: a board that quietly omits rows is a board that
         # lies about the size of the project.
-        print(f"\n({hidden} more work item(s) exist in this channel and are not visible "
+        print(f"\n({withheld} more work item(s) exist in this channel and are not visible "
               f"to you in {phase})")
 
 
@@ -1193,7 +1313,17 @@ def _read_outbox(agent):
 
 
 def _verify_outbox_record(rec):
-    """Returns None if intact, else a one-line description of the damage."""
+    """Returns None if intact, else a one-line description of the damage.
+
+    Two generations of records exist. D4 added `bytes`/`body_sha256`; anything
+    written before that carries no hash, so a checker that asks "do the bytes
+    hash to the recorded value?" answers `no` for every old message and reports
+    intact mail as damaged. Silence there is a safety *feature* — an unsigned
+    message has not been shown to be corrupt, and crying wolf about it would
+    make the real `DAMAGED` line mean nothing. `confirm` is where the absence
+    becomes a refusal, because vouching for bytes you cannot check is a
+    different act from displaying them.
+    """
     body = rec.get("body", "")
     if not body.strip():
         return "empty body"
@@ -1205,6 +1335,51 @@ def _verify_outbox_record(rec):
     return None
 
 
+def _receipt_verification(rec, b):
+    """What a receipt for this record can honestly claim to have checked.
+
+    Returns (refuse_reason_or_None, claim_lines). Two generations of records
+    exist: D4 added `bytes`/`body_sha256`, and anything sent before it carries
+    neither. A receipt is a message to the *sender* asserting what arrived, so
+    for a legacy record it has to say the verification did not happen — the
+    sender knows they did not hash it, and a receipt that claimed otherwise
+    would be the one lie this mechanism exists to prevent. Refusing outright
+    would be worse in the other direction: the mail is real, the sender is
+    waiting, and "I cannot tell you anything" and "you sent me nothing" would
+    look the same from over there.
+    """
+    damage = _verify_outbox_record(rec)
+    if damage:
+        return damage, []
+    if not rec.get("body_sha256"):
+        return None, [
+            f"bytes: {len(b)} (as I received them; no length was recorded at send time)",
+            "body sha256: (none — this message predates body hashes)",
+            "verified: NOTHING. This message was sent before receipts could check "
+            "anything, so this receipt tells you it arrived and how big it is. It "
+            "does not tell you it is intact.",
+        ]
+    return None, [
+        f"bytes: {rec.get('bytes')}",
+        f"body sha256: {rec.get('body_sha256')}",
+        "verified: the bytes I hold hash to the value recorded at send time",
+    ]
+
+
+def _outbox_id(path, rec):
+    """The id to show for an outbox record.
+
+    `msg_id` arrived with D4; mail sent before it has none, and the filename has
+    always carried the same value. Reading the record is the right source when it
+    is there, because the filename could have been renamed and the record could
+    not. Falling back to the filename is not a guess about identity — it is the
+    only identifier that generation of record has, and hiding those rows would
+    make `outbox` silently under-report what was sent, which is the one thing it
+    exists not to do.
+    """
+    return rec.get("msg_id") or path.stem
+
+
 def cmd_confirm(args):
     """Acknowledge a specific delivered message.
 
@@ -1214,10 +1389,18 @@ def cmd_confirm(args):
     learns about it through the same pull they already do.
     """
     who, kind = resolve_actor(args)
-    mine = [r for r in _read_outbox(who) if r.get("msg_id") == args.msg_id]
+    # Match on the record's id or on the filename, because those are the same
+    # value and only one of them existed before D4. A receipt request that push
+    # printed for a legacy record names a filename; refusing it would make the
+    # id in that header unconfirmable, and the sender would never learn anything.
+    mine = []
+    for path in sorted(outbox_dir(who).glob("*.json")) if outbox_dir(who).exists() else []:
+        rec = read_json(path)
+        if rec.get("msg_id") == args.msg_id or path.stem == args.msg_id:
+            mine.append((path, rec))
     if not mine:
         die(f"no message '{args.msg_id}' in your outbox")
-    rec = mine[0]
+    path, rec = mine[0]
     if rec.get("to") != who:
         die(f"'{args.msg_id}' was not addressed to you")
     # Did you actually read it? A receipt that does not require a prior read is a
@@ -1232,7 +1415,7 @@ def cmd_confirm(args):
             f"for an unread message tells the sender intact delivery happened when "
             f"what actually happened is that a file arrived."
         )
-    damage = _verify_outbox_record(rec)
+    damage, claims = _receipt_verification(rec, rec.get("body", "").encode("utf-8"))
     if damage:
         # Confirming a message you cannot vouch for is worse than silence: it
         # would let the sender believe intact delivery happened when it did not.
@@ -1245,17 +1428,15 @@ def cmd_confirm(args):
         "ts": ts, "from": who, "to": rec["from"], "channel": rec.get("channel", ""),
         "subject": f"RECEIPT for {args.msg_id}",
         "body": (f"{who} received {args.msg_id} from {rec['from']}.\n"
-                 f"bytes: {rec.get('bytes')}\n"
-                 f"body sha256: {rec.get('body_sha256')}\n"
-                 f"verified: the bytes I hold hash to the value recorded at send time\n"
-                 f"acknowledged: {ts}\n"
+                 + "".join(line + "\n" for line in claims)
+                 + f"acknowledged: {ts}\n"
                  + (f"note: {args.note}\n" if args.note else "")),
         "receipt_for": args.msg_id,
         "ack_required": False,
     }
     write_json(outbox_dir(rec["from"]) / f"{rid}.json", receipt)
     rec["acked_at"] = ts
-    write_json(outbox_dir(who) / f"{args.msg_id}.json", rec)
+    write_json(path, rec)
     print(f"receipt -> {rec['from']}: {args.msg_id} acknowledged at {ts}")
 
 
@@ -1267,24 +1448,26 @@ def cmd_outbox(args):
     for peer in reg:
         if peer == who:
             continue
-        for r in _read_outbox(peer):
+        d = outbox_dir(peer)
+        for path in (sorted(d.glob("*.json")) if d.exists() else []):
+            r = read_json(path)
             if r.get("from") != who:
                 continue
             if args.peer and peer != args.peer:
                 continue
-            rows.append((peer, r))
+            rows.append((peer, path, r))
     if not rows:
         print(f"aim: nothing sent by '{who}'")
         return
-    rows.sort(key=lambda pr: pr[1]["ts"])
+    rows.sort(key=lambda pr: pr[2]["ts"])
     print(f"{'msg_id':<26} {'to':<16} {'bytes':>6}  {'state':<9} written  claimed  acked")
-    for peer, r in rows:
+    for peer, path, r in rows:
         state = "ACKED" if r.get("acked_at") else ("claimed" if r.get("claimed_at") else "sent")
         acked = r.get("acked_at", "—")
-        print(f"{r['msg_id']:<26} {peer:<16} {r.get('bytes', 0):>6}  {state:<9} "
+        print(f"{_outbox_id(path, r):<26} {peer:<16} {r.get('bytes', 0):>6}  {state:<9} "
               f"{r['ts'][11:19]}  {(r.get('claimed_at') or '—')[11:19]:>7}  "
               f"{(acked[11:19] if acked != '—' else '—'):>7}")
-    unacked = [r for _, r in rows if r.get("ack_required") and not r.get("acked_at")]
+    unacked = [r for _, _, r in rows if r.get("ack_required") and not r.get("acked_at")]
     if unacked:
         print(f"\n{len(unacked)} message(s) demanded an ack and have not received one:")
         for r in unacked:
@@ -1792,6 +1975,8 @@ def main():
     q.add_argument("--status", default="")
     q.add_argument("--milestone", default="")
     q.add_argument("--json", action="store_true")
+    q.add_argument("--count-hidden", dest="count_hidden", action="store_true",
+                   help="how many items exist but are withheld from you, without their titles")
 
     p = add("reveal", cmd_reveal)
     p.add_argument("--as", dest="actor", required=True)
