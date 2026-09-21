@@ -999,6 +999,26 @@
         "contract"
       ],
       "accept": "python3 tests/test_pm_contract.py exits 0, and every refusal it asserts is also in the ledger"
+    },
+    {
+      "id": "T-0090",
+      "title": "Publishing a work item during divergence must be a ledger event, not only a store event",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "defect",
+        "barrier",
+        "audit"
+      ],
+      "accept": "an agent publishing during a divergence phase leaves a ledger record a barrier audit sees without opening the task store",
+      "move_reason": "measured: task publish during SEALED_DIVERGENT succeeds for an agent and writes no ledger record; the channel's ledger holds only one unrelated refusal"
     }
   ]
 }
