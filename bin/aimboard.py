@@ -316,6 +316,22 @@ def load_mail(root):
     return counts, unacked
 
 
+def load_conversation(root):
+    """Every message in every inbox. Rendering is gated; loading is not."""
+    base = root / "outbox"
+    out = []
+    if not base.exists():
+        return out
+    for inbox in sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith("_")):
+        for path in sorted(inbox.glob("*.json")):
+            rec = read_json(path)
+            if isinstance(rec, dict):
+                rec["_inbox"] = inbox.name
+                rec["_id"] = rec.get("msg_id") or path.stem
+                out.append(rec)
+    return out
+
+
 def load_fabric(root, plans, as_of):
     registry = (read_json(root / "registry.json", {"agents": {}}) or {}).get("agents", {})
     channels = []
@@ -368,6 +384,7 @@ def load_fabric(root, plans, as_of):
         "seed_tasks": seed_tasks,
         "tasks": tasks,
         "mail": {f"{a} -> {b}": v for (a, b), v in sorted(mail.items())},
+        "conversation": load_conversation(root),
         "unacked": unacked,
         "plan_glob": plans,
     }
@@ -645,6 +662,90 @@ def render_chat(channels, viewer):
     return "".join(blocks)
 
 
+def message_html(head, body, meta="", state_chip=""):
+    return f'''<article class="msg">
+  <header><b>{esc(head)}</b> <span class="dim">{esc(meta)}</span>{state_chip}</header>
+  <pre>{esc(body)}</pre>
+</article>'''
+
+
+def render_conversation(state, viewer):
+    """What was actually said.
+
+    D7 used to say the dashboard never renders a message body. The leader
+    overrode that on 2026-09-21 - they are the audience, they already read both
+    seals, and a conversation they cannot see is a conversation they cannot
+    steer. The rule that replaces it is narrower and still absolute: **you see
+    the conversations you are part of, and no others.**
+
+    A participant therefore sees mail they sent or received, the channel messages
+    the phase lets them read, and nothing else. Peer *private* logs are still
+    never read or rendered at all, because the seal's whole purpose is that one
+    agent's half-formed reasoning is not available to the other - and a renderer
+    that shows it, even to the leader, produces a file whose contents are one
+    share away from being exactly the leak the barrier exists to prevent.
+    """
+    kind = (state["registry"].get(viewer) or {}).get("kind", "")
+    is_leader = kind == "human"
+    blocks, withheld = [], 0
+
+    for ch in state["channels"]:
+        gated = viewer in ch["participants"] and ch["phase"] in DIVERGENCE
+        msgs = []
+        for m in ch["log"]:
+            if gated and m.get("from") != viewer:
+                withheld += 1
+                continue
+            msgs.append(message_html(
+                f'{m.get("from", "?")} → the channel',
+                m.get("body", ""),
+                f'{m.get("ts", "")} · kind {m.get("kind", "-")} · responds-to {m.get("responds_to", "-")}'))
+        note = ("this viewer is a participant and the channel is in " + esc(ch["phase"])
+                + ", so peer messages are absent" if gated else "every message in this phase")
+        blocks.append(f'<h3>#{esc(ch["id"])} — the channel record</h3>'
+                      f'<p class="dim">{len(msgs)} message(s), {note}</p>' + ("".join(msgs) or
+                      '<p class="empty">nothing has been said on the public record yet.</p>'))
+        rooms, hidden_rooms = visible_rooms(ch, viewer)
+        for room in rooms:
+            body = "".join(message_html(f'{m.get("agent", "?")} → #{room["id"]}', m.get("body", ""),
+                                        m.get("ts", ""),
+                                        f'<span class="chip">{len(m.get("mentions") or [])} mention(s)</span>'
+                                        if m.get("mentions") else "")
+                           for m in room["messages"])
+            blocks.append(f'<h3>#{esc(ch["id"])}/#{esc(room["id"])} — a room</h3>'
+                          f'<p class="dim">{len(room["messages"])} message(s), '
+                          f'{esc(room["visibility"])}</p>'
+                          + (body or '<p class="empty">empty room.</p>'))
+        if hidden_rooms:
+            withheld += hidden_rooms
+
+    dms = ""
+    for rec in state["conversation"]:
+        sender, to = rec.get("from", "?"), rec.get("to", "?")
+        if not is_leader and viewer not in (sender, to):
+            withheld += 1
+            continue
+        chips = ""
+        if rec.get("ack_required"):
+            chips = ('<span class="chip due">acked</span>' if rec.get("acked_at")
+                     else '<span class="chip blocker">no ack</span>')
+        elif rec.get("claimed_at"):
+            chips = '<span class="chip">claimed</span>'
+        else:
+            chips = '<span class="chip draft">unread</span>'
+        dms += message_html(f'{sender} → {to}', rec.get("body", ""),
+                            f'{rec.get("ts", "")} · {rec.get("subject", "")}', chips)
+    blocks.append('<h3>direct messages</h3>'
+                  + (dms or '<p class="empty">no direct messages.</p>'))
+
+    head = ('<p class="note">You see the conversations you are part of and no others. '
+            f'{withheld} message(s) are withheld from this view. Peer <b>private reasoning</b> '
+            'is never read or rendered here at all: it exists so that a seal can be checked later, '
+            'and a rendered copy would be one shared file away from the exact leak the barrier '
+            'prevents.</p>')
+    return head + "".join(blocks)
+
+
 def render_transport(state):
     rows = ""
     for pair, row in state["mail"].items():
@@ -844,6 +945,9 @@ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:6px}
 details p{margin:6px 0 0;color:var(--dim);font-size:12.5px}
 .reason{margin:8px 0 0;color:#fca5a5;font-size:12.5px}
 .empty{color:var(--dim);font-size:12.5px;font-style:italic}
+.msg{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.msg header{display:flex;gap:8px;align-items:center;font-size:12.5px;flex-wrap:wrap}
+.msg pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12.5px/1.5 ui-monospace,monospace;color:#cbd5e1}
 .burndown{background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .burndown .line{fill:none;stroke:#38bdf8;stroke-width:2}
 .burndown .thr{fill:#34d399;opacity:.55}
@@ -886,7 +990,8 @@ def render_html(state, viewer, risks, generated_at, lang="en"):
         ("kanban", labels["kanban"], render_kanban(tasks, as_of)),
         ("gantt", labels["gantt"], render_gantt(state["milestones"], tasks, as_of)),
         ("table", labels["table"], render_table(tasks, as_of)),
-        ("chat", labels["chat"], render_chat(channels, viewer) + "<h3>transport</h3>" + render_transport(state)),
+        ("chat", labels["chat"], render_conversation(state, viewer) + "<h3>transport</h3>"
+         + render_transport(state)),
         ("reports", labels["reports"], render_reports(tasks, state["milestones"], as_of, labels)),
         ("barrier", labels["barrier"], render_barrier(state, viewer, labels)),
         ("plan", labels["plan"], render_plan(state, risks, labels)),

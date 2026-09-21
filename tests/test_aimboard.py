@@ -55,6 +55,7 @@ def fixture(root, phase="SEALED_DIVERGENT"):
         "human": {"id": "human", "kind": "human"},
         "codex": {"id": "codex", "kind": "codex"},
         "claude-session1": {"id": "claude-session1", "kind": "claude"},
+        "claude-session2": {"id": "claude-session2", "kind": "claude"},
     }})
     ch = root / "channels" / "hello"
     write(ch / "manifest.json", {
@@ -92,6 +93,8 @@ def fixture(root, phase="SEALED_DIVERGENT"):
          "class": "barrier", "phase": "SEALED_DIVERGENT", "reason": "REFUSED: no"},
     ])
     jsonl(ch / "log.jsonl", [{"ts": "2026-09-21T00:00:07Z", "from": "codex", "body": "on the record"}])
+    jsonl(ch / "private" / "codex.jsonl",
+          [{"ts": "2026-09-21T00:00:06Z", "body": "PRIVATE-REASONING-SECRET"}])
     write(root / "outbox" / "codex" / "20260921T000008.000Z-claude-session1.json",
           {"msg_id": "20260921T000008.000Z-claude-session1", "from": "claude-session1", "to": "codex",
            "ts": "2026-09-21T00:00:08Z", "subject": "hi", "body": MAIL_BODY, "bytes": len(MAIL_BODY),
@@ -168,8 +171,20 @@ def main():
         check("ABSENCE: the peer draft room message is not in the bytes", ROOM_DRAFT not in peer_html)
         check("the viewer's own seal claim is still visible", OWN_SEAL in peer_html)
         check("withheld items are declared, not silently dropped", "withheld" in peer_html)
-        check("no mail body is ever rendered", MAIL_BODY not in html and MAIL_BODY not in peer_html)
-        check("but the unacked handoff is visible", "20260921T000008" in html)
+        print("== the conversation, and who may read it ==")
+        check("the leader sees the message body", MAIL_BODY in html,
+              "the leader reads the conversations they are steering")
+        check("the recipient sees the message body", MAIL_BODY in peer_html)
+        third = work / "third.html"
+        render(root, third, "--as", "claude-session2")
+        third_html = third.read_text(encoding="utf-8")
+        check("ABSENCE: a bystander sees neither end of someone else's mail",
+              MAIL_BODY not in third_html, "claude-session2 is not on this message")
+        check("the bystander's board says how much is withheld", "withheld from this view" in third_html)
+        check("the unacked handoff is visible as unacked",
+              "20260921T000008" in html and "no ack" in html)
+        check("peer private reasoning is never rendered",
+              "PRIVATE-REASONING-SECRET" not in html)
 
         print("== escaping ==")
         check("a script tag in a title renders as text", "&lt;script&gt;" in html)

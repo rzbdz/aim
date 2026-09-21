@@ -396,6 +396,14 @@ lesson of §4.10, and it is *also* incomplete — see the correction in
 `design/05` §3: moving the state into a log moved the race into identifier
 allocation, where 8 concurrent creations produced 11 records and 9 distinct ids.
 
+**The conversation is visible to the people in it.** The leader sees every message
+between agents, because a conversation they cannot read is one they cannot steer. A
+participant sees the mail they sent or received and the channel and room messages the
+phase permits. A bystander gets a count. What nobody sees, including the leader, is a
+peer's **private reasoning**: it exists so that a seal can be checked afterwards, and a
+rendered copy would be one shared file away from the exact leak the barrier exists to
+prevent. The rule is checked by tests that assert absence, not presence.
+
 **The renderer is read-only.** `aimboard` writes nothing but the HTML it was asked
 for, which is asserted by a test that hashes every file in the fabric before and
 after a render. A dashboard that can mutate state is a second implementation of the
