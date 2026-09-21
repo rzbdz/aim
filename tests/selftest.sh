@@ -202,6 +202,48 @@ PY
 expect_fail "a seal with no private-log commitment is TAMPER, not skipped" \
   $AIM verify --channel t3
 
+echo "== delivery: sent is not received, and a receipt is not a file =="
+# D4. The first end-to-end run measured this the hard way: a durable outbox file
+# sat unread until the peer session happened to have a live turn. "A file exists
+# in someone's outbox" and "the message was received" are different claims, and
+# the design previously had no way to tell them apart. These assertions are what
+# makes the difference observable.
+expect_ok   "alpha pushes with --require-ack" \
+  $AIM push --as alpha --to beta --subject "review this" --body "the diff under review" --require-ack
+MSGID=$(python3 -c "
+import json,glob
+for p in sorted(glob.glob('$AIM_ROOT/outbox/beta/*.json')):
+    r=json.load(open(p))
+    if r.get('from')=='alpha': print(r['msg_id'])")
+expect_ok   "the push recorded a content hash and a byte count" \
+  bash -c "python3 -c \"
+import json,sys
+r=json.load(open([p for p in __import__('glob').glob('$AIM_ROOT/outbox/beta/*.json') if json.load(open(p))['msg_id']=='$MSGID'][0]))
+sys.exit(0 if r.get('body_sha256') and r.get('bytes') else 1)\""
+expect_fail "an unacked --require-ack push exits non-zero for the sender" $AIM outbox --as alpha
+expect_ok   "the sender can see it is sent but not acked" \
+  bash -c "$AIM outbox --as alpha 2>/dev/null | grep -q sent"
+expect_ok   "the recipient pulls and is told an ack is owed" \
+  bash -c "$AIM pull --as beta --unread-only --claim 2>/dev/null | grep -q 'asked for an ack'"
+expect_ok   "the recipient confirms, echoing the hash it verified" $AIM confirm --as beta --msg-id "$MSGID"
+expect_ok   "the sender now sees ACKED" bash -c "$AIM outbox --as alpha | grep -q ACKED"
+expect_ok   "and the receipt is itself delivered to the sender" \
+  bash -c "$AIM pull --as alpha --unread-only 2>/dev/null | grep -q 'RECEIPT for $MSGID'"
+
+# The point of the hash: a message that was altered after sending must not be
+# confirmable. Confirming it would tell the sender intact delivery happened when
+# it did not — worse than silence, because the sender would act on it.
+expect_ok   "alter a delivered message in place" \
+  bash -c "python3 -c \"
+import json,glob
+p=[p for p in glob.glob('$AIM_ROOT/outbox/beta/*.json') if json.load(open(p))['msg_id']=='$MSGID'][0]
+r=json.load(open(p)); r['body']='the diff under review (and ship it)'; json.dump(r,open(p,'w'))\""
+expect_fail "confirming an altered message is refused" $AIM confirm --as beta --msg-id "$MSGID"
+expect_ok   "the refusal says what is wrong, not just 'no'" \
+  bash -c "$AIM confirm --as beta --msg-id '$MSGID' 2>&1 | grep -q 'does not hash'"
+expect_fail "confirming a message you never received is refused" \
+  $AIM confirm --as beta --msg-id 20200101T000000.000Z-nobody
+
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
 # Tamper *after* the last successful verify, so the check is not confounded by

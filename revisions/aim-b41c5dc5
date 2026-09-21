@@ -748,146 +748,30 @@ def cmd_push(args):
     body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
     if not body.strip():
         die("need --body or --body-file")
-    d = outbox_dir(args.to)
+    d = ROOT / "outbox" / args.to
     d.mkdir(parents=True, exist_ok=True)
     ts = now_iso()
-    # The id is derived from a microsecond timestamp and the sender, so two
-    # writers never collide on a filename and therefore never share a .tmp path
-    # either. write_json() lands atomically, so a message is either fully present
-    # or absent — never half-written, which is the failure a reader can neither
-    # detect nor recover from.
-    msg_id = f"{ts.replace(':', '').replace('-', '')}-{who}"
-    body_bytes = body.encode("utf-8")
+    stem = f"{ts.replace(':', '').replace('-', '')}-{who}"
     rec = {
-        "msg_id": msg_id,
         "ts": ts, "from": who, "to": args.to, "channel": args.channel or "",
         "subject": args.subject or "", "body": body, "delivered_via": args.via or "",
-        # Delivery alone cannot be verified by the delivery. These two fields are
-        # what let the *recipient* prove to the sender that the bytes they hold
-        # are the bytes that were sent — the difference between "a file exists in
-        # my outbox" and "the message arrived intact".
-        "bytes": len(body_bytes),
-        "body_sha256": sha256_hex(body_bytes),
-        "ack_required": bool(args.require_ack),
     }
-    write_json(d / f"{msg_id}.json", rec)
-    (d / f"{msg_id}.md").write_text(
+    write_json(d / f"{stem}.json", rec)
+    (d / f"{stem}.md").write_text(
         f"# message from {who} -> {args.to}\n"
-        f"msg_id: {msg_id}\n"
         f"channel: {args.channel or '(none)'}\nsent: {ts}\nsubject: {args.subject or ''}\n\n"
         f"{body}\n\n---\n"
-        f"Received it? Confirm with:\n"
-        f"  aim confirm --as {args.to} --msg-id {msg_id}\n"
         f"Reply through the channel, not through this file:\n"
         f"  aim inbox --as {args.to} --channel {args.channel or '<channel>'}\n"
         f"  aim say   --as {args.to} --channel {args.channel or '<channel>'} ...\n",
         encoding="utf-8")
-    print(f"outbox: {d}/{msg_id}.md  ({len(body_bytes)} bytes, sha {rec['body_sha256'][:12]}…)")
-
-
-def outbox_dir(agent):
-    return ROOT / "outbox" / agent
-
-
-def _read_outbox(agent):
-    d = outbox_dir(agent)
-    if not d.exists():
-        return []
-    return [read_json(p) for p in sorted(d.glob("*.json"))]
-
-
-def _verify_outbox_record(rec):
-    """Returns None if intact, else a one-line description of the damage."""
-    body = rec.get("body", "")
-    if not body.strip():
-        return "empty body"
-    b = body.encode("utf-8")
-    if rec.get("body_sha256") and sha256_hex(b) != rec["body_sha256"]:
-        return "body does not hash to the value recorded when it was sent"
-    if rec.get("bytes") and len(b) != rec["bytes"]:
-        return f"length is {len(b)} bytes, recorded as {rec['bytes']}"
-    return None
-
-
-def cmd_confirm(args):
-    """Acknowledge a specific delivered message.
-
-    Delivery is not receipt. A file that appears in someone's outbox proves the
-    sender wrote it; it proves nothing about whether a reader ever saw it. This
-    closes that loop, and the acknowledgement is itself a message, so the sender
-    learns about it through the same pull they already do.
-    """
-    who, kind = resolve_actor(args)
-    mine = [r for r in _read_outbox(who) if r.get("msg_id") == args.msg_id]
-    if not mine:
-        die(f"no message '{args.msg_id}' in your outbox")
-    rec = mine[0]
-    if rec.get("to") != who:
-        die(f"'{args.msg_id}' was not addressed to you")
-    damage = _verify_outbox_record(rec)
-    if damage:
-        # Confirming a message you cannot vouch for is worse than silence: it
-        # would let the sender believe intact delivery happened when it did not.
-        die(f"REFUSED: cannot confirm '{args.msg_id}' — {damage}")
-
-    ts = now_iso()
-    rid = f"{ts.replace(':', '').replace('-', '')}-{who}-receipt"
-    receipt = {
-        "msg_id": rid,
-        "ts": ts, "from": who, "to": rec["from"], "channel": rec.get("channel", ""),
-        "subject": f"RECEIPT for {args.msg_id}",
-        "body": (f"{who} received {args.msg_id} from {rec['from']}.\n"
-                 f"bytes: {rec.get('bytes')}\n"
-                 f"body sha256: {rec.get('body_sha256')}\n"
-                 f"verified: the bytes I hold hash to the value recorded at send time\n"
-                 f"acknowledged: {ts}\n"
-                 + (f"note: {args.note}\n" if args.note else "")),
-        "receipt_for": args.msg_id,
-        "ack_required": False,
-    }
-    write_json(outbox_dir(rec["from"]) / f"{rid}.json", receipt)
-    rec["acked_at"] = ts
-    write_json(outbox_dir(who) / f"{args.msg_id}.json", rec)
-    print(f"receipt -> {rec['from']}: {args.msg_id} acknowledged at {ts}")
-
-
-def cmd_outbox(args):
-    """What have I sent, and what happened to it? Sent is not received."""
-    who, kind = resolve_actor(args)
-    reg = load_registry()["agents"]
-    rows = []
-    for peer in reg:
-        if peer == who:
-            continue
-        for r in _read_outbox(peer):
-            if r.get("from") != who:
-                continue
-            if args.peer and peer != args.peer:
-                continue
-            rows.append((peer, r))
-    if not rows:
-        print(f"aim: nothing sent by '{who}'")
-        return
-    rows.sort(key=lambda pr: pr[1]["ts"])
-    print(f"{'msg_id':<26} {'to':<16} {'bytes':>6}  {'state':<9} written  claimed  acked")
-    for peer, r in rows:
-        state = "ACKED" if r.get("acked_at") else ("claimed" if r.get("claimed_at") else "sent")
-        acked = r.get("acked_at", "—")
-        print(f"{r['msg_id']:<26} {peer:<16} {r.get('bytes', 0):>6}  {state:<9} "
-              f"{r['ts'][11:19]}  {(r.get('claimed_at') or '—')[11:19]:>7}  "
-              f"{(acked[11:19] if acked != '—' else '—'):>7}")
-    unacked = [r for _, r in rows if r.get("ack_required") and not r.get("acked_at")]
-    if unacked:
-        print(f"\n{len(unacked)} message(s) demanded an ack and have not received one:")
-        for r in unacked:
-            print(f"  {r['msg_id']} -> {r['to']}")
-        sys.exit(4)
+    print(f"outbox: {d}/{stem}.md  ({len(body)} chars)")
 
 
 def cmd_pull(args):
     """Read everything in your outbox, newest last, and mark it claimed."""
     who, kind = resolve_actor(args)
-    d = outbox_dir(who)
+    d = ROOT / "outbox" / who
     items = sorted(d.glob("*.json")) if d.exists() else []
     if not items:
         print(f"aim: outbox empty for '{who}'")
@@ -902,19 +786,10 @@ def cmd_pull(args):
         return
     show = unread if args.unread_only else [(p, read_json(p)) for p in items]
     for p, rec in show:
-        print(f"=== from {rec['from']} @ {rec['ts']}  channel={rec['channel'] or '-'}"
-              f"  msg_id={rec.get('msg_id', '(none)')}")
+        print(f"=== from {rec['from']} @ {rec['ts']}  channel={rec['channel'] or '-'}")
         if rec.get("subject"):
             print(f"    subject: {rec['subject']}")
-        # Integrity first: a message you cannot trust is worse than a missing one,
-        # because you will act on it.
-        damage = _verify_outbox_record(rec)
-        if damage:
-            print(f"    !!! DAMAGED: {damage}")
         print("    " + rec["body"].replace("\n", "\n    "))
-        if rec.get("ack_required") and not rec.get("acked_at"):
-            print(f"    >>> the sender asked for an ack: "
-                  f"aim confirm --as {who} --msg-id {rec.get('msg_id')}")
         print()
         if args.claim and not rec.get("claimed_at"):
             rec["claimed_at"] = now_iso()
@@ -1104,11 +979,6 @@ def cmd_tension(args):
         print(f"  8-gram containment     {k}: {v}")
     print(f"  mean claim overlap     {rep['mean_claim_overlap']}")
     print()
-    # What this number is not, said before anyone reads it as a verdict.
-    print("  caveat: a word counts as shared however it got there. This cannot tell")
-    print("  whether the two positions converged or whether one is downstream of the")
-    print("  other, and those have opposite implications. It is a prompt to look, not")
-    print("  a finding.")
     print("  claims:")
     for r in rep["claim_analysis"]:
         kill = f"  kill_if addressed {r['kill_if_addressed']:.0%} by {r['kill_if_addressed_by']}" \
@@ -1335,22 +1205,11 @@ def main():
     p.add_argument("--body", default="")
     p.add_argument("--body-file")
     p.add_argument("--via", default="", help="how you intend to deliver this (recorded for the ledger)")
-    p.add_argument("--require-ack", action="store_true",
-                   help="record that this message demands a receipt")
 
     p = add("pull", cmd_pull)
     p.add_argument("--as", dest="actor", required=True)
     p.add_argument("--claim", action="store_true", help="mark the messages as read")
     p.add_argument("--unread-only", action="store_true")
-
-    p = add("confirm", cmd_confirm)
-    p.add_argument("--as", dest="actor", required=True)
-    p.add_argument("--msg-id", required=True)
-    p.add_argument("--note", default="")
-
-    p = add("outbox", cmd_outbox)
-    p.add_argument("--as", dest="actor", required=True)
-    p.add_argument("--peer", default="", help="only show one recipient")
 
     p = add("nudge", cmd_nudge)
     p.add_argument("--channel", required=True)
