@@ -49,7 +49,7 @@ def channel_payload(state, ch, viewer):
     }
 
 
-def payload(state, viewer, register, generated_at=None, as_of=None, digest=None):
+def payload(state, viewer, register, generated_at=None, as_of=None, digest=None, write=None):
     generated_at = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     channel = gate_channel(state, viewer, {})
     tasks, hidden = visible_tasks(state, viewer, channel)
@@ -68,6 +68,10 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None)
         "root": state["root"],
         "viewer": viewer,
         "viewer_kind": (state["registry"].get(viewer) or {}).get("kind", ""),
+        # design/06 R2: the write posture is the server's to declare, so the
+        # composer can name the identity it will write as and disappear when
+        # there is none, instead of offering a control that will be refused.
+        "write": write or {"enabled": False, "as": ""},
         "phase": channel.get("phase", "-"),
         "withheld_tasks": hidden,
         "channels": [channel_payload(state, ch, viewer) for ch in state["channels"]],

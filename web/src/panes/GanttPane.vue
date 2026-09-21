@@ -6,6 +6,7 @@ import { PRIORITY_TYPE, STATUS_TYPE, color, days, today } from '../theme'
 const board = useBoard()
 const selected = ref(null)
 const drawer = ref(false)
+const milestone = ref('all')
 
 /**
  * A gantt, drawn by ECharts as a stacked bar: an invisible "offset" series holds
@@ -14,20 +15,31 @@ const drawer = ref(false)
  * library instead of from 120 lines of hand-placed SVG - which is what the
  * previous version of this pane was, and what the leader called 屎.
  */
-const rows = computed(() => {
-  const dated = board.dated.slice().sort((a, b) => {
+/**
+ * The chart was 62vh for 74 rows, which is 8px a row: the bars were fine and the
+ * labels were unreadable, and the leader called it 屎 for the second time. A gantt
+ * is a list before it is a chart -- one row per item, one line of text each -- so
+ * the height follows the row count and the page scrolls, exactly as the
+ * conversation page does. Zooming the x-axis is still the library's job.
+ */
+const ROW_PX = 21
+const allDated = computed(() => board.dated.slice().sort((a, b) => {
     const ka = `${a.milestone || 'zz'}|${a.start || a.due}`
     const kb = `${b.milestone || 'zz'}|${b.start || b.due}`
     return ka < kb ? -1 : ka > kb ? 1 : 0
-  })
+}))
+const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone).filter(Boolean))].sort())
+const rows = computed(() => {
+  const dated = allDated.value.filter((t) => milestone.value === 'all' || t.milestone === milestone.value)
   const seen = new Set()
   return dated.map((t) => {
     const first = !seen.has(t.milestone)
     seen.add(t.milestone)
-    const label = `${t.id} · ${t.title.length > 44 ? t.title.slice(0, 43) + '…' : t.title}`
+    const label = `${t.id} · ${t.title.length > 62 ? t.title.slice(0, 61) + '…' : t.title}`
     return { task: t, label: first && t.milestone ? `${t.milestone} ▏${label}` : `   ${label}` }
   })
 })
+const chartHeight = computed(() => Math.min(3000, Math.max(320, rows.value.length * ROW_PX + 130)))
 const span = computed(() => {
   const [lo, hi] = board.horizon
   return { lo, hi, n: Math.max(1, days(lo, hi) + 2) }
@@ -47,7 +59,7 @@ const option = computed(() => {
   })
   return {
     backgroundColor: 'transparent',
-    grid: { left: 300, right: 40, top: 16, bottom: 56 },
+    grid: { left: 30, right: 40, top: 16, bottom: 56, containLabel: true },
     tooltip: {
       trigger: 'item',
       formatter: (p) => {
@@ -71,7 +83,7 @@ const option = computed(() => {
     yAxis: {
       type: 'category', inverse: true,
       data: rows.value.map((r) => r.label),
-      axisLabel: { width: 290, overflow: 'truncate', fontSize: 11, fontFamily: 'ui-monospace, monospace' },
+      axisLabel: { width: 470, overflow: 'truncate', fontSize: 11.5, fontFamily: 'ui-monospace, monospace' },
       axisTick: { show: false },
     },
     dataZoom: [
@@ -102,19 +114,24 @@ const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due))
 </script>
 
 <template>
-  <el-card shadow="never">
+  <el-card shadow="never" class="aim-sticky-head">
     <template #header>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span>timeline — {{ rows.length }} dated item(s), {{ span.lo }} → {{ span.hi }}</span>
+        <span>timeline — {{ rows.length }} of {{ allDated.length }} dated item(s), {{ span.lo }} → {{ span.hi }}</span>
+        <el-select v-model="milestone" size="small" style="width:150px">
+          <el-option value="all" label="every milestone" />
+          <el-option v-for="m in milestones" :key="m" :value="m" :label="m" />
+        </el-select>
         <span style="flex:1" />
         <span v-for="st in board.statuses" :key="st" style="display:flex;align-items:center;gap:4px;font-size:11.5px">
           <span :style="{ width: '9px', height: '9px', borderRadius: '2px', background: color(st) }" />
           <span class="aim-dim">{{ st }}</span>
         </span>
-        <span class="aim-dim" style="font-size:12px">zoom: drag inside the chart, or use the slider below</span>
+        <span class="aim-dim" style="font-size:12px">drag inside the chart to zoom, or use the slider below</span>
       </div>
     </template>
-    <VChart v-if="rows.length" :option="option" autoresize style="height: 62vh" @click="onClick" />
+    <VChart v-if="rows.length" :option="option" autoresize
+            :style="{ height: chartHeight + 'px' }" @click="onClick" />
     <el-empty v-else description="no dates anywhere: every bar in a gantt is a promise, and this plan has not made one yet" />
   </el-card>
 

@@ -1,6 +1,7 @@
 """The command line."""
 import argparse
 import json
+import subprocess
 import os
 import sys
 from datetime import datetime, timezone
@@ -110,6 +111,15 @@ def cmd_serve(args):
     It also serves the built front-end (web/dist) when there is one, and the JSON
     that front-end reads at /api/state. The gate is applied on the server, before
     serialisation: a browser is not trusted to hide what it was sent.
+
+    With --allow-write it also accepts POST /api/command, which runs one allowlisted
+    `aim` command and returns its stdout, stderr and exit code. The dashboard does
+    not implement the write discipline; it *invokes* it, so a write from the browser
+    lands in the ledger with a refusal recorded if the tool refused, exactly as if it
+    had been typed. Three things are not negotiable here: no shell (argv only), the
+    identity is the server's own and never the request's (design/06 R1), and the
+    request must come from this origin, so a page the leader happens to have open
+    cannot quietly write into their fabric.
     """
     import http.server
     from pathlib import Path as _Path
@@ -118,6 +128,14 @@ def cmd_serve(args):
     # this is the application, and conflating them is how a dashboard ends up
     # looking for its own assets inside someone's project directory.
     web = _Path(__file__).resolve().parent.parent / "web" / "dist"
+    aim_bin = _Path(__file__).resolve().parent.parent / "bin" / "aim"
+    # The dashboard is a *client* of the one writer, never a second one. These are
+    # the verbs it may hand to `bin/aim`; anything else is refused here, before a
+    # subprocess exists. A write that cannot be expressed as a command the leader
+    # could have typed is a write this project does not want.
+    # Commands, not verbs: `task publish` is admitted by `task`, and a bare
+    # `publish` in this set would be an entry for something that does not exist.
+    writable = {"say", "push", "confirm", "task", "advance", "request-advance", "reveal"}
     content_types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                      ".css": "text/css; charset=utf-8", ".json": "application/json",
                      ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
@@ -172,6 +190,93 @@ def cmd_serve(args):
                 return parse_qs(self.path.split("?", 1)[1]).get("as", [args.viewer or ""])[0]
             return args.viewer or (load_fabric(root, [], datetime.now(timezone.utc).date())["channels"][0]["leader"])
 
+        def _writer(self):
+            """Who a write from this dashboard is from. Never the query string.
+
+            design/06 R1: `?as=` chooses whose eyes you read through, which is a
+            borrowed view and costs nothing. The same parameter choosing whose
+            hands you write with is forgery -- the record would say the leader
+            spoke when the leader did not, and a URL is not a credential. So a
+            write is from the identity the server was started as, and a caller
+            who wants a different one starts a different server.
+            """
+            return args.viewer or (load_fabric(root, [], datetime.now(timezone.utc).date())["channels"][0]["leader"])
+
+        def _origin_ok(self):
+            """A cross-origin page must not be able to drive this, even blind."""
+            origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+            if not origin:
+                return False
+            host = self.headers.get("Host") or f"127.0.0.1:{port}"
+            allowed = {f"http://{host}", f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
+            return any(origin == a or origin.startswith(a + "/") for a in allowed)
+
+        def do_POST(self):
+            path = (self.path or "/").split("?")[0]
+            if path != "/api/command":
+                self.send_error(404)
+                return
+            if not args.allow_write:
+                self._send(json.dumps({"ok": False, "rc": 126,
+                                       "stderr": "this server was started without --allow-write, "
+                                                 "so the dashboard can read and cannot write"}),
+                           "application/json; charset=utf-8")
+                return
+            if not self._origin_ok():
+                self._send(json.dumps({"ok": False, "rc": 126,
+                                       "stderr": "refused: the request did not come from this origin"}),
+                           "application/json; charset=utf-8")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception as exc:
+                self._send(json.dumps({"ok": False, "rc": 2, "stderr": f"bad request: {exc}"}),
+                           "application/json; charset=utf-8")
+                return
+            argv = [str(x) for x in (body.get("argv") or [])]
+            # Not the query string and not the body: see `_writer`. Any --as in
+            # argv is dropped below and the server's own identity appended after
+            # it, so there is one place in this file where a write's author is
+            # decided and no argument can reach it.
+            viewer = self._writer() or "<agent-id>"
+            if not argv or argv[0] not in writable:
+                self._send(json.dumps({"ok": False, "rc": 126,
+                                       "stderr": f"refused: {argv[:1] or ['(empty)']} is not in the dashboard's "
+                                                 f"allowlist: {', '.join(sorted(writable))}"}),
+                           "application/json; charset=utf-8")
+                return
+            # identity is the server's to assert, not the caller's to claim: any
+            # --as in the request is dropped and the viewer's is appended
+            cleaned, skip = [], False
+            for a in argv:
+                if skip:
+                    skip = False
+                    continue
+                if a == "--as":
+                    skip = True
+                    continue
+                cleaned.append(a)
+            argv = cleaned + ["--as", str(viewer)]
+            # `bin/aim` resolves its fabric from AIM_ROOT, not from the cwd and not
+            # from an argument. Serving somebody's fabric while shelling out to the
+            # default one would append this write to the wrong record -- the exact
+            # failure this endpoint exists to make impossible. So the root the
+            # server was told to serve is the root the command runs against.
+            env = os.environ | {"AIM_ROOT": str(root)}
+            try:
+                done = subprocess.run([str(aim_bin), *argv], capture_output=True, text=True,
+                                      timeout=30, env=env)
+                self._send(json.dumps({"ok": done.returncode == 0, "rc": done.returncode,
+                                       "argv": argv, "stdout": done.stdout, "stderr": done.stderr},
+                                      ensure_ascii=False), "application/json; charset=utf-8")
+            except subprocess.TimeoutExpired:
+                self._send(json.dumps({"ok": False, "rc": 124, "stderr": "the command did not finish in 30s"}),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(json.dumps({"ok": False, "rc": 1, "stderr": str(exc)}),
+                           "application/json; charset=utf-8")
+
         def _send(self, body, ctype):
             raw = body if isinstance(body, bytes) else body.encode("utf-8")
             self.send_response(200)
@@ -201,7 +306,9 @@ def cmd_serve(args):
                 if path == "/api/state":
                     state = self._state()
                     body = json.dumps(json_state(state, self._viewer(), self._risks(), now_iso(),
-                                                 digest=fabric_digest(root)),
+                                                 digest=fabric_digest(root),
+                                                 write={"enabled": bool(args.allow_write),
+                                                        "as": self._writer() if args.allow_write else ""}),
                                       ensure_ascii=False)
                     self._send(body, "application/json; charset=utf-8")
                     return
@@ -324,6 +431,12 @@ def main(argv=None):
                    help="seconds between change checks; the page offers a refresh instead of "
                         "taking itself away from you (0 disables the check)")
     v.add_argument("--plan", action="append", default=None)
+    v.add_argument("--allow-write", action="store_true",
+                   help="accept POST /api/command, which runs an allowlisted aim command as the "
+                        "identity this server was started as (--as, default the channel leader), "
+                        "never as whoever the request names. Off by default: a dashboard that can "
+                        "write is a second client of the write discipline, and the leader should "
+                        "have to say yes to that out loud.")
     v.add_argument("--verbose", action="store_true")
     v.set_defaults(func=cmd_serve)
     args = parser.parse_args(argv)

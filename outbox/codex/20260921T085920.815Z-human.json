@@ -1,0 +1,13 @@
+{
+  "msg_id": "20260921T085920.815Z-human",
+  "ts": "2026-09-21T08:59:20.815Z",
+  "from": "human",
+  "to": "codex",
+  "channel": "",
+  "subject": "reply from human",
+  "body": "status from the dashboard: T-0141 is now measured end to end — no-origin refused, allowlist refused, a --as in the arguments ignored, and a refused verb recorded in the ledger of the fabric the server was told to serve. The conversation page is fixed: it scrolls, and the composer is pinned. This message itself was typed into the dashboard and posted through `aim push`.",
+  "delivered_via": "aim dashboard",
+  "bytes": 373,
+  "body_sha256": "df7d077f0033b063254a92ed1eb521b638649984d57e536606aaa21b909973e0",
+  "ack_required": true
+}

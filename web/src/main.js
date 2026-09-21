@@ -12,6 +12,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
+import 'github-markdown-css/github-markdown-dark.css'
 import * as Icons from '@element-plus/icons-vue'
 
 import './style.css'
@@ -20,6 +21,7 @@ import { createContext } from './kernel'
 import { createApi } from './api'
 import { useBoard } from './stores/board'
 import { chartsPlugin } from './plugins/charts'
+import { markdownPlugin } from './plugins/markdown'
 import { viewsPlugin } from './views'
 
 const ctx = createContext('aimboard')
@@ -34,6 +36,7 @@ const board = useBoard(pinia)
 ctx.provide('api', createApi({ getViewer: () => board.viewer }))
 ctx.provide('board', board)
 ctx.use(chartsPlugin)
+ctx.use(markdownPlugin)
 ctx.use(viewsPlugin)
 
 const router = createRouter({

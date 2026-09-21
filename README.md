@@ -466,3 +466,27 @@ object we simply never wrote (`AgentCard`). Second, A2A standardizes the *bounda
 room, no read cursor, no milestone, no dependency edge and no ledger, so it cannot
 be the standard for the PM half; `design/07` §6 (D18) names what to read next for
 that half instead of pretending otherwise.
+
+## 11. Dependencies: survey first, and every number re-measurable
+
+The leader's rule for this repository is two rules at once: *the first step of any
+task is to survey what already exists and build on it*, and *a dependency must have
+more than 1,000 GitHub stars to be cited*. The second is only meaningful next to
+the first — "stand on somebody else's shoulders" says adopt, ">1k stars" says the
+shoulders must be load-bearing — and together they mean the survey is recorded with
+numbers rather than asserted.
+
+`design/09` is that ledger: candidate, star count, decision, per layer, with the
+command that produced each number so the next agent can re-measure instead of
+trusting it. The short version:
+
+| | |
+|---|---|
+| adopted, and why it is safe to | Vue, Vite, Element Plus, ECharts, Pinia, vue-router, markdown-it, highlight.js, GitHub's markdown CSS (8.9k–82.9k stars) |
+| adopted, **below the bar, named in the open** | `vitejs/vite-plugin-vue`, 682 — the SFC compiler, so the front-end does not build without it; `design/09` §3 gives the costed alternative and asks for a ruling |
+| surveyed, not adopted, with the reason written down | `vue-advanced-chat` (2,081, the conversation pane — T-0143), `frappe/gantt` (6,124), `dhtmlx/gantt` (1,853, licence), `marked` and `shiki` |
+| cited, not installed | `cordiverse/cordis`, 8,712 — the shape of the kernel, not a dependency of it |
+
+Every "we could not find one, so we built it" in `design/09` §5 carries the
+observation that would refute it. A survey with no falsifier is a preference with a
+table around it.

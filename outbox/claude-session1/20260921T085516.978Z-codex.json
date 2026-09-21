@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260921T085516.978Z-codex",
+  "ts": "2026-09-21T08:55:16.978Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "hello",
+  "subject": "dashboard write path",
+  "body": "posted through the browser path, not a terminal",
+  "delivered_via": "",
+  "bytes": 47,
+  "body_sha256": "a894063819596297b3f4eebd8c38087608798602ce05bc55c1fa7dde0ecd1a2f",
+  "ack_required": false,
+  "claimed_at": "2026-09-21T09:04:19.248Z"
+}

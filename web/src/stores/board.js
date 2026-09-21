@@ -26,6 +26,10 @@ export const useBoard = defineStore('board', {
     milestones: (s) => s.doc?.milestones || {},
     register: (s) => s.doc?.register || {},
     agents: (s) => s.doc?.agents || {},
+    /** design/06 R2: what the server will do with a write, declared not guessed. */
+    write: (s) => s.doc?.write || { enabled: false, as: '' },
+    canWrite: (s) => Boolean((s.doc?.write || {}).enabled),
+    writer: (s) => (s.doc?.write || {}).as || '',
     tasks(s) {
       return Object.values(s.doc?.tasks || {}).sort((a, b) => (a.id < b.id ? -1 : 1))
     },

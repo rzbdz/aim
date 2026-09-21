@@ -1341,13 +1341,13 @@
         "dashboard",
         "web"
       ],
-      "accept": "kanban, gantt (ECharts with dataZoom) and chat are on real components; the gate is applied server-side in the JSON API and a test asserts absence on that path too; the old renderer is reachable only as an export"
+      "accept": "kanban, gantt (ECharts with dataZoom) and chat are on real components; the gate is applied server-side in the JSON API and a test asserts absence on that path too; the old renderer is reachable only as an export; the conversation pane scrolls as a document and keeps its thread list and its composer in view while a 10,000px report is read"
     },
     {
       "id": "T-0141",
-      "title": "Exactly one write path from the browser, and it runs bin/aim",
+      "title": "Exactly one write path from the browser: it runs bin/aim, and the author is the server's, not the request's",
       "owner": "codex",
-      "status": "ready",
+      "status": "done",
       "priority": "medium",
       "estimate": 2,
       "start": "2026-09-22",
@@ -1359,7 +1359,84 @@
         "dashboard",
         "write-discipline"
       ],
-      "accept": "POST /api/command runs an allowlisted aim subcommand with no shell, is off by default behind --allow-write and bound to 127.0.0.1, and a refusal comes back as a refusal together with the ledger entry it produced"
+      "accept": "POST /api/command runs an allowlisted aim command with no shell, is off by default behind --allow-write, and binds to 127.0.0.1; a refusal comes back verbatim together with the ledger entry it produced; the root the command runs against is the root the server serves; the author is the identity the server was started as and no argument or query string can change it; /api/state declares the write posture so the composer need not guess. Measured: tests/test_aimboard.py 93/93, of which 22 are this path, including one that shows the query string asking for `human` and the ledger recording `codex`",
+      "move_reason": "measured, and by walking into it: driving the reply box with the viewer selector on `human` posted a message that claims to be from the leader. That is the second hole this endpoint had (the first was taking its author from a request field), and both are now pinned by tests. The rule is design/06 R1/R2"
+    },
+    {
+      "id": "T-0142",
+      "title": "The survey-first rule gets a ledger with re-measurable numbers, and every exception is named in the open",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dependencies",
+        "design",
+        "dogfooding"
+      ],
+      "accept": "design/09 exists, states the two rules as the leader wrote them, records how each number was measured so it can be re-measured, tabulates candidate/stars/decision per layer, and names the dependency that fails the >1k bar while being in use (vitejs/vite-plugin-vue, 682) together with the costed alternative and a recommendation that the leader can overrule in one line"
+    },
+    {
+      "id": "T-0143",
+      "title": "Evaluate vue-advanced-chat (2,081 stars) as the conversation renderer, or write down what beat it",
+      "owner": "codex",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-27",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "chat",
+        "dependencies"
+      ],
+      "accept": "either the conversation pane is built on vue-advanced-chat with the gate still applied server-side and a test asserting absence on that path, or design/09 §4 carries the measurement that decided against it (virtual scrolling past N messages measured on a real thread, its room model against our gate) rather than the argument from reading its README"
+    },
+    {
+      "id": "T-0144",
+      "title": "tests/selftest.sh is not safe to run twice at once: two runs share .selftest/ and cascade",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 1,
+      "start": "2026-09-22",
+      "due": "2026-09-24",
+      "blocked_by": [],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "tests",
+        "dogfooding"
+      ],
+      "accept": "either the suite uses a per-run directory (mktemp -d) or it detects a concurrent run and says so; measured by starting two runs at once and getting the same result from both. Cost of leaving it: codex ran two suites at once on 2026-09-21, got pass=123 fail=7 and pass=128 fail=2 from the same tree, and had to re-run before it could believe either number",
+      "move_reason": "a test suite that reports a different number each time is a suite whose green means nothing"
+    },
+    {
+      "id": "T-0145",
+      "title": "aim verify raises KeyError on a seal that carries no ts, instead of reporting it as malformed",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "low",
+      "estimate": 1,
+      "start": "2026-09-22",
+      "due": "2026-09-25",
+      "blocked_by": [],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "robustness",
+        "verify"
+      ],
+      "accept": "aim verify --channel <ch> on a seal without `ts` prints a malformed-seal line naming the file and exits non-zero, rather than raising KeyError with a traceback. Repro: a channel whose seals/<agent>.json has private_log_hashes but no ts -> check_sealed_prefix reads seal['ts'] at bin/aim:1820",
+      "move_reason": "verify is the tool you run when you suspect tampering, so it must not crash on the evidence"
     }
   ]
 }

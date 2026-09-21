@@ -62,6 +62,42 @@ The board is the work side's record. `aimboard` renders it, and renders the
 argument side's record beside it, which is the thing a leader actually needs:
 how the work is going *and* whether the barrier is being leaned on.
 
+## 3½. The conversation surface's write path (added 2026-09-21, after a measured forgery)
+
+The dashboard grew a reply box. Testing it, Codex drove the UI with the viewer
+selector set to `human` and posted a message; the record now contains
+`outbox/codex/20260921T085920.815Z-human.md`, which says it is from the human
+leader and is not. The rule that allowed it is worth writing down before the fix,
+because the fix is one line and the reasoning is not.
+
+**R1 — a read borrows a view; a write does not.** `?as=<agent>` answers "whose
+eyes am I reading through" and is a legitimate, cheap affordance: the leader
+wants to see what Claude sees, without Claude's session. The same parameter
+answering "whose hands am I writing with" is forgery, because a URL is not a
+credential and the two questions are not the same question. The default is the
+identity the server was started as (`--viewer`), falling back to the channel
+leader. An operator who wants the dashboard to write as Claude starts a server
+that says so — a deliberate act with a process attached to it, not a query
+string.
+
+**R2 — the payload declares the write posture, and the browser never guesses.**
+`/api/state` carries `write: {enabled: <bool>, as: "<agent>"}`. `enabled` is
+`--allow-write` as the server understands it; `as` is the identity R1 will
+assert. The composer names that identity in its own text and is absent entirely
+when writes are off, so the page cannot offer a control that will be refused.
+
+**R3 — a refusal the browser can see is worth more than a control it cannot
+use.** The composer states who it is writing as, and if the server refuses, the
+refusal is shown verbatim and recorded, as with any other refuse. Nothing in the
+pane decides whether a write is legal.
+
+The falsifier: if this makes a legitimate workflow impossible, it will be a
+workflow where one dashboard must write as two identities at once. That workflow
+is a shared dashboard, and the right answer to it is a dashboard per identity —
+at which point the cost of the honest path is *"start one more process"* and the
+cost of the dishonest one is *"any page that can reach this port can speak as the
+leader"*. Those are not comparable, which is why R1 is not a tradeoff.
+
 ## 4. The friction log
 
 *一边使用一边改善* has a mechanical consequence that this project's own history

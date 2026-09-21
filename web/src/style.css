@@ -75,17 +75,6 @@ body {
 .aim-chip.seed { color: #7dd3fc; border-color: rgba(125, 211, 252, .28); }
 
 /* ------------------------------------------------------------- messages */
-.aim-msg { border: 1px solid var(--aim-line); border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; background: var(--el-bg-color); }
-.aim-msg header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; margin-bottom: 7px; }
-.aim-msg .body { font-size: 12.5px; line-height: 1.65; overflow-wrap: anywhere; }
-.aim-msg .body :first-child { margin-top: 0; } .aim-msg .body :last-child { margin-bottom: 0; }
-.aim-msg .body pre { background: var(--el-fill-color); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-size: 11.5px; line-height: 1.5; }
-.aim-msg .body code { font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--el-fill-color); padding: 1px 5px; border-radius: 4px; }
-.aim-msg .body pre code { background: none; padding: 0; }
-.aim-msg .body table { border-collapse: collapse; margin: 8px 0; }
-.aim-msg .body th, .aim-msg .body td { border: 1px solid var(--aim-line); padding: 4px 8px; font-size: 11.5px; }
-.aim-msg .body blockquote { border-left: 2px solid rgba(56, 189, 248, .5); margin: 8px 0; padding: 2px 12px; color: var(--aim-dim); }
-.aim-msg .body h1, .aim-msg .body h2, .aim-msg .body h3 { font-size: 13.5px; margin: 14px 0 6px; }
 .aim-daysep { text-align: center; color: var(--aim-dim); font-size: 10.5px; letter-spacing: .1em; margin: 16px 0 10px; }
 .aim-daysep::before, .aim-daysep::after { content: ""; }
 
@@ -99,3 +88,48 @@ body {
 .aim-thread { padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
 .aim-thread:hover { background: rgba(148, 163, 184, .06); }
 .aim-thread.on { background: rgba(56, 189, 248, .1); border-color: rgba(56, 189, 248, .3); }
+
+/* ------------------------------------------------- the conversation reader */
+/* The reading surface: the page scrolls, this does not. A nested scroller with a
+   max-height resolves to auto inside a normal-flow parent, which clips the end of
+   long messages and cannot be scrolled - the exact bug the leader hit trying to
+   read a report. */
+.aim-reader { padding-bottom: 40px; }
+.aim-reader-head { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
+                   flex-wrap: wrap; padding: 9px 2px; margin-bottom: 10px;
+                   background: var(--el-bg-color-page); border-bottom: 1px solid var(--aim-line); }
+.aim-subject { font-size: 12.5px; color: var(--aim-dim); margin-bottom: 6px; }
+.aim-msg { border: 1px solid var(--aim-line); border-radius: 12px; padding: 12px 16px 14px;
+           margin-bottom: 12px; background: var(--el-bg-color); }
+.aim-msg > header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                    margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--aim-line-soft); }
+.aim-msg .aim-body { max-width: 84ch; }
+/* github-markdown-css does the typography; this only fits it to our scale and
+   stops a wide table or a long line from widening the page. */
+.aim-body.markdown-body { background: none; color: var(--el-text-color-primary);
+                          font-size: 13.5px; line-height: 1.72; }
+.aim-body.markdown-body p, .aim-body.markdown-body li { font-size: 13.5px; }
+.aim-body.markdown-body h1 { font-size: 19px; } .aim-body.markdown-body h2 { font-size: 16.5px; }
+.aim-body.markdown-body h3 { font-size: 14.5px; } .aim-body.markdown-body h4 { font-size: 13.5px; }
+.aim-body.markdown-body h1, .aim-body.markdown-body h2 { border-bottom-color: var(--aim-line); padding-bottom: .25em; }
+.aim-body.markdown-body pre { background: var(--el-fill-color-dark); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+.aim-body.markdown-body code { background: var(--el-fill-color); font-size: 12px; }
+.aim-body.markdown-body pre code { background: none; font-size: 12px; line-height: 1.55; }
+.aim-body.markdown-body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+.aim-body.markdown-body blockquote { border-left: 2px solid rgba(56, 189, 248, .5); color: var(--aim-dim); }
+.aim-body.markdown-body hr { border-top: 1px solid var(--aim-line); background: none; }
+.aim-body.markdown-body img { max-width: 100%; }
+/* The two things you must not lose while reading a 10,000px report: which
+   thread you are in, and where to type. Both are sticky, and both are in the
+   page rather than in a nested scroller, because a nested scroller inside a
+   normal-flow parent is the bug that made this page unreadable once already. */
+.aim-side { position: sticky; top: 0; }
+.aim-dock { position: sticky; bottom: 0; z-index: 4; padding-top: 10px;
+            background: linear-gradient(to bottom, transparent, var(--el-bg-color-page) 22%); }
+.aim-dock .el-card { box-shadow: 0 -6px 18px -12px rgba(0, 0, 0, .45); }
+.aim-dock .el-card { box-shadow: 0 -6px 18px -12px rgba(0, 0, 0, .45); }
+/* A chart taller than the screen loses its legend and its title off the top, so
+   the card header travels with you. Same reason the reader's head is sticky. */
+.aim-sticky-head.el-card { overflow: visible; }
+.aim-sticky-head > .el-card__header { position: sticky; top: 0; z-index: 3;
+                                      background: var(--el-bg-color); }

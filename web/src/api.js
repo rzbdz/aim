@@ -26,7 +26,11 @@ export function createApi({ base = '', getViewer } = {}) {
   }
 
   async function post(path, body) {
-    const res = await fetch(url(path), {
+    // No `?as=` here, deliberately. Every GET borrows a view and says whose; a
+    // write does not borrow anything -- the server asserts the author, and the
+    // author is whoever the server was started as. See design/06 R1. A client
+    // that could name the writer would be a client that can forge one.
+    const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -53,7 +57,12 @@ export function createApi({ base = '', getViewer } = {}) {
      * write discipline. The dashboard is a client of `bin/aim`, never a second
      * writer: this is why a write from here lands in the ledger and produces the
      * same refusal text an agent would get.
+     *
+     * Nobody's name travels with this request -- not in the query string, not in
+     * the body. A name next to a command is a name the caller typed, and asking
+     * the server to trust it is how a dashboard ends up able to speak as the
+     * leader. The server decides the author; /api/state declares who that is.
      */
-    command: (argv) => post('/api/command', { argv, as: getViewer?.() }),
+    command: (argv) => post('/api/command', { argv }),
   }
 }
