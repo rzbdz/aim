@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Tests for aimboard: the board must be a view of the record, and nothing else.
+
+Two of these are the reason the file exists rather than a hand-check:
+
+  * the **absence** tests - a participant in a divergence phase must not be able
+    to reach a peer's sealed claim or draft task through the dashboard. Not
+    hidden with CSS: absent from the bytes, because a view that is one grep away
+    from what `aim` refuses to show is a route around the refusal;
+  * the **read-only** test - the renderer must not touch a single byte of the
+    fabric. A renderer that can write fabric state is a second implementation of
+    the write discipline, and this project has already measured where that leads.
+
+Run: python3 tests/test_aimboard.py     (exit code = number of failures)
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+BOARD = HERE / "bin" / "aimboard.py"
+results = []
+
+PEER_DRAFT = "PEER-DRAFT-SECRET-omega"
+PEER_SEAL = "PEER-SEAL-SECRET-omega"
+OWN_SEAL = "OWN-SEAL-CLAIM-alpha"
+ROOM_DRAFT = "ROOM-DRAFT-SECRET-omega"
+MAIL_BODY = "MAIL-BODY-SECRET-omega"
+XSS = "<script>alert('xss')</script>"
+
+
+def check(name, ok, detail=""):
+    results.append((name, bool(ok), detail))
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"\n          {detail}" if detail and not ok else ""))
+
+
+def write(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+
+
+def jsonl(path, recs):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+
+
+def fixture(root, phase="SEALED_DIVERGENT"):
+    (root / "registry.json").parent.mkdir(parents=True, exist_ok=True)
+    write(root / "registry.json", {"agents": {
+        "human": {"id": "human", "kind": "human"},
+        "codex": {"id": "codex", "kind": "codex"},
+        "claude-session1": {"id": "claude-session1", "kind": "claude"},
+    }})
+    ch = root / "channels" / "hello"
+    write(ch / "manifest.json", {
+        "id": "hello", "topic": "fixture", "leader": "human", "synthesizer": "",
+        "participants": ["codex", "claude-session1"],
+        "barrier": {"phase": phase, "round": 0, "history": [{"phase": "SEALED_DIVERGENT", "by": "human"}]},
+    })
+    write(ch / "seals" / "claude-session1.json",
+          {"agent": "claude-session1", "digest": "aaaa1111bbbb", "private_log_hashes": ["x"],
+           "claims": [{"id": "c1", "claim": OWN_SEAL, "confidence": 0.9, "kill_if": "k1"}]})
+    write(ch / "seals" / "codex.json",
+          {"agent": "codex", "digest": "cccc2222dddd", "private_log_hashes": ["y"],
+           "claims": [{"id": "c2", "claim": PEER_SEAL, "confidence": 0.9, "kill_if": "k2"}]})
+    jsonl(ch / "tasks.jsonl", [
+        {"ts": "2026-09-21T00:00:01Z", "event": "task.created", "id": "T-9001", "actor": "codex",
+         "title": PEER_DRAFT, "owner": "codex", "status": "doing", "visibility": "draft",
+         "start": "2026-09-21", "due": "2026-09-23", "blocked_by": [], "milestone": "M9"},
+        {"ts": "2026-09-21T00:00:02Z", "event": "task.created", "id": "T-9002", "actor": "claude-session1",
+         "title": "a published item", "owner": "claude-session1", "status": "done",
+         "visibility": "published", "start": "2026-09-21", "due": "2026-09-22",
+         "blocked_by": ["T-9001"], "milestone": "M9"},
+        {"ts": "2026-09-21T00:00:03Z", "event": "task.created", "id": "T-9003", "actor": "codex",
+         "title": XSS, "owner": "codex", "status": "review", "visibility": "published",
+         "start": "2026-09-22", "due": "2026-09-25", "blocked_by": [], "milestone": "M9"},
+    ])
+    jsonl(ch / "rooms" / "dev.jsonl", [
+        {"ts": "2026-09-21T00:00:04Z", "agent": "codex", "body": ROOM_DRAFT,
+         "mentions": ["claude-session1"], "hash": "h1"},
+    ])
+    write(ch / "rooms" / "dev.json", {"id": "dev", "topic": "fixture room", "visibility": "draft"})
+    write(ch / "rooms" / "dev.cursors.json", {"claude-session1": {"last_hash": "", "ts": ""}})
+    jsonl(ch / "ledger.jsonl", [
+        {"ts": "2026-09-21T00:00:05Z", "event": "seal", "agent": "claude-session1", "digest": "aaaa1111bbbb"},
+        {"ts": "2026-09-21T00:00:06Z", "event": "refusal", "agent": "codex", "action": "read_others",
+         "class": "barrier", "phase": "SEALED_DIVERGENT", "reason": "REFUSED: no"},
+    ])
+    jsonl(ch / "log.jsonl", [{"ts": "2026-09-21T00:00:07Z", "from": "codex", "body": "on the record"}])
+    write(root / "outbox" / "codex" / "20260921T000008.000Z-claude-session1.json",
+          {"msg_id": "20260921T000008.000Z-claude-session1", "from": "claude-session1", "to": "codex",
+           "ts": "2026-09-21T00:00:08Z", "subject": "hi", "body": MAIL_BODY, "bytes": len(MAIL_BODY),
+           "body_sha256": hashlib.sha256(MAIL_BODY.encode()).hexdigest(), "ack_required": True})
+    write(root / "plan" / "plan.json", {
+        "as_of": "2026-09-21",
+        "milestones": [{"id": "M9", "name": "fixture milestone", "due": "2026-09-24",
+                        "accept": "n/a"}],
+        "tasks": [
+            {"id": "T-9001", "title": PEER_DRAFT, "owner": "codex", "status": "backlog",
+             "visibility": "draft", "start": "2026-09-21", "due": "2026-09-23", "milestone": "M9"},
+            {"id": "T-9004", "title": "a seed-only item", "owner": "claude-session1",
+             "status": "ready", "visibility": "published", "start": "2026-09-23",
+             "due": "2026-09-26", "milestone": "M9"},
+        ],
+    })
+
+
+def snapshot(root):
+    out = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            out[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
+def render(root, out, *extra):
+    return subprocess.run(
+        [sys.executable, str(BOARD), "render", "--root", str(root), "--out", str(out),
+         "--as-of", "2026-09-21", "--generated-at", "2026-09-21T00:00:00.000Z", *extra],
+        capture_output=True, text=True, timeout=120)
+
+
+def main():
+    work = Path(tempfile.mkdtemp(prefix="aimboard-test-"))
+    try:
+        root = work / "fabric"
+        fixture(root)
+
+        print("== the renderer as the leader (the default view) ==")
+        html_path = work / "leader.html"
+        before = snapshot(root)
+        p = render(root, html_path)
+        after = snapshot(root)
+        check("render exits 0", p.returncode == 0, p.stderr)
+        check("the renderer wrote only the file it was asked for", before == after,
+              "fabric changed: " + ", ".join(sorted(set(after) ^ set(before))) or
+              "content changed")
+        html = html_path.read_text(encoding="utf-8") if html_path.exists() else ""
+        check("every kanban column is present",
+              all(f'data-col="{s}"' in html for s in
+                  ["backlog", "ready", "doing", "review", "done", "blocked", "dropped"]))
+        check("the published store task is on the board", "a published item" in html)
+        check("the seed-only task is on the board", "a seed-only item" in html)
+        check("provenance is labelled per card", "plan seed" in html)
+        check("the gantt draws bars for dated work", html.count('class="bar s-') >= 3)
+        check("the gantt draws the dependency edge", '<path class="dep"' in html)
+        check("the gantt marks the milestone", 'class="msdiamond"' in html)
+        check("the gantt marks today", 'class="today"' in html)
+        check("the barrier panel counts the refusal", "read_others" in html)
+        check("the seal claims of the leader view are rendered", PEER_SEAL in html and OWN_SEAL in html)
+        check("the draft task is rendered for the leader", PEER_DRAFT in html)
+        check("chain verification is reported", "chain verification" in html)
+        check("the board names the phase it was drawn in", "SEALED_DIVERGENT" in html)
+
+        print("== the renderer as a participant inside the barrier ==")
+        peer = work / "claude.html"
+        p = render(root, peer, "--as", "claude-session1")
+        peer_html = peer.read_text(encoding="utf-8")
+        check("participant view renders", p.returncode == 0, p.stderr)
+        check("ABSENCE: the peer seal claim is not in the bytes", PEER_SEAL not in peer_html,
+              "the dashboard is a route around the cross-read refusal")
+        check("ABSENCE: the peer draft task is not in the bytes", PEER_DRAFT not in peer_html)
+        check("ABSENCE: the peer draft room message is not in the bytes", ROOM_DRAFT not in peer_html)
+        check("the viewer's own seal claim is still visible", OWN_SEAL in peer_html)
+        check("withheld items are declared, not silently dropped", "withheld" in peer_html)
+        check("no mail body is ever rendered", MAIL_BODY not in html and MAIL_BODY not in peer_html)
+        check("but the unacked handoff is visible", "20260921T000008" in html)
+
+        print("== escaping ==")
+        check("a script tag in a title renders as text", "&lt;script&gt;" in html)
+        check("a script tag in a title does not open an element", "<script>alert" not in html)
+
+        print("== the machine-readable view ==")
+        p = subprocess.run([sys.executable, str(BOARD), "render", "--root", str(root), "--json"],
+                           capture_output=True, text=True, timeout=120)
+        doc = json.loads(p.stdout)
+        check("--json exits 0", p.returncode == 0, p.stderr)
+        check("--json folds the same tasks the html shows",
+              "T-9001" in doc["tasks"] and "T-9004" in doc["tasks"])
+        check("--json reports the phase", doc["phases"]["hello"]["phase"] == "SEALED_DIVERGENT")
+        check("--json reports the withheld count", doc["withheld_tasks"] == 0)
+        p = subprocess.run([sys.executable, str(BOARD), "render", "--root", str(root), "--json",
+                            "--as", "claude-session1"], capture_output=True, text=True, timeout=120)
+        doc = json.loads(p.stdout)
+        check("--json honours the gate too", doc["withheld_tasks"] == 1 and PEER_DRAFT not in p.stdout)
+
+        print("== determinism ==")
+        a, b = work / "a.html", work / "b.html"
+        render(root, a)
+        render(root, b)
+        check("two renders with the same flags are byte-identical", a.read_bytes() == b.read_bytes())
+
+        print("== exit codes as a gate ==")
+        p = render(root, work / "u.html", "--fail-on-unacked")
+        check("--fail-on-unacked exits 4 when an ack is owed", p.returncode == 4, f"got {p.returncode}")
+        p = render(root, work / "d.html", "--fail-on-drift")
+        check("--fail-on-drift exits 5 when the plan and the store disagree", p.returncode == 5,
+              f"got {p.returncode}")
+        p = render(root, work / "n.html", "--as", "nobody")
+        check("an unregistered viewer is refused", p.returncode == 2)
+        p = render(root, work / "c.html", "--channel", "nosuch")
+        check("an unknown channel is refused", p.returncode == 2)
+
+        print("== the board after the barrier opens ==")
+        write(root / "channels" / "hello" / "manifest.json", json.loads(
+            (root / "channels" / "hello" / "manifest.json").read_text()) | {
+            "barrier": {"phase": "CROSS_EXAMINE", "round": 1,
+                        "history": [{"phase": "SEALED_DIVERGENT"}, {"phase": "CROSS_EXAMINE"}]}})
+        opened = work / "opened.html"
+        render(root, opened, "--as", "claude-session1")
+        opened_html = opened.read_text(encoding="utf-8")
+        check("after the barrier opens a participant sees the peer draft", PEER_DRAFT in opened_html)
+        check("after the barrier opens a participant sees the peer seal", PEER_SEAL in opened_html)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    failed = [n for n, ok, _ in results if not ok]
+    print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
+    if failed:
+        print("failed:")
+        for name in failed:
+            print(f"  - {name}")
+    return len(failed)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

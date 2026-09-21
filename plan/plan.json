@@ -1,0 +1,962 @@
+{
+  "project": "aim — agent messaging that doubles as the project management for its own development",
+  "goal": "Kanban, gantt, group chat and a dashboard over the fabric; and the fabric used to run this work.",
+  "as_of": "2026-09-21",
+  "timezone": "Asia/Shanghai",
+  "source_of_truth": "channels/<ch>/tasks.jsonl once it exists; this file is a seed and the store overrides it field by field",
+  "milestones": [
+    {
+      "id": "M0",
+      "name": "Contract frozen",
+      "due": "2026-09-21",
+      "accept": "design/05, design/06, plan/*.json committed; split acknowledged by claude-session1"
+    },
+    {
+      "id": "M1",
+      "name": "Task store + verbs",
+      "due": "2026-09-22",
+      "accept": "aim task new/move/assign/publish work; refusals land in the ledger; selftest passes"
+    },
+    {
+      "id": "M2",
+      "name": "Group chat: rooms, cursors, mentions",
+      "due": "2026-09-23",
+      "accept": "N agents in one room, ordered, no lost message under 12 concurrent writers"
+    },
+    {
+      "id": "M3",
+      "name": "Dashboard",
+      "due": "2026-09-24",
+      "accept": "kanban + gantt + table + panels render deterministically from real state; absence tests pass"
+    },
+    {
+      "id": "M4",
+      "name": "Delivery: unread counts and a real doorbell",
+      "due": "2026-09-25",
+      "accept": "an idle peer is woken by a hook; what is still unsolved is written down"
+    },
+    {
+      "id": "M5",
+      "name": "Conformance, docs, export",
+      "due": "2026-09-26",
+      "accept": "conformance.py covers tasks/rooms/dashboard; README matches code"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T-0001",
+      "title": "Freeze the PM contract: task store, rooms, dashboard surface",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [],
+      "milestone": "M0",
+      "visibility": "published",
+      "tags": [
+        "design"
+      ],
+      "accept": "design/05 and design/06 are committed and each names what the barrier does to a shared board"
+    },
+    {
+      "id": "T-0002",
+      "title": "Seed the WBS: dependencies, dates, owners, acceptance per task",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [
+        "T-0001"
+      ],
+      "milestone": "M0",
+      "visibility": "published",
+      "tags": [
+        "design"
+      ],
+      "accept": "plan/plan.json and plan/risks.json parse; every task carries an owner and an accept line"
+    },
+    {
+      "id": "T-0003",
+      "title": "Confirm the split with claude-session1 through aim push",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [
+        "T-0001"
+      ],
+      "milestone": "M0",
+      "visibility": "published",
+      "tags": [
+        "coordination"
+      ],
+      "accept": "claude-session1 has claimed the push and replied, or the unacked state is visible in aim outbox"
+    },
+    {
+      "id": "T-0004",
+      "title": "Leader: approve the plan; advance hello past SEALED_DIVERGENT",
+      "owner": "human",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [
+        "T-0002"
+      ],
+      "milestone": "M0",
+      "visibility": "published",
+      "tags": [
+        "decision",
+        "blocker"
+      ],
+      "accept": "aim status --channel hello shows a phase after SEALED_DIVERGENT"
+    },
+    {
+      "id": "T-0010",
+      "title": "Task store: hash-chained events in channels/<ch>/tasks.jsonl",
+      "owner": "claude-session1",
+      "status": "doing",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "store"
+      ],
+      "accept": "aim verify covers tasks.jsonl; 8 concurrent task writes lose nothing"
+    },
+    {
+      "id": "T-0011",
+      "title": "Fold: board state is derived from events; no board file is ever written",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0010"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "store"
+      ],
+      "accept": "no file on disk holds a mutable board; replay of the log reproduces the board"
+    },
+    {
+      "id": "T-0012",
+      "title": "Verbs: task new / move / assign / link / comment",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0010"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "cli"
+      ],
+      "accept": "each verb appends exactly one event and is idempotent-safe under retry"
+    },
+    {
+      "id": "T-0013",
+      "title": "Status state machine: done needs no open blocker, blocked/dropped need a reason",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0012"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "cli"
+      ],
+      "accept": "move to done with an open blocked_by is refused"
+    },
+    {
+      "id": "T-0014",
+      "title": "Barrier gate on tasks: draft by default, publish is deliberate and recorded",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0012"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "barrier"
+      ],
+      "accept": "reading a peer draft during SEALED_DIVERGENT is refused and the refusal is in the ledger"
+    },
+    {
+      "id": "T-0015",
+      "title": "Selftest: task-gate refusals, 87 -> 110 assertions",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "normal",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0014"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "test"
+      ],
+      "accept": "bash tests/selftest.sh is green and each new REFUSED is a real refusal"
+    },
+    {
+      "id": "T-0018",
+      "title": "Review: task store and verbs, adversarially",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0015"
+      ],
+      "milestone": "M1",
+      "visibility": "draft",
+      "tags": [
+        "review"
+      ],
+      "accept": "at least one measured defect or an explicit statement that the kill_if survived"
+    },
+    {
+      "id": "T-0020",
+      "title": "Rooms: channels/<ch>/rooms/<room>.jsonl, N participants, no quota off-barrier",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0012"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "group-chat"
+      ],
+      "accept": "three agents post to one room; order is total and matches the chain"
+    },
+    {
+      "id": "T-0021",
+      "title": "Room barrier rule: a room is a draft until the channel opens, or is published deliberately",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "barrier",
+        "group-chat"
+      ],
+      "accept": "a room created during SEALED_DIVERGENT is unreadable by the other participant, and the refusal is recorded"
+    },
+    {
+      "id": "T-0022",
+      "title": "Read cursors per agent per room: unread is a number, not a guess",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "group-chat"
+      ],
+      "accept": "unread count for an agent that has never read equals the room length"
+    },
+    {
+      "id": "T-0023",
+      "title": "Mentions (@agent) recorded as events so a doorbell can be selective",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "group-chat",
+        "delivery"
+      ],
+      "accept": "a mention of an unregistered agent is refused"
+    },
+    {
+      "id": "T-0024",
+      "title": "aim search over log, tasks and rooms with the chain as the order",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "group-chat"
+      ],
+      "accept": "search results carry channel, room, author and hash"
+    },
+    {
+      "id": "T-0025",
+      "title": "Threads: --responds-to optional off-barrier, mandatory inside CROSS_EXAMINE",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "group-chat"
+      ],
+      "accept": "a thread view reconstructs replies from responds_to alone"
+    },
+    {
+      "id": "T-0026",
+      "title": "Conformance: 12 concurrent room writers, one order, no lost message",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "test",
+        "group-chat"
+      ],
+      "accept": "message count equals writer count, chain verifies"
+    },
+    {
+      "id": "T-0027",
+      "title": "Review: rooms, cursors, mention resolution",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-24",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0026"
+      ],
+      "milestone": "M2",
+      "visibility": "draft",
+      "tags": [
+        "review"
+      ],
+      "accept": "the room leak is tested by an angle nobody proposed in the design note"
+    },
+    {
+      "id": "T-0030",
+      "title": "Renderer skeleton: read-only loaders for manifest, log, ledger, seals, tasks, rooms",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "the renderer opens no file for writing except the HTML it was asked for"
+    },
+    {
+      "id": "T-0031",
+      "title": "Kanban view with owner, priority, due, blocker and draft badges",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "column contents equal the fold, card for card"
+    },
+    {
+      "id": "T-0032",
+      "title": "Gantt view: bars, dependency edges, milestone diamonds, today line",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 5,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "a task with no dates is drawn nowhere rather than at today"
+    },
+    {
+      "id": "T-0033",
+      "title": "Table view with filters by owner, status, milestone, tag",
+      "owner": "codex",
+      "status": "done",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "filtering in the browser matches --json --status"
+    },
+    {
+      "id": "T-0034",
+      "title": "Barrier panel: phase, seal status per participant, refusals read from the ledger",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-23",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "barrier"
+      ],
+      "accept": "refusal counts in the dashboard equal grep -c in the ledger"
+    },
+    {
+      "id": "T-0035",
+      "title": "Group chat panel: rooms, per-agent unread, and no mail bodies",
+      "owner": "codex",
+      "status": "review",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-23",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "group-chat"
+      ],
+      "accept": "no outbox body string appears anywhere in the rendered HTML",
+      "move_reason": "mail counts and unread render; there are no rooms yet because the store is M2"
+    },
+    {
+      "id": "T-0036",
+      "title": "Transport panel: sent, claimed, acked counts per agent",
+      "owner": "codex",
+      "status": "done",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "an unacked message shows as unacked"
+    },
+    {
+      "id": "T-0037",
+      "title": "Barrier-aware rendering: peer drafts and seal claims absent from the bytes",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "barrier"
+      ],
+      "accept": "the absence test greps the HTML for a peer draft title and finds nothing"
+    },
+    {
+      "id": "T-0038",
+      "title": "Escape every rendered string; a task title is peer-supplied text",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "security"
+      ],
+      "accept": "a task titled with a script tag renders as text and creates no element"
+    },
+    {
+      "id": "T-0039",
+      "title": "Deterministic output: --generated-at and --as-of, byte-identical reruns",
+      "owner": "codex",
+      "status": "done",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "test"
+      ],
+      "accept": "two renders with the same flags diff empty"
+    },
+    {
+      "id": "T-0040",
+      "title": "test_aimboard.py: columns, bars, edges, milestone, and the two absence assertions",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0030"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "test",
+        "dashboard"
+      ],
+      "accept": "the suite fails if the absence rule is removed"
+    },
+    {
+      "id": "T-0041",
+      "title": "Adversarial review of the dashboard by the developer it was split from",
+      "owner": "claude-session1",
+      "status": "backlog",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0040"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "review",
+        "dashboard"
+      ],
+      "accept": "one attack on the renderer that the author did not consider"
+    },
+    {
+      "id": "T-0042",
+      "title": "Refresh in the browser without a server: a file that can be re-rendered on demand",
+      "owner": "codex",
+      "status": "done",
+      "priority": "low",
+      "estimate": 2,
+      "start": "2026-09-24",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0031"
+      ],
+      "milestone": "M3",
+      "visibility": "published",
+      "tags": [
+        "dashboard"
+      ],
+      "accept": "the page states the generated_at it is showing so a stale view is visibly stale"
+    },
+    {
+      "id": "T-0050",
+      "title": "Surface unread counts through aim nudge, built on read cursors",
+      "owner": "claude-session1",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-24",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0022"
+      ],
+      "milestone": "M4",
+      "visibility": "published",
+      "tags": [
+        "delivery"
+      ],
+      "accept": "nudge names who is behind, with counts, and exits non-zero when someone is"
+    },
+    {
+      "id": "T-0051",
+      "title": "Hook-based wake: inject check-your-outbox on the peer's next turn",
+      "owner": "claude-session1",
+      "status": "review",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-25",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0050"
+      ],
+      "milestone": "M4",
+      "visibility": "published",
+      "tags": [
+        "delivery"
+      ],
+      "accept": "a message delivered while the peer sits idle is read on its next turn, with no human relaying",
+      "move_reason": "hook works when invoked by hand; it is not wired into either harness, so the doorbell does not ring - measured 2026-09-21 when the human had to remind codex to pull"
+    },
+    {
+      "id": "T-0052",
+      "title": "Write down what delivery still does not do",
+      "owner": "codex",
+      "status": "review",
+      "priority": "normal",
+      "estimate": 1,
+      "start": "2026-09-25",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0051"
+      ],
+      "milestone": "M4",
+      "visibility": "published",
+      "tags": [
+        "docs"
+      ],
+      "accept": "README section 5 says solved or unsolved per row, with the measurement beside it",
+      "move_reason": "README section 5 is honest per row, but its doorbell row still reads unsolved while commit dd80cbc says 'this closes it'; the README is right and the commit overclaims"
+    },
+    {
+      "id": "T-0060",
+      "title": "Conformance: tasks, rooms and a rendered dashboard under real processes",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-25",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0040",
+        "T-0026"
+      ],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "test"
+      ],
+      "accept": "conformance.py exits 0 and each check has a kill_if behind it"
+    },
+    {
+      "id": "T-0061",
+      "title": "README: the PM-IM capability matrix and the board/room leak rule",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-25",
+      "due": "2026-09-25",
+      "blocked_by": [
+        "T-0040"
+      ],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "docs"
+      ],
+      "accept": "every capability row is either backed by a command or labelled missing"
+    },
+    {
+      "id": "T-0062",
+      "title": "Export: CSV, iCal and JSON so a foreign tool can read the board",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "low",
+      "estimate": 2,
+      "start": "2026-09-26",
+      "due": "2026-09-26",
+      "blocked_by": [
+        "T-0033"
+      ],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "interop"
+      ],
+      "accept": "the iCal file loads in a calendar app with no hand editing"
+    },
+    {
+      "id": "T-0063",
+      "title": "Bilingual labels and timezone-explicit dates",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-26",
+      "due": "2026-09-26",
+      "blocked_by": [
+        "T-0033"
+      ],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "i18n",
+        "dashboard"
+      ],
+      "accept": "the board reads correctly in zh and names the timezone it renders dates in"
+    },
+    {
+      "id": "T-0064",
+      "title": "Accessibility: keyboard reachable, contrast, no colour-only encoding",
+      "owner": "codex",
+      "status": "backlog",
+      "priority": "normal",
+      "estimate": 2,
+      "start": "2026-09-26",
+      "due": "2026-09-26",
+      "blocked_by": [
+        "T-0033"
+      ],
+      "milestone": "M5",
+      "visibility": "published",
+      "tags": [
+        "a11y",
+        "dashboard"
+      ],
+      "accept": "status and blocker state are readable with colour ignored"
+    },
+    {
+      "id": "T-0080",
+      "title": "Allocate task ids inside the same critical section as the append",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "defect",
+        "concurrency"
+      ],
+      "accept": "8+8+8 concurrent task new produce distinct ids and verify stays OK",
+      "move_reason": "measured: 11 created events, 9 distinct ids, chain OK, the fold silently collapsed two work items"
+    },
+    {
+      "id": "T-0081",
+      "title": "task list must refuse a peer-draft read, not return an empty list",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "defect",
+        "barrier"
+      ],
+      "accept": "a participant sees either a refusal that is in the ledger, or an explicit withheld count",
+      "move_reason": "measured: aim task list --as claude-session1 --json returns [] with rc=0 and records nothing"
+    },
+    {
+      "id": "T-0082",
+      "title": "move --to done must refuse while a blocker is open",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "defect"
+      ],
+      "accept": "T-0003 blocked_by an open T-0002 cannot reach done, and the refusal is recorded",
+      "move_reason": "measured: review -> done succeeded with the blocker still in backlog (design/05 section 5, plan T-0013)"
+    },
+    {
+      "id": "T-0083",
+      "title": "Correct design/05 section 3: an append-only log does not remove the race, it moves it",
+      "owner": "codex",
+      "status": "done",
+      "priority": "normal",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-21",
+      "blocked_by": [],
+      "milestone": "M0",
+      "visibility": "published",
+      "tags": [
+        "docs"
+      ],
+      "accept": "the note names the measurement that falsified its own sentence"
+    },
+    {
+      "id": "T-0084",
+      "title": "A verb to write the friction log, because the log has no writer",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "dogfood",
+        "friction"
+      ],
+      "accept": "aim friction --add --command ... --cost ... appends a chained record readable by the board"
+    },
+    {
+      "id": "T-0085",
+      "title": "Wire the doorbell into the claude session too, not just codex",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M4",
+      "visibility": "published",
+      "tags": [
+        "delivery"
+      ],
+      "accept": "an unread push reaches the claude session with no human relaying it",
+      "move_reason": "the hook exists and works when invoked; it is wired into neither harness"
+    },
+    {
+      "id": "T-0086",
+      "title": "Fix the store schema drift: the note and the record must agree on one spelling",
+      "owner": "codex",
+      "status": "doing",
+      "priority": "normal",
+      "estimate": 1,
+      "start": "2026-09-21",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M1",
+      "visibility": "published",
+      "tags": [
+        "docs",
+        "contract"
+      ],
+      "accept": "design/05 section 3 and the store agree, and the renderer's tolerance is either documented or deleted"
+    },
+    {
+      "id": "T-0087",
+      "title": "An undeployable tool must be visible: aim doctor, or py_compile before the tool is live",
+      "owner": "claude-session1",
+      "status": "ready",
+      "priority": "medium",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-23",
+      "blocked_by": [],
+      "milestone": "M6",
+      "visibility": "published",
+      "tags": [
+        "friction"
+      ],
+      "accept": "a syntax error in bin/aim is reported by something other than the next agent's command failing"
+    }
+  ]
+}

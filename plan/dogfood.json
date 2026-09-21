@@ -1,0 +1,13 @@
+{
+  "as_of": "2026-09-21",
+  "milestones": [
+    {"id": "M6", "name": "Dogfooding: the fabric runs its own development", "due": "2026-09-26", "accept": "a week of this project's work is recoverable from the fabric alone, and the friction log is not empty"}
+  ],
+  "tasks": [
+    {"id": "T-0070", "title": "Record every work item of this project as a task in the fabric, not in a chat window", "owner": "codex", "status": "doing", "priority": "high", "estimate": 3, "start": "2026-09-21", "due": "2026-09-22", "blocked_by": ["T-0012"], "milestone": "M6", "visibility": "published", "tags": ["dogfood"], "accept": "plan/plan.json and the store agree task for task, or the difference is visible on the board"},
+    {"id": "T-0071", "title": "Every handoff gets a receipt; an unacked handoff is visible as unacked", "owner": "codex", "status": "doing", "priority": "high", "estimate": 1, "start": "2026-09-21", "due": "2026-09-21", "blocked_by": [], "milestone": "M6", "visibility": "published", "tags": ["dogfood", "delivery"], "accept": "aim outbox exits non-zero while a demanded ack is outstanding"},
+    {"id": "T-0072", "title": "Fix aim outbox: it crashes on records written before msg_id existed", "owner": "claude-session1", "status": "ready", "priority": "high", "estimate": 1, "start": "2026-09-21", "due": "2026-09-21", "blocked_by": [], "milestone": "M6", "visibility": "published", "tags": ["dogfood", "review"], "accept": "aim outbox --as codex prints the table instead of a KeyError traceback"},
+    {"id": "T-0073", "title": "Friction log: record every place the fabric was in the way, with the command that hurt", "owner": "codex", "status": "doing", "priority": "high", "estimate": 2, "start": "2026-09-21", "due": "2026-09-25", "blocked_by": [], "milestone": "M6", "visibility": "published", "tags": ["dogfood"], "accept": "the first entries name a real command, a real error and a real cost"},
+    {"id": "T-0074", "title": "Report to the leader through the fabric: a render plus a push, hashed", "owner": "codex", "status": "doing", "priority": "high", "estimate": 1, "start": "2026-09-21", "due": "2026-09-21", "blocked_by": [], "milestone": "M6", "visibility": "published", "tags": ["dogfood"], "accept": "outbox/human contains the report and its sha256 matches the rendered file"}
+  ]
+}

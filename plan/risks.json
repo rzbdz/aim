@@ -1,0 +1,53 @@
+{
+  "as_of": "2026-09-21",
+  "risks": [
+    {"id": "R1", "risk": "The board and the rooms become a barrier bypass: a task titled 'attack the temp-path claim' is a position, published to the peer in the least suspicious form the fabric has.", "likelihood": "high", "impact": "high", "owner": "codex", "mitigation": "Default visibility is draft; publish is a separate, recorded, deliberate act; the dashboard is tested for the absence of peer drafts in its own bytes.", "kill_if": "Two agents in SEALED_DIVERGENT converge on positions that are visible in their boards before either seals."},
+    {"id": "R2", "risk": "Two writers on one 60KB script: concurrent edits to bin/aim lose one side's work. The fabric has measured this exact class of failure once already (5 registrations, 1 survivor).", "likelihood": "high", "impact": "high", "owner": "human", "mitigation": "Interface changes land in design/05 first and in a commit both sides read; one writer per file; the split is explicit in design/05 section 8.", "kill_if": "A commit in bin/aim contains changes that were not first described in a design note."},
+    {"id": "R3", "risk": "XSS: the dashboard renders titles, comments and reasons that peers authored. A script tag in a task title is stored in a chained, immutable log and replayed on every render.", "likelihood": "medium", "impact": "high", "owner": "codex", "mitigation": "Every interpolated string is escaped; the renderer builds no HTML from JSON; a test asserts a script tag renders as text.", "kill_if": "A test task titled <script>alert(1)</script> produces an executable element in the output."},
+    {"id": "R4", "risk": "The dashboard becomes the peek tool: a view that shows what aim refuses to show is a route around the refusal.", "likelihood": "medium", "impact": "high", "owner": "codex", "mitigation": "Read-only; respects the phase gate with the viewer's identity; peer seals and drafts are absent from the bytes, not hidden with CSS.", "kill_if": "aimboard --as <participant> during divergence emits a peer's sealed claim text."},
+    {"id": "R5", "risk": "The dashboard is decoration. A board nobody opens is a shelf, and the leader's attention is the scarcest resource in the system.", "likelihood": "medium", "impact": "medium", "owner": "codex", "mitigation": "The board is the leader's report surface; every status report is a render, and the render names the state it was made from.", "kill_if": "Three consecutive status reports are written by hand rather than rendered."},
+    {"id": "R6", "risk": "Date drift: the leader is in Asia/Shanghai, the logs are UTC, and a gantt drawn in the wrong zone is off by a day in the only place it matters.", "likelihood": "medium", "impact": "medium", "owner": "codex", "mitigation": "Store UTC, render dates in a named timezone, print the timezone on the board.", "kill_if": "A milestone due date renders one day earlier or later than its stored value."},
+    {"id": "R7", "risk": "Unread is not delivered. A read cursor makes the gap measurable, and it is tempting to describe the measurement as a fix.", "likelihood": "high", "impact": "medium", "owner": "codex", "mitigation": "The transport panel says what it does not know; the doorbell is M4 and is described as narrowing, not closing.", "kill_if": "A document claims an idle peer is woken by anything other than a hook on its next turn."},
+    {"id": "R8", "risk": "Scope explosion: project-management features crowding out the reason the fabric exists, which is a barrier that a human can audit.", "likelihood": "high", "impact": "high", "owner": "human", "mitigation": "Non-goals are written down; the barrier keeps its own phase machine and the PM layer only ever reads it.", "kill_if": "A PM feature lands that weakens or bypasses a barrier refusal."},
+    {"id": "R9", "risk": "N-participant semantics: the quota, responds_to and echo rules were designed for two participants and are undefined above that.", "likelihood": "medium", "impact": "medium", "owner": "claude-session1", "mitigation": "Rooms are quota-free; the cross-examination quota stays and is per participant; a three-agent run is in the conformance harness.", "kill_if": "A third participant makes the echo check or the quota produce a nonsense result."},
+    {"id": "R10", "risk": "A gantt implies commitment. Bars drawn from soft dates read as promises the project never made.", "likelihood": "medium", "impact": "medium", "owner": "codex", "mitigation": "Every bar names its provenance (plan seed vs recorded event) and the board distinguishes dates that were committed from dates that were guessed.", "kill_if": "A date appears in the gantt that exists nowhere in plan/*.json or the store."},
+    {"id": "R11", "risk": "The plan file and the task store drift, and the board shows intent while the record shows something else.", "likelihood": "high", "impact": "medium", "owner": "codex", "mitigation": "Provenance per card; the seed is labelled as a seed; the store overrides field by field.", "kill_if": "The board shows a status that no store event supports and does not say it came from the seed."},
+    {"id": "R12", "risk": "Accessibility and language are afterthoughts in a tool whose only user has to read it every day.", "likelihood": "medium", "impact": "low", "owner": "codex", "mitigation": "Status and blockers are encoded in text as well as colour; labels are switchable; keyboard reachable tabs.", "kill_if": "A status is distinguishable only by colour."}
+  ],
+  "decisions": [
+    {"id": "D5", "decision": "A work item is channel state and obeys the phase gate. Default visibility during divergence is draft; publishing is deliberate and recorded.", "because": "A board that publishes on write is a cross-examination channel nobody labelled as one."},
+    {"id": "D6", "decision": "The dashboard is read-only over the fabric and writes only the HTML it was asked for.", "because": "A renderer that can mutate state is a second implementation of the write discipline, which is how the lost update got in."},
+    {"id": "D7", "decision": "The dashboard never renders mail bodies, and shows ids, states and counts instead.", "because": "A leader needs to see that delivery is broken, not what one agent said to another in private."},
+    {"id": "D8", "decision": "The task store is a hash-chained append-only event log; board state is a fold, and no board file is ever written.", "because": "Two agents dragging cards is a read-modify-write on shared state, and that failure is already measured here."},
+    {"id": "D9", "decision": "plan/*.json is the leader's plan and a seed; the store is authoritative and overrides it field by field, with provenance shown per card.", "because": "A plan is a promise and a store is a record; conflating them hides which one you are looking at."},
+    {"id": "D10", "decision": "The dashboard is a self-contained static HTML file, no CDN, no network at render time.", "because": "The environment is offline, and a dashboard that needs the internet is blank when it matters."},
+    {"id": "D11", "decision": "Rooms carry a draft flag that defaults to closed while the parent channel is in divergence.", "because": "Group chat is the largest new leak surface the requirement introduces; default-closed and deliberately-opened is the same rule as the board."},
+    {"id": "D12", "decision": "Dogfooding is a requirement, not a nice-to-have: every work item, handoff and report for this project travels through aim, and the friction this causes is recorded.", "because": "The value of using the fabric to build the fabric is the friction log it produces, and friction that is not recorded becomes an anecdote."}
+  ],
+  "non_goals": [
+    "Real-time transport: no websockets, no typing indicators, no presence push. The filesystem is the transport and its latency is the design.",
+    "A server or a database. State is files under a root; a second storage engine doubles the places a fact can be lost.",
+    "Authentication or identity proof. Attribution is cooperative and README section 4.9 says so; a credential ceremony would be theatre.",
+    "Editing the gantt by dragging. The renderer is read-only; rescheduling is a task event with an author.",
+    "Replacing git. The repo is the code record; the fabric is the project record; they reference each other by hash.",
+    "Multi-tenant hosting. One root, one team, one leader."
+  ],
+  "raci": [
+    {"area": "Phase transitions and acceptance", "responsible": "human", "accountable": "human", "consulted": "codex, claude-session1", "informed": "all"},
+    {"area": "Plan, priorities, risks, review", "responsible": "codex", "accountable": "human", "consulted": "claude-session1", "informed": "all"},
+    {"area": "bin/aim: store, verbs, barrier, rooms", "responsible": "claude-session1", "accountable": "human", "consulted": "codex", "informed": "all"},
+    {"area": "Dashboard and its tests", "responsible": "codex", "accountable": "human", "consulted": "claude-session1", "informed": "all"},
+    {"area": "Interface changes", "responsible": "codex", "accountable": "human", "consulted": "claude-session1", "informed": "all"}
+  ],
+  "dogfooding": {
+    "rule": "If this project's own work is planned anywhere other than the fabric, the fabric has failed a test it should have caught itself.",
+    "practices": [
+      "Every work item is a task in channels/<ch>/tasks.jsonl, not a line in a chat window.",
+      "Every handoff carries a receipt; an unacked handoff is visible as unacked.",
+      "Every status report to the leader is a render plus a push, so the report has a hash.",
+      "Every time the fabric is in the way, it is recorded as friction with the command that hurt."
+    ],
+    "friction_log": "channels/<ch>/friction.jsonl - the record of using the fabric rather than thinking about it",
+    "kill_if": "A week of project work happens and the friction log is empty, which means nobody was using it or nobody was recording."
+  }
+}
