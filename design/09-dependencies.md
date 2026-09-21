@@ -103,19 +103,27 @@ full, including the part where we built first and surveyed second.
 **Adopted (all >1k):** Element Plus for every control; markdown-it + highlight.js
 + github-markdown-css for the bodies. That is the whole of the rendering path.
 
-**Surveyed and not yet adopted: `vue-advanced-chat` (2,081, MIT).** It is a real
-Vue 3 chat component with virtual scrolling, day separators, avatars, reactions
-and file previews — more chat than we have, from a library with a citable number.
-It is not adopted *yet* for one measurable reason: it owns its own scrolling
-container and renders rooms from its own store, and the bug we just spent a
-priority-0 afternoon on was precisely a message list that owned a scroll
-container with a height that resolved wrong. Its room model also has no slot for
-"this channel is sealed to you" — the gate is a server fact in this project, and a
-component that builds rooms client-side is a second place the gate could be
-answered. **Falsifier:** if the reader needs virtual scrolling (a thread past a
-few thousand messages) or reactions or attachments, the hand-built reader loses on
-the argument that matters and we adopt it, re-measuring the stars at that time.
-That is a task, not a note: T-0143.
+**Surveyed and rejected on 2026-09-21: `vue-advanced-chat` 2.1.2 (2,081, MIT).**
+It is a real Vue 3 chat component with day separators, avatars, reactions and
+file previews — more chat than we have, from a library with a citable number. The
+reason it loses is not that it is a library; it is that the thing it would buy is
+absent. Its message list is `renderList($props.messages, ...)`, not a virtualized
+list, and the runtime measurement is decisive: **5,000 messages render 5,000
+message nodes and 77,563 DOM nodes**, in a `#messages-list` scroller whose
+`scrollHeight` is 380,994px. It is infinite-scroll pagination, not virtual
+scrolling. The packaged ES bundle is 1,064,604 bytes raw / 212,355 gzip, against
+the current `ChatPane` chunk's 9,957 bytes raw / 3,881 gzip. Its room model can be
+fed server-gated data (the gate stays server-side either way), but it brings its
+own markdown parser and its own nested scroller — the exact layout class that
+made the conversation page unreadable once already.
+
+**Falsifier:** if a future conversation pane needs reactions, attachments or a
+chat-style room switcher more than it needs a readable document, re-run this
+benchmark against the then-current version and compare DOM nodes, scroll
+container and gzip size. If that version virtualizes while keeping the gate
+server-side, the hand-built reader loses and this row changes. Until then, the
+current reader is the smaller and more honest component: it renders markdown and
+scrolls as a page, and it does not pretend to virtualize.
 
 **Built here, and stays built here:** the gate, the seals, the ledger. Not
 candidates for a library. A "chat framework" with its own permissions model would

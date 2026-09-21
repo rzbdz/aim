@@ -1385,7 +1385,7 @@
       "id": "T-0143",
       "title": "Evaluate vue-advanced-chat (2,081 stars) as the conversation renderer, or write down what beat it",
       "owner": "codex",
-      "status": "ready",
+      "status": "done",
       "priority": "medium",
       "estimate": 2,
       "start": "2026-09-23",
@@ -1398,7 +1398,8 @@
         "chat",
         "dependencies"
       ],
-      "accept": "either the conversation pane is built on vue-advanced-chat with the gate still applied server-side and a test asserting absence on that path, or design/09 §4 carries the measurement that decided against it (virtual scrolling past N messages measured on a real thread, its room model against our gate) rather than the argument from reading its README"
+      "accept": "design/09 §4 records the runtime measurement that decided against it: vue-advanced-chat 2.1.2 renders 5,000 of 5,000 messages, 77,563 DOM nodes and a 380,994px nested scroller, so it is infinite-scroll pagination rather than virtual scrolling; its ES bundle is 1,064,604 bytes raw / 212,355 gzip versus ChatPane's 9,957 / 3,881; the gate remains server-side either way, and the falsifier names the benchmark to re-run if a later version virtualizes",
+      "move_reason": "measured in a temporary Vite app with 5,000 synthetic messages, not inferred from the README. The library is cited at 2,081 stars and remains the candidate to re-run if its scroll model changes"
     },
     {
       "id": "T-0144",

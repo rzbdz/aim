@@ -98,6 +98,30 @@ at which point the cost of the honest path is *"start one more process"* and the
 cost of the dishonest one is *"any page that can reach this port can speak as the
 leader"*. Those are not comparable, which is why R1 is not a tradeoff.
 
+### R4 — `claimed` follows a completed delivery, not a buffered print
+
+`aim pull --claim` is an attestation used by `aim confirm`: "this reader received
+the message." The first implementation claimed each record after a sequence of
+`print()` calls, which attested a buffer write rather than a delivery. A consumer
+that stopped reading could therefore leave a message marked claimed — and
+`confirm` would accept an ack for a body that never reached the reader.
+
+The rule is conservative on purpose:
+
+1. Build the complete output for the messages that may be claimed.
+2. Write it and flush it. If the flush fails, claim **none** of them.
+3. Only after the flush succeeds, write `claimed_at` to the outbox records.
+4. A broken output stream is reported on stderr with a non-zero exit code and no
+   Python traceback; stdout is redirected to `/dev/null` before exiting so the
+   interpreter's final flush cannot produce a second error.
+5. The exit summary reports the number actually claimed, never the number that
+   was merely eligible.
+
+This deliberately refuses partial credit. A reader that consumes two records and
+then closes the pipe leaves all of them unclaimed; the next `pull` will show them
+again. A false "read" costs an ack the sender trusts, while a repeated read costs
+one command.
+
 ## 4. The friction log
 
 *一边使用一边改善* has a mechanical consequence that this project's own history
