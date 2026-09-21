@@ -13,6 +13,7 @@ import shutil
 import sys
 import json
 import os
+import datetime
 import subprocess
 import tempfile
 import time
@@ -306,6 +307,127 @@ def main():
     finally:
         shutil.rmtree(fabric_root, ignore_errors=True)
 
+    print("== T-0104: the withheld count stays on the board (D17) ==")
+    # The accept line is about a *difference*: the A2A caller gets
+    # `TaskNotFoundError` with no count and no `withheld` field, and the leader's
+    # board keeps the count it has today. So the fixture has to produce a real
+    # fabric with a real peer draft and then ask both surfaces the same question.
+    # A hand-built state dict would let the two halves agree because I wrote both,
+    # which is the one thing this check must not be able to do.
+    a2a_root, state, boards = build_a2a_state()
+    try:
+        channel = [c for c in state["channels"] if c["id"] == "t"][0]
+        # `gamma` is the viewer with no claim on the draft: not its owner, not its
+        # creator, and a participant. Both of those exemptions are real, so a
+        # two-participant fixture cannot provoke the refusal at all — the rule is
+        # a union and each of its arms needs a viewer who is not covered by the
+        # other. [measured: with only alpha and beta in the channel, every GetTask
+        # returned the task and the check would have passed for the wrong reason]
+        draft_id = "T-0001"
+        # `created_by` is asserted from the *event*, not from the folded dict,
+        # and the reason is itself a measurement: `aimboard/fold.py` copies only
+        # `PLAN_FIELDS` off the `created` record, and `created_by` is not among
+        # them, so the renderer's task dict has no `created_by` key at all — the
+        # union rule's second arm cannot fire on anything the board folds.
+        # [measured: `'created_by' in state['tasks']['T-0001']` is False while
+        # the event carries `actor: alpha`]. Asserting the event keeps the
+        # fixture honest about what it built without pretending the board kept a
+        # field it drops; the consequence is reported to codex with T-0104.
+        created = [e for e in state["tasks"][draft_id].get("events", [])
+                   if e.get("event") == "created"]
+        check("the fixture has a draft that names a peer, and a viewer who is neither",
+              draft_id in state["tasks"]
+              and state["tasks"][draft_id].get("owner") == "beta"
+              and len(created) == 1 and created[0].get("actor") == "alpha"
+              and "gamma" in channel.get("participants", []),
+              f"got {json.dumps(created)[:200]}")
+
+        got = getattr(a2a, "get_task", lambda *a, **k: {})(draft_id, "req-1", tasks=state["tasks"],
+                                                           viewer="gamma", channels=state["channels"],
+                                                           registry=state["registry"])
+        err = (got.get("error") or {})
+        check("GetTask on a peer's draft answers TaskNotFoundError",
+              err.get("code") == -32001 and got.get("result") is None,
+              f"got {json.dumps(got)[:240]}")
+
+        listed = getattr(a2a, "list_tasks", lambda *a, **k: {})( "req-2", tasks=state["tasks"],
+                                                                viewer="gamma",
+                                                                channels=state["channels"],
+                                                                registry=state["registry"])
+        result = listed.get("result") or {}
+        # Both halves in one assertion: the draft is absent *and* the response says
+        # nothing about anything being absent. An empty page and a withheld page
+        # must be the same bytes, because a client that can tell them apart has
+        # been told that a resource exists.
+        blob = json.dumps(listed)
+        check("ListTasks omits it, and the page says nothing about a count",
+              all(t.get("id") != draft_id for t in result.get("tasks", []))
+              and "withheld" not in blob and "hidden" not in blob
+              and "context-hidden" not in blob,
+              f"got {blob[:260]}")
+        check("nextPageToken is present and empty, as §3.1.4 requires of a last page",
+              "nextPageToken" in result and result["nextPageToken"] == "",
+              f"got {json.dumps(result)[:200]}")
+
+        # The other half of the accept line, and it is not "the board also hides
+        # it": the leader's board keeps the count. `boards` is what
+        # `aimboard.gate.visible_tasks` computes for the same fabric, so this
+        # compares two implementations rather than one function against itself.
+        check("the board keeps the count it has today",
+              boards.get("gamma", (None, None))[1] == 1
+              and boards.get("human", (None, None))[1] == 0,
+              f"gate.visible_tasks says {boards}")
+
+        # And the two answers are about the same task, not two fixtures that
+        # happen to differ. The leader reads it on both surfaces.
+        leaders = getattr(a2a, "get_task", lambda *a, **k: {})(draft_id, "req-3", tasks=state["tasks"],
+                                                               viewer="human", channels=state["channels"],
+                                                               registry=state["registry"])
+        check("the leader reads the same draft through both surfaces",
+              (leaders.get("result") or {}).get("id") == draft_id
+              and boards.get("human", ([], None))[0]
+              and draft_id in boards["human"][0],
+              f"a2a={json.dumps(leaders)[:120]} gate={boards.get('human')}")
+
+        # §3.1.4: the artifacts field MUST be omitted entirely when
+        # includeArtifacts is false — not an empty array, not null. An empty array
+        # is a claim ("this task has no artifacts") and an omitted field is not.
+        rows = getattr(a2a, "list_tasks", lambda *a, **k: {})( "req-4", tasks=state["tasks"],
+                                                              viewer="human",
+                                                              channels=state["channels"],
+                                                              registry=state["registry"],
+                                                              include_artifacts=False)["result"]["tasks"]
+        check("artifacts is omitted rather than emptied when it is not asked for",
+              rows and all("artifacts" not in t for t in rows),
+              f"got {[sorted(t) for t in rows][:2]}")
+
+        # The access rule is written twice — once in `bin/aim`, which must not
+        # import this package, and once in `aimboard/a2a.py`. A comment claiming
+        # they agree is worth nothing; this reads both sources and checks that
+        # each one's *claim* test mentions both arms of the union. That is crude,
+        # and it is still the check that would have caught the disagreement this
+        # whole block is about: `gate.visible_tasks`'s claim test names `owner`
+        # and not `created_by`, and `bin/aim`'s names both.
+        aim_src = (HERE / "bin" / "aim").read_text()
+        body = aim_src.split("def _visible_to(")[1].split("\ndef ")[0]
+        claim = [ln.strip() for ln in body.splitlines() if "return" in ln and "owner" in ln]
+        rule = getattr(a2a, "TASK_VISIBILITY_RULE", {})
+        check("both copies of the access rule claim on owner *and* creator",
+              claim and all("created_by" in ln for ln in claim)
+              and "owner" in rule.get("claim", "") and "created_by" in rule.get("claim", ""),
+              f"bin/aim return line: {claim} ; a2a claim: {rule.get('claim')!r}")
+
+        # And the phase tuple, which is the other half of the same duplication.
+        # A `bin/aim` that gains a fourth divergence phase while this module keeps
+        # three is a barrier that the A2A surface stops enforcing, silently.
+        phases = aim_src.split("DIVERGENCE_PHASES = (")[1].split(")")[0]
+        have = tuple(re.findall(r'"([A-Z_]+)"', phases))
+        check("the divergence phases are the same on both sides",
+              have and have == tuple(getattr(a2a, "DIVERGENCE_PHASES", ())),
+              f"bin/aim={have} a2a={getattr(a2a, 'DIVERGENCE_PHASES', None)}")
+    finally:
+        shutil.rmtree(a2a_root, ignore_errors=True)
+
     print("== the JSON-RPC surface ==")
     root, proc, url = start_server()
     try:
@@ -439,6 +561,56 @@ def build_refusals():
                     "reason": rec.get("reason", ""), "action": rec.get("action", ""),
                     "phase": rec.get("phase", ""), "channel": ch, "expect": expect})
     return root, out
+
+
+def build_a2a_state():
+    """A real fabric with a real peer draft, loaded by the renderer's own loader.
+
+    Returns `(root, state, boards)`:
+      * `state` is `aimboard.fabric.load_fabric`'s dict, which is what the A2A
+        translation is written against;
+      * `boards[viewer]` is `(visible ids, hidden count)` from
+        `aimboard.gate.visible_tasks` — the board's answer to the same question.
+
+    Loaded rather than hand-built, and the harness shells out to `aim` for the
+    fabric itself, because a test that constructs both sides of a comparison
+    proves only that its author was consistent. The one thing this fixture does
+    *not* do is assert the two surfaces agree: they do not, for a task whose owner
+    and creator differ (see the note in the T-0104 block), and that disagreement
+    is reported to codex rather than papered over here.
+    """
+    root = tempfile.mkdtemp(prefix="a2a-state-")
+    env = os.environ | {"AIM_ROOT": root}
+    aim = str(HERE / "bin" / "aim")
+
+    def run(*argv):
+        return subprocess.run([aim, *argv], env=env, capture_output=True, text=True, timeout=30)
+
+    def must(*argv):
+        done = run(*argv)
+        assert done.returncode == 0, f"{argv} failed: {done.stderr}"
+
+    must("init")
+    for who, kind in (("human", "human"), ("alpha", "claude"),
+                      ("beta", "codex"), ("gamma", "codex")):
+        must("register", "--as", who, "--kind", kind)
+    must("new-channel", "--id", "t", "--topic", "the gate", "--participants",
+         "alpha,beta,gamma", "--leader", "human")
+    # T-0001 is alpha's draft, handed to beta: `owner` and `created_by` differ on
+    # purpose, because that is the case the two gate implementations treat
+    # differently and the case a union rule has to get right.
+    must("task", "new", "--as", "alpha", "--channel", "t", "--title", "alpha's draft, handed to beta")
+    must("task", "assign", "--as", "alpha", "--channel", "t", "--id", "T-0001", "--owner", "beta")
+    must("task", "new", "--as", "human", "--channel", "t", "--title", "out in the open",
+         "--visibility", "published")
+
+    from aimboard import fabric, gate
+    state = fabric.load_fabric(Path(root), [], datetime.date(2026, 9, 21))
+    boards = {}
+    for viewer in ("alpha", "beta", "gamma", "human"):
+        visible, hidden = gate.visible_tasks(state, viewer, None)
+        boards[viewer] = (sorted(visible), hidden)
+    return root, state, boards
 
 
 def build_card(twice=False):

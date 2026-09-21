@@ -537,3 +537,391 @@ def is_iso8601_utc(value):
     """
     return isinstance(value, str) and _ISO_UTC.match(value) is not None
 
+
+
+# --------------------------------------------------------------------------
+# Tasks: the read surface, and the authorization model behind it (T-0104)
+# --------------------------------------------------------------------------
+# GetTask and ListTasks are the two A2A operations this fabric can answer today,
+# because both are reads of state the fabric already holds and neither needs a
+# socket: a `Task` is the fold, and the gate is an access rule. What follows is
+# therefore a *translation*, and its caller today is the conformance suite.
+#
+# The gap it closes is D17, and the access rule it has to satisfy now exists in
+# three places — this module, `bin/aim`, and `aimboard/gate.py`. That is one more
+# than the project's own rule allows, so the measurements below are written down
+# rather than summarised: the disagreement is real, it is confined to one shape of
+# record, and it is reported rather than patched from here.
+#
+#   [measured on one fabric: alpha creates a draft, `task assign` hands it to
+#    beta, alpha then runs `aim advance --as alpha`]
+#     bin/aim `task list`,  phase=SEALED_DIVERGENT   alpha sees it, beta does NOT
+#     bin/aim `task list`,  phase=OPEN    (unsealed) both see it
+#     gate.visible_tasks,   phase=SEALED_DIVERGENT   alpha hidden,  beta sees it
+#
+# The two rules are *inverses* of each other, not one buggy copy of the other:
+#
+#   bin/aim `_visible_to`      owner == who  or  created_by == who
+#   gate.visible_tasks         owner == viewer (and hides a draft from anyone
+#                              else who is walled off)
+#
+# So exactly one record in the fabric can make them disagree — a draft whose
+# `owner` and `created_by` differ — and for that record `bin/aim` serves it to
+# whoever wrote it while the board serves it to whoever holds it. Both are
+# defensible readings of "their own work", and the fabric's own vocabulary is the
+# union: `task assign` exists to hand work to a peer, so the creator has not given
+# up the record, and the owner may be a different agent entirely from the one who
+# will do it.
+#
+# Two consequences follow, and both are reported rather than fixed from this side:
+#
+#   * `gate.visible_tasks` should be the union too, so one question has one
+#     answer. `gate.py` is codex's file (design/05 §8).
+#   * `aimboard/fold.py` copies only `PLAN_FIELDS` off the `created` event, and
+#     `created_by` is not among them, so **the renderer's task dict has no
+#     `created_by` key at all**. [measured: `'created_by' in state['tasks']['T-0001']`
+#     is False, while the same task's `created` event carries `actor: alpha`].
+#     Today nothing is broken by that — `gate.visible_tasks` compares `owner` and
+#     never asks for the key, and no view renders a task's author (`grep` over
+#     `aimboard/views/` finds no reader). It becomes load-bearing the moment the
+#     board's gate is united with `bin/aim`'s, because the union's second arm has
+#     nothing to fire on: `alpha`'s own draft, handed to `beta`, is served by
+#     `aim task list` and would stay hidden on the board whatever `gate.py` says.
+#
+# `bin/aim` keeps its own copy of the rule because it must not import this
+# package, and a test asserts the two agree — see TASK_VISIBILITY_RULE below.
+#
+# The unified rule is the union: `task_visible`, which is where the decision now
+# lives and the only place either surface should ask. T-0104's accept line only
+# requires the *withheld* half to be exercised, and that half holds under either
+# rule, so nothing here depends on either correction landing first.
+
+# §4.4's TaskState, mapped from this fabric's status vocabulary by *semantics*,
+# not by name — the failure design/07 §3 was written to prevent. Every entry
+# carries the reason it is the right state, because a mapping table that cannot be
+# argued with is a mapping table nobody can check.
+#
+# The four that are not obvious:
+#
+#   backlog -> SUBMITTED   created, accepted, not started. A2A's zero value is
+#                          deliberately not used: a state a client cannot
+#                          distinguish from "we forgot to set it" is not an answer.
+#   review  -> INPUT_REQUIRED  a reviewer's decision is the input being waited on.
+#   blocked -> INPUT_REQUIRED  what is waited on is a peer's work. A2A has no word
+#                          for a dependency and inventing one is what the
+#                          planning/v1 extension is for.
+#   dropped -> CANCELED    withdrawn, not failed. FAILED is for a task that ran
+#                          and did not succeed, which is a different fact about it.
+STATUS_TO_STATE = {
+    "backlog": "TASK_STATE_SUBMITTED",
+    "ready": "TASK_STATE_SUBMITTED",
+    "doing": "TASK_STATE_WORKING",
+    "review": "TASK_STATE_INPUT_REQUIRED",
+    "blocked": "TASK_STATE_INPUT_REQUIRED",
+    "done": "TASK_STATE_COMPLETED",
+    "dropped": "TASK_STATE_CANCELED",
+}
+
+# The other direction exists so that the *absence* of a mapping is a decision
+# rather than an oversight. A2A has no word for this fabric's `blocked` or
+# `review`; it has `AUTH_REQUIRED`, `REJECTED` and `FAILED`, which this fabric has
+# never had a reason to express. T-0107 is codex's table; this is the constant it
+# can read rather than re-deriving.
+STATES_WE_CANNOT_EXPRESS = ["TASK_STATE_UNSPECIFIED", "TASK_STATE_FAILED",
+                            "TASK_STATE_REJECTED", "TASK_STATE_AUTH_REQUIRED"]
+
+# §3.3.2's "Message": "At least one part is required" (§9.5's own BadRequest
+# example names `message.parts`). A task's title is its human-readable content and
+# therefore its first part; `accept` is the falsification condition, which is the
+# only thing in a work item that behaves like an artifact — the work product you
+# can check the task against.
+def _task_messages(task, history_length: int) -> list:
+    """`history[]`, most recent last, truncated to the last `history_length`.
+
+    §3.2.4: 0 means the field is omitted entirely; > 0 means at most that many
+    recent messages. So the caller filters, and this returns the *content* — a
+    client that asks for zero history must not receive an empty array, which is a
+    different statement from "there is no history".
+    """
+    events = list(task.get("history") or [])
+    if history_length:
+        events = events[-history_length:]
+    out = []
+    for event in events:
+        text = _event_text(event)
+        if not text:
+            continue
+        out.append({
+            "messageId": f"{task['id']}:{event.get('event', '?')}:{event.get('ts', '')}",
+            "contextId": task.get("context_id") or None,
+            "taskId": task["id"],
+            # §4.4: the agent's utterances are ROLE_AGENT. Every event in this
+            # store is written by an agent acting on the task, never by a user
+            # handing work in.
+            "role": "ROLE_AGENT",
+            "parts": [{"text": text, "mediaType": "text/plain"}],
+            "metadata": {"aim": {"event": event.get("event", ""), "actor": event.get("actor", "")}},
+        })
+    return [m for m in out if m.get("parts")]
+
+
+def _event_text(event) -> str:
+    """One sentence for one task event, or "" for an event with nothing to say.
+
+    Returns "" rather than a placeholder: a client that receives a Message with
+    an empty part has been told something false, and §3.3.2 says at least one part
+    is required. An event we cannot describe is better omitted than faked.
+    """
+    kind, actor = event.get("event", ""), event.get("actor", "")
+    if kind == "created":
+        return f"created by {actor}: {event.get('title', '')}".strip()
+    if kind == "moved":
+        reason = f" — {event['reason']}" if event.get("reason") else ""
+        return f"{actor} moved it {event.get('from', '?')} -> {event.get('to', '?')}{reason}"
+    if kind == "assigned":
+        return f"{actor} assigned it to {event.get('owner', '?')}"
+    if kind == "published":
+        return f"{actor} published it to the channel"
+    if kind == "linked":
+        return f"{actor} made it blocked by {event.get('blocked_by', '?')}"
+    if kind == "dropped":
+        return f"{actor} dropped it — {event.get('reason', '')}".strip()
+    if kind == "commented":
+        return f"{actor} commented: {event.get('body', '')}".strip()
+    return ""
+
+
+# The phases in which a participant may only see their own drafts. The same tuple
+# `bin/aim` keeps, and it is duplicated here because this module must not import
+# the CLI: `bin/aim` is not importable as a module by design (design/08 §3 gives
+# it the write discipline, and a second importer is a second entry point into it).
+# A test asserts the two agree, which is the only form of duplication that can be
+# caught when one side moves.
+DIVERGENCE_PHASES = ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
+
+
+def task_visible(task, viewer, channel, registry) -> bool:
+    """May `viewer` read this task? The unified rule, decided once.
+
+    Three things make a task readable, and they are the same three `bin/aim`
+    applies — the difference is that until now only `bin/aim` applied the third:
+
+      * it is published, not a draft;
+      * the channel's phase is past the barrier, or the viewer is not walled off;
+      * the viewer **owns** it or **created** it.
+
+    The leader bypasses the gate entirely, which is the fabric's oldest rule: the
+    leader is the audience, not a participant, and the whole point of sealing is
+    that the leader can read both sides.
+
+    The two middle tests are the ones `bin/aim` gets from *its own* wall: `aim
+    task list` refuses outright for a registered non-participant (the refusal
+    `gate.py`'s docstring calls T-0041), and it never reaches the third test with
+    a phase that is open, because the fold it reads is the channel it was asked
+    about. Both are spelled out here because this function is also asked about
+    tasks from *other* channels than the viewer's, via `hidden_count`, and a rule
+    that is only correct for the caller's own channel is a rule that leaks.
+
+    `channel` is the manifest as `fabric.load_fabric` builds it: `{"phase": ...,
+    "participants": [...], "leader": ...}`. Passing state rather than a root is
+    deliberate — this module must not open files, or the two surfaces stop
+    agreeing about *when* the state was read.
+    """
+    if (registry.get(viewer) or {}).get("kind") == "human":
+        return True
+    if (task.get("visibility") or "draft") == "published":
+        return True
+    if channel.get("phase") not in DIVERGENCE_PHASES:
+        return True                # the barrier is open; drafts are readable
+    if viewer not in channel.get("participants", []):
+        return True                # a stranger is not a participant; T-0041's case
+    return viewer in (task.get("owner"), task.get("created_by"))
+
+
+def hidden_count(tasks, viewer, channels, registry) -> int:
+    """How many work items the viewer cannot see. A count, never a title.
+
+    This is the number T-0104 is about: the board publishes it and the A2A surface
+    must not. Returning it as a value rather than as a phrase is what lets the
+    conformance suite assert the two halves against each other instead of against
+    a sentence one of them happens to print.
+
+    This module defines it and does not call it, which is the point rather than an
+    oversight: the A2A surface must never be able to reach a number that describes
+    what it is withholding. A caller that wants the count is the board, and the
+    board asks `gate.visible_tasks`. It is here, exported and tested, so the two
+    halves of D17 can be asserted against the *same* rule instead of against two
+    rules that happen to agree today.
+    """
+    by_id = {c["id"]: c for c in channels}
+    return sum(1 for t in tasks.values()
+               if not task_visible(t, viewer, by_id.get(t.get("context_id")
+                                                        or t.get("channel") or "", {}),
+                                   registry))
+
+
+# The rule above, written a second time in Python source so a test can read it
+# without importing the package — see the note on `bin/aim`'s copy below. tests/
+# `test_access_rule_agreement` parses both this table and `bin/aim`'s function,
+# which is a crude check that would nonetheless have caught the disagreement this
+# block is about, because that disagreement was two different *expressions*, not
+# two different intentions.
+TASK_VISIBILITY_RULE = {
+    "leader_bypass": "registry[viewer].kind == 'human'",
+    "published": "task.visibility == 'published'",
+    "barrier_open": "channel.phase not in DIVERGENCE_PHASES",
+    "stranger": "viewer not in channel.participants",
+    "claim": "viewer in (task.owner, task.created_by)",
+}
+
+
+def a2a_task(task, *, history_length: int = 0, include_artifacts: bool = False) -> dict:
+    """One work item as an A2A `Task` (§4.1.1).
+
+    Fields A2A requires are all present: `id`, `contextId`, `status{state}`. The
+    four A2A *does not* model — estimate, due date, dependency edge, acceptance
+    condition — go in `metadata.aim.planning`, which is exactly what D16 registers
+    an extension for. A reader who does not know the extension sees a Task that is
+    correct as far as it goes; a reader who does sees the planning card.
+
+    Enum-valued fields are already SCREAMING_SNAKE, and `normalize_keys` must not
+    touch *values* — it does not, because it only rewrites keys, and §5.2's
+    camelCase rule is a rule about field names.
+    """
+    out = {
+        "id": task["id"],
+        "contextId": task.get("context_id") or None,
+        "status": {
+            "state": STATUS_TO_STATE.get(task.get("status") or "backlog",
+                                         "TASK_STATE_UNSPECIFIED"),
+            "timestamp": task.get("updated_at") or task.get("created_at") or "",
+        },
+    }
+    if include_artifacts:
+        # §3.1.4: when `includeArtifacts` is false the field MUST be omitted
+        # entirely — not an empty array, not null. When it is true, the
+        # acceptance condition is the artifact, because it is the one field in a
+        # work item that says what would make the work *finished* rather than
+        # merely claimed.
+        out["artifacts"] = ([{
+            "artifactId": f"{task['id']}-accept",
+            "name": "acceptance condition",
+            "description": task.get("accept", ""),
+            "parts": [{"text": task.get("accept", ""), "mediaType": "text/plain"}],
+        }] if task.get("accept") else [])
+    if history_length:
+        out["history"] = _task_messages(task, history_length)
+    out["metadata"] = {"aim": {
+        "kind": "planning", "extension": f"{_EXT_NS}/planning/v1",
+        "priority": task.get("priority", "normal"),
+        "milestone": task.get("milestone", ""),
+        "blocked_by": list(task.get("blocked_by") or []),
+        "estimate": task.get("estimate_pts", 0),
+        "start": task.get("start", ""),
+        "due": task.get("due", ""),
+        "accept": task.get("accept", ""),
+        "tags": list(task.get("tags") or []),
+        "visibility": task.get("visibility", "draft"),
+        "owner": task.get("owner", ""),
+    }}
+    return out
+
+
+def get_task(task_id, request_id, *, tasks, viewer, channels, registry,
+             history_length: int = 0, include_artifacts: bool = False):
+    """§3.1.3. `TaskNotFoundError` for a task that does not exist **or is not
+    accessible to the caller** — one answer for both, because the two must be
+    indistinguishable to the caller.
+
+    This is D17 and it is why the refusal is not merely allowed to be a 404 but
+    required to be one. §3.3.2's Resource Errors: "Servers **MUST** return a not
+    found error when a requested resource does not exist **or is not
+    accessible**", and "**SHOULD NOT** distinguish between 'does not exist' and
+    'not authorized' to prevent information leakage". §3.1.3's error list has one
+    entry, `TaskNotFoundError`.
+
+    §13.1 adds the staging rule, and it is the one that is easy to get wrong:
+    "Authorization checks **MUST** occur before any database queries or operations
+    that could leak information about the existence of resources outside the
+    caller's authorization scope". So the gate is applied *before* the id is
+    looked up, and the two paths below are ordered that way on purpose. Reversing
+    them is a change to what this function answers, not an optimisation.
+
+    The response contains no count, no "withheld" field and no hint that anything
+    else exists. What the board does with the same verdict is T-0104's other half
+    and is deliberately *not* this function's business: a count is a fact about
+    the channel, and a channel is something a participant is entitled to know
+    about. A foreign A2A caller is not, and §13.1 says so in its own words.
+    """
+    by_id = {c["id"]: c for c in channels}
+    channel = by_id.get(task_channel(task_id, tasks, by_id) or "", {})
+    visible = [t for t in tasks.values()
+               if task_visible(t, viewer, channel, registry)]
+    found = next((t for t in visible if t["id"] == task_id), None)
+    if found is None:
+        return error_response("TaskNotFoundError", request_id,
+                              action="GetTask", reason="not found or not accessible")
+    return {"jsonrpc": "2.0", "id": request_id,
+            "result": a2a_task(found, history_length=history_length,
+                               include_artifacts=include_artifacts)}
+
+
+def task_channel(task_id, tasks, by_id) -> str:
+    """Which channel a task id belongs to, or "" if the caller may not know.
+
+    Only ever used to pick the channel whose phase governs the verdict, so a task
+    the caller cannot see still gets judged by the phase of the channel it is in —
+    otherwise a draft in a divergence phase would be answered by the fallback
+    channel's phase, and a draft would become visible by asking from the wrong
+    side of the board.
+    """
+    task = tasks.get(task_id) or {}
+    return task.get("context_id") or task.get("channel") or ""
+
+
+def list_tasks(request_id, *, tasks, viewer, channels, registry,
+               context_id: str = "", page_size: int = 50, page_token: str = "",
+               history_length: int = 0, include_artifacts: bool = False):
+    """§3.1.4. Only visible tasks; sorted by last update, descending; cursor
+    pagination; `nextPageToken` always present and "" on the last page.
+
+    Every one of those is a MUST or a MUST-NOT in the spec, and three of them are
+    the kind a translation quietly skips:
+
+      * "MUST use cursor-based pagination" and "`nextPageToken` MUST always be
+        present ... MUST be set to an empty string" — so a single-page result
+        still carries the field, and "" is a statement rather than an omission.
+      * "Tasks MUST be sorted by their status timestamp time in descending
+        order". A stable sort over a stable key: two tasks updated in the same
+        millisecond must not swap between two pages, or a client paginating
+        repeats one and misses the other.
+      * "MUST return only tasks visible to the authenticated client" — the same
+        gate, applied per task, and the count of what was withheld is *not* in
+        the response.
+    """
+    by_id = {c["id"]: c for c in channels}
+    rows = []
+    for task in tasks.values():
+        channel = by_id.get(task.get("context_id") or task.get("channel") or "", {})
+        if context_id and (task.get("context_id") or task.get("channel")) != context_id:
+            continue
+        if not task_visible(task, viewer, channel, registry):
+            continue
+        rows.append(task)
+
+    def sort_key(task):
+        return (task.get("updated_at") or task.get("created_at") or "", task["id"])
+
+    rows.sort(key=sort_key, reverse=True)
+    start = 0
+    if page_token:
+        ids = [t["id"] for t in rows]
+        start = ids.index(page_token) if page_token in ids else len(rows)
+    size = max(0, int(page_size or 0))
+    page = rows[start:start + size] if size else []
+    next_token = page[-1]["id"] if page and start + size < len(rows) else ""
+    return {"jsonrpc": "2.0", "id": request_id, "result": {
+        "tasks": [a2a_task(t, history_length=history_length,
+                           include_artifacts=include_artifacts) for t in page],
+        "nextPageToken": next_token,
+    }}
