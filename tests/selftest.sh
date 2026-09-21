@@ -282,6 +282,32 @@ sys.exit(0 if len(ev)>=2 and ev[-1]['reason']=='forced takeover' and ev[0]['kind
 expect_ok   "restore alpha for the blocks above" \
   $AIM register --as alpha --kind claude --force --session "restored"
 
+echo "== concurrent writers do not lose each other's registrations =="
+# write_json has always been atomic per write. That is not the same as safe for
+# read-modify-write: two processes that both load the registry, both add
+# themselves, and both save will lose one, and the file that remains is
+# well-formed. The failure is invisible afterwards and reads as "that agent was
+# never here". Measured on the pre-patch code, 5 concurrent registrations left 1.
+RACEROOT="$AIM_ROOT/race"
+rm -rf "$RACEROOT"; mkdir -p "$RACEROOT"
+( export AIM_ROOT="$RACEROOT"; $AIM init >/dev/null
+  for a in r1 r2 r3 r4 r5 r6 r7 r8; do
+    AIM_ROOT="$RACEROOT" $AIM register --as $a --kind claude >/dev/null 2>&1 &
+  done
+  wait )
+expect_ok   "all 8 concurrent registrations survived" \
+  bash -c "python3 -c \"
+import json,sys
+n=len(json.load(open('$RACEROOT/registry.json'))['agents'])
+sys.exit(0 if n==8 else 1)\""
+expect_ok   "and the registry is still valid JSON with unique ids" \
+  bash -c "python3 -c \"
+import json,sys
+r=json.load(open('$RACEROOT/registry.json'))['agents']
+sys.exit(0 if sorted(r)==['r%d'%i for i in range(1,9)] else 1)\""
+expect_ok   "no stray temp files left behind" \
+  bash -c "! ls -a '$RACEROOT' | grep -q '\.tmp'"
+
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
 # Tamper *after* the last successful verify, so the check is not confounded by

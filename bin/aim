@@ -179,10 +179,39 @@ def read_json(path, default=None):
 
 
 def write_json(path, obj):
+    """Replace a JSON file atomically.
+
+    The temp name carries the pid, so two processes writing different targets in
+    the same directory can never collide, and two writers of the *same* target
+    cannot clobber each other's half-written temp file. That still leaves the
+    read-modify-write *around* this call racy — os.replace is atomic, but
+    "load, change, save" is not. Use update_json() for anything that mutates
+    shared state.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def update_json(path, mutate, default=None, lock=None):
+    """Read-modify-write under an exclusive lock.
+
+    `write_json` is atomic per write, which is not the same as safe for
+    read-modify-write: two agents that both load the registry, both add
+    themselves, and both save will lose one of the two. That is the lost-update
+    race, and it is invisible afterwards — the file is well-formed and simply
+    missing a registration, which is precisely the kind of failure that reads as
+    "an agent was never here".
+
+    So the lock is held across the whole transaction, not just the write. Returns
+    the object that was written.
+    """
+    with Lock(lock or path.with_name(path.name + ".lock")):
+        obj = read_json(path, default)
+        obj = mutate(obj)
+        write_json(path, obj)
+        return obj
 
 
 def append_chained(path, rec):
@@ -302,8 +331,7 @@ def cmd_register(args):
     name, and inherit everything the ledger says about it, and no record would
     show the switch.
     """
-    reg = load_registry()
-    prior = reg["agents"].get(args.actor)
+    prior = load_registry()["agents"].get(args.actor)
     if prior and not args.force:
         die(
             f"REFUSED: '{args.actor}' is already registered "
@@ -314,22 +342,36 @@ def cmd_register(args):
             f"replacing it, say so: aim register --as {args.actor} "
             f"--kind {args.kind} --force --session '<why>'"
         )
-    rec = {
-        "id": args.actor,
-        "kind": args.kind,
-        "model": args.model or "",
-        "session": args.session or "",
-        "registered_at": now_iso(),
-    }
-    if prior:
-        rec["registration_events"] = (prior.get("registration_events") or [{
-            "at": prior["registered_at"], "kind": prior["kind"],
-            "session": prior.get("session", ""), "reason": "initial registration",
-        }]) + [{"at": rec["registered_at"], "kind": args.kind,
-                "session": args.session or "", "reason": "forced takeover"}]
-    reg["agents"][args.actor] = rec
-    save_registry(reg)
-    if prior:
+
+    # The takeover check above races with another register; the one that matters
+    # is re-made here, inside the lock, because this is the transaction that
+    # decides who the id belongs to.
+    taken_over = []
+
+    def _claim(reg):
+        prev = reg["agents"].get(args.actor)
+        if prev and not args.force:
+            die(f"REFUSED: '{args.actor}' was registered by someone else while this "
+                f"command was running; nothing was written.")
+        rec = {
+            "id": args.actor,
+            "kind": args.kind,
+            "model": args.model or "",
+            "session": args.session or "",
+            "registered_at": now_iso(),
+        }
+        if prev:
+            rec["registration_events"] = (prev.get("registration_events") or [{
+                "at": prev["registered_at"], "kind": prev["kind"],
+                "session": prev.get("session", ""), "reason": "initial registration",
+            }]) + [{"at": rec["registered_at"], "kind": args.kind,
+                    "session": args.session or "", "reason": "forced takeover"}]
+            taken_over.append(prev)
+        reg["agents"][args.actor] = rec
+        return reg
+
+    update_json(registry_path(), _claim, {"agents": {}})
+    if taken_over or prior:
         print(f"registered {args.actor} ({args.kind}) — TAKEOVER of an existing id, "
               f"recorded in the registry")
     else:
