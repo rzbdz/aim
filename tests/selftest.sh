@@ -102,6 +102,25 @@ echo "== RESOLVE closes the floor =="
 expect_ok   "advance to RESOLVE" $AIM advance --as human --channel t --to RESOLVE
 expect_fail "speech after RESOLVE" $AIM say --as alpha --channel t --kind rebuttal --responds-to m0001 --body "one last word"
 
+echo "== refusals are recorded, not just printed =="
+# The README used to claim refusals were "recorded in the ledger". They were
+# not: die() wrote to stderr and exited, so the one event that proves an agent
+# was *tempted* left no trace. These assertions are what makes that claim true.
+LEDGER="$AIM_ROOT/channels/t/ledger.jsonl"
+expect_ok   "refusals reached the ledger at all" \
+  bash -c "grep -q '\"event\": \"refusal\"' '$LEDGER'"
+expect_ok   "a phase-gate refusal is classed as barrier, not form" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$LEDGER') if 'refusal' in l]
+sys.exit(0 if any(r['class']=='barrier' for r in rs) else 1)\""
+expect_ok   "a refusal record names the agent, the action and the phase" \
+  bash -c "python3 -c \"
+import json,sys
+rs=[json.loads(l) for l in open('$LEDGER') if 'refusal' in l]
+sys.exit(0 if all(r.get('agent') is not None and r.get('action') and r.get('phase') for r in rs) else 1)\""
+expect_ok   "the refusal chain does not break the ledger chain" $AIM verify --channel t
+
 echo "== ledger integrity =="
 expect_ok "chain verifies" $AIM verify --channel t
 # Tamper *after* the last successful verify, so the check is not confounded by

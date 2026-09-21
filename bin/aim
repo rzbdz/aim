@@ -91,7 +91,53 @@ def sha256_hex(data):
     return hashlib.sha256(data).hexdigest()
 
 
+# The refusal ledger needs to know who tried what, and `die()` is the single
+# choke point every refusal passes through — but it is called from ~40 places
+# that each know something different. So the command records its context first
+# and `die()` reads it. One process = one command = one context.
+_CTX = {"channel": None, "actor": None, "action": None}
+
+
+def note_context(channel=None, actor=None, action=None):
+    for key, val in (("channel", channel), ("actor", actor), ("action", action)):
+        if val is not None:
+            _CTX[key] = val
+
+
+def _record_refusal(msg):
+    """Write the refusal to the ledger. Never raises.
+
+    A refusal is the most legible event this system produces: it is the only
+    trace that an agent was *tempted*. Without it the record cannot distinguish
+    "nobody tried" from "everybody tried and was stopped", and the design's
+    claim that the barrier can be audited is unfalsifiable from the artifact.
+    """
+    ch = _CTX.get("channel")
+    if not ch:
+        return
+    try:
+        d = channel_dir(ch)
+        manifest = read_json(d / "manifest.json")
+        if manifest is None:
+            return
+        with Lock(d / ".ledger.lock"):
+            append_chained(d / "ledger.jsonl", {
+                "ts": now_iso(),
+                "event": "refusal",
+                "agent": _CTX.get("actor") or "",
+                "action": _CTX.get("action") or "",
+                "phase": manifest.get("barrier", {}).get("phase", ""),
+                # "barrier" = the phase gate refused (the interesting class);
+                # "form" = a malformed or out-of-policy request was refused.
+                "class": "barrier" if msg.startswith("REFUSED") else "form",
+                "reason": msg.split("\n")[0][:400],
+            })
+    except Exception as exc:                                # never mask the refusal
+        print(f"aim: warning: refusal not recorded: {exc}", file=sys.stderr)
+
+
 def die(msg, code=2):
+    _record_refusal(msg)
     print(f"aim: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -202,6 +248,7 @@ def resolve_actor(args, manifest=None):
             f"unknown agent '{who}'. register first:\n"
             f"  aim register --as {who} --kind claude|codex|human"
         )
+    note_context(actor=who)
     return who, kind
 
 
@@ -1128,6 +1175,10 @@ def main():
     p.add_argument("--channel", required=True)
 
     args = ap.parse_args()
+    # Every refusal `die()` records needs to know which channel was being acted
+    # on. Set it once here rather than at ~40 call sites; `resolve_actor` fills in
+    # the actor when one was given.
+    note_context(channel=getattr(args, "channel", None), action=args.cmd)
     args.func(args)
 
 
