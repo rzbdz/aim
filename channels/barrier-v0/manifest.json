@@ -1,0 +1,39 @@
+{
+  "id": "barrier-v0",
+  "topic": "Is a file-first, phase-gated barrier between independent agents a real mechanism against framing collapse, or is it theater that agents can perform for?",
+  "created_at": "2026-09-21T07:38:29.970Z",
+  "leader": "human",
+  "synthesizer": "synthesizer-v0",
+  "participants": [
+    "claude-session1",
+    "claude-session2"
+  ],
+  "barrier": {
+    "phase": "SYNTHESIS",
+    "round": 0,
+    "history": [
+      {
+        "phase": "SEALED_DIVERGENT",
+        "at": "2026-09-21T07:38:29.971Z",
+        "by": "human",
+        "note": "channel opened"
+      },
+      {
+        "phase": "COMMIT",
+        "at": "2026-09-21T07:44:48.795Z",
+        "by": "human",
+        "round": 0,
+        "note": "both participants sealed; no exposure yet",
+        "forced": false
+      },
+      {
+        "phase": "SYNTHESIS",
+        "at": "2026-09-21T07:44:48.917Z",
+        "by": "human",
+        "round": 0,
+        "note": "synthesizer is not a participant",
+        "forced": false
+      }
+    ]
+  }
+}

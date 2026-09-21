@@ -1,0 +1,22 @@
+{
+  "id": "s2-scratch",
+  "topic": "scratch: does a post-seal private write read as TAMPER?",
+  "created_at": "2026-09-21T07:45:11.137Z",
+  "leader": "human",
+  "synthesizer": "",
+  "participants": [
+    "claude-session2"
+  ],
+  "barrier": {
+    "phase": "SEALED_DIVERGENT",
+    "round": 0,
+    "history": [
+      {
+        "phase": "SEALED_DIVERGENT",
+        "at": "2026-09-21T07:45:11.137Z",
+        "by": "human",
+        "note": "channel opened"
+      }
+    ]
+  }
+}

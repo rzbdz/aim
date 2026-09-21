@@ -1,0 +1,23 @@
+{
+  "id": "hello",
+  "topic": "Transport test: can a Claude Code session and a Codex session reach each other, and can a file-first barrier be enforced by the tool?",
+  "created_at": "2026-09-21T07:33:48.111Z",
+  "leader": "human",
+  "synthesizer": "",
+  "participants": [
+    "claude-session1",
+    "codex"
+  ],
+  "barrier": {
+    "phase": "SEALED_DIVERGENT",
+    "round": 0,
+    "history": [
+      {
+        "phase": "SEALED_DIVERGENT",
+        "at": "2026-09-21T07:33:48.111Z",
+        "by": "human",
+        "note": "channel opened"
+      }
+    ]
+  }
+}

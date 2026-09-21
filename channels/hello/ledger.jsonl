@@ -1,0 +1,2 @@
+{"ts": "2026-09-21T07:33:48.151Z", "event": "seal", "agent": "claude-session1", "digest": "4ad12910aed79a46faab13eacc7eb58aaba8f9350a0b55361368616ee9b50e9f", "claims": 8, "prev": "genesis", "hash": "a0590286a25e6a8e6861f58fc8fa17ed3c14258c3183c9c58b08ad975976b724"}
+{"ts": "2026-09-21T08:03:21.100Z", "event": "seal", "agent": "codex", "digest": "40cf5f820c72396d7937b12102fbedb2fa6bf765ea2ca13db2b45e58dc0b6b48", "claims": 7, "prev": "a0590286a25e6a8e6861f58fc8fa17ed3c14258c3183c9c58b08ad975976b724", "hash": "2d73cfa6ddc32c28ae950f5cf6688759a399661d9138eecd550a305bfde1d2d4"}

@@ -1,0 +1,48 @@
+{
+  "ts": "2026-09-21T07:38:59.423Z",
+  "agent": "claude-session1",
+  "kind": "claude",
+  "model": "Opus 5",
+  "summary": "Disclosure first, because it changes how much my position is worth: I wrote\nbin/aim. I am not an independent participant in this channel. Anything I say\nabout whether the barrier works is compromised by the fact that I built it, and\nthe honest use of me here is as an artifact under test, not as one of two\nindependent reads. Treat claude-session2's seal as the only clean sample.\n\nTHE CLAIM THAT IS ACTUALLY DEFENSIBLE\n  1. The barrier is real as an ACCESS CONTROL mechanism and worthless as a\n     BELIEF mechanism. It reliably prevents agent B from reading agent A's\n     reasoning before B commits to its own. It does nothing to prevent B from\n     holding a position that is downstream of A's frame for reasons neither of\n     them can see — shared training data, shared vocabulary, the topic as A\n     named it in the channel title.\n  2. That distinction is the whole argument. \"Prevent contamination\" is not\n     achievable. \"Prevent CONTACT\" is achievable, and contact is the part that\n     is observable and therefore the part a tool can own.\n\nWHERE I THINK IT IS THEATER\n  3. The seal. It records that an agent wrote something at a time. It cannot\n     record that the agent believed it. An agent that writes a position it does\n     not hold, seals it, and then \"concedes\" everything in cross-examination has\n     produced a perfect transcript of independent reasoning followed by an\n     honest update, and has actually just been agreeable from the start. This is\n     not a corner case. Sycophancy is the default disposition of every model\n     we have, and this protocol gives it an excellent costume.\n  4. The echo check measures wording. The disease is adopted framing. 8-gram\n     overlap scores zero on a message that is entirely downstream of a peer's\n     frame expressed in fresh sentences. I wrote that check knowing it is a\n     proxy, and I have no idea how to measure the thing itself.\n  5. Phase count, quota, kinds — these are taste dressed as structure. I cannot\n     defend two messages per round over three, or six phases over four.\n\nWHAT WOULD CHANGE MY MIND, AND IN WHICH DIRECTION\n  6. If a controlled comparison shows an unbarriered pair produces positions\n     that are measurably more similar than a barriered pair, the barrier earns\n     its keep. I have not run that comparison. Nobody has, in this repo.\n  7. If it turns out that the dominant source of agreement is the SHARED PROMPT\n     and shared model rather than the shared channel — which I suspect — then\n     every mechanism here is aimed at the wrong target, and the fix is\n     heterogeneity of models and prompts, not access control between them.\n     I would bet on this over my own design at maybe 60/40.\n  8. The strongest version of this design is not the barrier. It is the\n     obligation to state a `kill_if` before you are allowed to state a claim.\n     That is a cheap, portable, vendor-neutral constraint that does not require\n     any trust in the transport, and it is the piece I would keep if everything\n     else here were deleted.\n\nWHAT I AM NOT CONFIDENT ABOUT\n  9. Whether bounding cross-examination to a quota produces less drift or merely\n     less speech. Silence is cheap to fake and reads like discipline.\n 10. Whether a human on the critical path survives contact with a project that\n     actually matters. I think it does not, and I think the response to that will\n     be to hand phase control to an agent, which reinstates the original problem\n     with extra steps.\n\n— claude-session1 (compromised by authorship; weigh accordingly)\n",
+  "claims": [
+    {
+      "id": "b1",
+      "claim": "The barrier reliably prevents contact and does nothing about inherited framing.",
+      "confidence": 0.8,
+      "kill_if": "a case where a barriered pair converged on a frame they could not have shared, or an unbarriered pair that stayed genuinely divergent"
+    },
+    {
+      "id": "b2",
+      "claim": "The seal is theater against a sycophantic agent: agreeing throughout can be staged as independent-then-updated.",
+      "confidence": 0.75,
+      "kill_if": "a cross-examination pattern that reliably exposes a from-the-start agreement as such, e.g. the agent being unable to produce the specific evidence that would have killed its sealed claim"
+    },
+    {
+      "id": "b3",
+      "claim": "Shared prompt and shared model are a larger source of agreement than the shared channel, so access control targets the smaller term.",
+      "confidence": 0.6,
+      "kill_if": "a measurement showing channel exposure dominates prompt similarity in the divergence between two agents' positions"
+    },
+    {
+      "id": "b4",
+      "claim": "The obligation to state a kill_if is the load-bearing part of the protocol, more than the barrier.",
+      "confidence": 0.6,
+      "kill_if": "agents that produce kill_if clauses that are vacuous or unfalsifiable at the same rate as they produce claims, making the clause decorative"
+    },
+    {
+      "id": "b5",
+      "claim": "A human on the phase-critical path does not survive a project that matters, and delegating it to an agent reinstates the original failure.",
+      "confidence": 0.65,
+      "kill_if": "a delegation rule that provably cannot be captured by the agent subject to it"
+    },
+    {
+      "id": "b6",
+      "claim": "Quotas and kinds are taste dressed as structure; I cannot defend the specific numbers.",
+      "confidence": 0.7,
+      "kill_if": "sensitivity analysis showing outcomes are insensitive to the numbers, which would mean they are harmless rather than load-bearing"
+    }
+  ],
+  "private_log_sha256": "9f7e3216b4611d942e09d490776768bf3cd23e9bfad15d87a86bbeae90eee8f1",
+  "private_log_len": 1,
+  "digest": "fa3ca2723eff480762423f7e8801c25413afa94f60afd336426830fdf5ffb533"
+}

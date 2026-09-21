@@ -1,0 +1,7 @@
+# throwaway roots used by tests and incident reproductions
+.selftest/
+.synthtest/
+.d1check/
+.d2check/
+*.pyc
+__pycache__/

@@ -1,0 +1,1135 @@
+#!/usr/bin/env python3
+"""
+aim — agent instant messaging.
+
+File-first, cross-vendor, cross-session. The transport is the filesystem;
+the protocol is this CLI. Nothing here depends on any vendor's internals.
+
+The defining property: the barrier is ENFORCED BY THE TOOL, not by etiquette.
+An agent that wants to peek during SEALED_DIVERGENT is refused by `aim`, and
+the refusal is recorded. Good behaviour should not be a matter of good faith.
+
+Storage layout
+--------------
+  <root>/registry.json                 agents known to the fabric
+  <root>/channels/<id>/manifest.json   topic, participants, barrier state
+  <root>/channels/<id>/log.jsonl       hash-chained public channel log
+  <root>/channels/<id>/private/<a>.jsonl   sealed divergent reasoning (owner-only)
+  <root>/channels/<id>/seals/<a>.json      committed digest of position
+  <root>/channels/<id>/ledger.jsonl    positions, concessions, drift events
+"""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(os.environ.get("AIM_ROOT", "/root/tmp/agent-im"))
+
+PHASES = [
+    "SEALED_DIVERGENT",
+    "COMMIT",
+    "SYNTHESIS",
+    "CROSS_EXAMINE",
+    "RESOLVE",
+    "CLOSED",
+]
+
+TRANSITIONS = {
+    "SEALED_DIVERGENT": ["COMMIT"],
+    "COMMIT": ["SYNTHESIS"],
+    "SYNTHESIS": ["CROSS_EXAMINE"],
+    "CROSS_EXAMINE": ["SYNTHESIS", "RESOLVE"],
+    "RESOLVE": ["CLOSED", "CROSS_EXAMINE"],
+    "CLOSED": [],
+}
+
+# What each phase lets you do.
+PHASE_RULES = {
+    "SEALED_DIVERGENT": dict(read_others=False, channel_say=False, private_say=True),
+    "COMMIT": dict(read_others=False, channel_say=False, private_say=True),
+    "SYNTHESIS": dict(read_others=False, channel_say=False, private_say=True),
+    "CROSS_EXAMINE": dict(read_others=True, channel_say=True, private_say=True),
+    "RESOLVE": dict(read_others=True, channel_say=False, private_say=False),
+    "CLOSED": dict(read_others=True, channel_say=False, private_say=False),
+}
+
+# Argument kinds accepted on the public channel during CROSS_EXAMINE.
+CROSS_EXAMINE_KINDS = {
+    "evidence",
+    "objection",
+    "rebuttal",
+    "question",
+    "concession",
+    "proposal",
+    "note",
+}
+
+MAX_MSGS_PER_ROUND = 2       # per participant, per cross-examination round
+ECHO_RATIO_LIMIT = 0.50      # share of 8-grams that may echo a peer verbatim
+
+
+# --------------------------------------------------------------------------
+# primitives
+# --------------------------------------------------------------------------
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def sha256_hex(data):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+def die(msg, code=2):
+    print(f"aim: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+class Lock:
+    """Advisory exclusive lock so concurrent agents can share one log safely."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fh = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.path, "a+")
+        fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        fcntl.flock(self.fh.fileno(), fcntl.LOCK_UN)
+        self.fh.close()
+
+
+def read_jsonl(path):
+    if not path.exists():
+        return []
+    out = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                out.append(json.loads(line))
+    return out
+
+
+def read_json(path, default=None):
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def append_chained(path, rec):
+    """Append a record whose `prev` field hashes the previous record.
+
+    Tamper-evidence, not tamper-proofing: anyone may rewrite the file, but
+    `aim verify` will then show the chain break.
+    """
+    recs = read_jsonl(path)
+    rec["prev"] = recs[-1]["hash"] if recs else "genesis"
+    rec["hash"] = sha256_hex(canonical({k: v for k, v in rec.items() if k != "hash"}))
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    return rec
+
+
+# --------------------------------------------------------------------------
+# state
+# --------------------------------------------------------------------------
+def registry_path():
+    return ROOT / "registry.json"
+
+
+def load_registry():
+    return read_json(registry_path(), {"agents": {}})
+
+
+def save_registry(reg):
+    write_json(registry_path(), reg)
+
+
+def agent_kind(agent_id):
+    reg = load_registry()
+    a = reg["agents"].get(agent_id)
+    return a["kind"] if a else None
+
+
+def channel_dir(ch):
+    return ROOT / "channels" / ch
+
+
+def load_manifest(ch):
+    m = read_json(channel_dir(ch) / "manifest.json")
+    if m is None:
+        die(f"no such channel: {ch}")
+    return m
+
+
+def save_manifest(ch, m):
+    write_json(channel_dir(ch) / "manifest.json", m)
+
+
+def resolve_actor(args, manifest=None):
+    """Validate --as and return (agent_id, kind)."""
+    who = args.__dict__.get("actor")
+    if not who:
+        die("--as <agent-id> is required")
+    kind = agent_kind(who)
+    if kind is None:
+        die(
+            f"unknown agent '{who}'. register first:\n"
+            f"  aim register --as {who} --kind claude|codex|human"
+        )
+    return who, kind
+
+
+def require_leader(who, kind, manifest):
+    if kind != "human" or who != manifest["leader"]:
+        die(
+            f"'{who}' may not advance the barrier. only the human team leader "
+            f"'{manifest['leader']}' controls phase transitions.\n"
+            f"(agents may ask with: aim request-advance ...)"
+        )
+
+
+def gate(manifest, who, action):
+    """The barrier itself. Refuse, and say why."""
+    phase = manifest["barrier"]["phase"]
+    rules = PHASE_RULES[phase]
+    if action == "read_others" and not rules["read_others"]:
+        die(
+            f"REFUSED: channel is in {phase}; cross-reading is closed until "
+            f"CROSS_EXAMINE.\nThis is the barrier doing its job: independent "
+            f"positions must be committed before exposure."
+        )
+    if action == "channel_say" and not rules["channel_say"]:
+        die(
+            f"REFUSED: channel is in {phase}; the public channel is closed.\n"
+            f"Write to your private log instead (kinds: note/claim/evidence/position)."
+        )
+    if action == "private_say" and not rules["private_say"]:
+        die(f"REFUSED: private log is closed in {phase}.")
+    return True
+
+
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
+def cmd_init(args):
+    ROOT.mkdir(parents=True, exist_ok=True)
+    (ROOT / "channels").mkdir(exist_ok=True)
+    if not registry_path().exists():
+        save_registry({"agents": {}})
+    print(f"aim root: {ROOT}")
+
+
+def cmd_register(args):
+    reg = load_registry()
+    reg["agents"][args.actor] = {
+        "id": args.actor,
+        "kind": args.kind,
+        "model": args.model or "",
+        "session": args.session or "",
+        "registered_at": now_iso(),
+    }
+    save_registry(reg)
+    print(f"registered {args.actor} ({args.kind})")
+
+
+def cmd_new_channel(args):
+    parts = [p.strip() for p in args.participants.split(",") if p.strip()]
+    d = channel_dir(args.id)
+    if (d / "manifest.json").exists():
+        die(f"channel already exists: {args.id}")
+    for p in parts:
+        if agent_kind(p) is None:
+            die(f"participant '{p}' is not registered")
+    if agent_kind(args.leader) != "human":
+        die(f"leader '{args.leader}' must be a registered human")
+    m = {
+        "id": args.id,
+        "topic": args.topic,
+        "created_at": now_iso(),
+        "leader": args.leader,
+        "synthesizer": args.synthesizer or "",
+        "participants": parts,
+        "barrier": {
+            "phase": "SEALED_DIVERGENT",
+            "round": 0,
+            "history": [
+                {"phase": "SEALED_DIVERGENT", "at": now_iso(), "by": args.leader,
+                 "note": "channel opened"}
+            ],
+        },
+    }
+    save_manifest(args.id, m)
+    (d / "private").mkdir(parents=True, exist_ok=True)
+    (d / "seals").mkdir(parents=True, exist_ok=True)
+    print(f"channel '{args.id}' open in SEALED_DIVERGENT")
+    print(f"  topic: {args.topic}")
+    print(f"  participants: {', '.join(parts)}")
+    print(f"  leader: {args.leader}   synthesizer: {args.synthesizer or '(unset)'}")
+
+
+def _evidence_list(args):
+    ev = []
+    for ref in args.evidence or []:
+        p = Path(ref)
+        item = {"ref": ref}
+        if p.exists() and p.is_file():
+            item["kind"] = "file"
+            item["sha256"] = sha256_hex(p.read_bytes())
+            item["bytes"] = p.stat().st_size
+        else:
+            item["kind"] = "reference"
+        ev.append(item)
+    return ev
+
+
+def _shingles(text, n=8):
+    words = re.findall(r"\w+", text.lower())
+    if len(words) < n:
+        return set()
+    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def echo_ratio(body, peers):
+    mine = _shingles(body)
+    if not mine:
+        return 0.0
+    theirs = set()
+    for t in peers:
+        theirs |= _shingles(t)
+    if not theirs:
+        return 0.0
+    return len(mine & theirs) / len(mine)
+
+
+def cmd_say(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    phase = m["barrier"]["phase"]
+    if who not in m["participants"] and who != m.get("synthesizer") and kind != "human":
+        die(f"'{who}' is not a participant in {args.channel}")
+    body = args.body_file and Path(args.body_file).read_text(encoding="utf-8") or (args.body or "")
+    if not body.strip():
+        die("empty message; use --body or --body-file")
+
+    kind_of = args.kind
+    if kind_of is None:
+        if phase == "CROSS_EXAMINE":
+            die(
+                "REFUSED: --kind is required in CROSS_EXAMINE.\n"
+                f"Label the move: one of {', '.join(sorted(CROSS_EXAMINE_KINDS))}.\n"
+                "An unlabelled message is how a rebuttal gets read as evidence and a "
+                "concession gets read as a proposal."
+            )
+        kind_of = "note"
+
+    if kind_of == "ruling":
+        require_leader(who, kind, m)
+    elif kind_of == "synthesis":
+        if who != m.get("synthesizer") and kind != "human":
+            die(f"only the appointed synthesizer ('{m.get('synthesizer') or 'unset'}') publishes synthesis")
+        if phase != "SYNTHESIS":
+            die("synthesis may only be published in SYNTHESIS phase")
+    else:
+        if phase == "CROSS_EXAMINE":
+            if kind_of not in CROSS_EXAMINE_KINDS:
+                die(f"kind '{kind_of}' not allowed in CROSS_EXAMINE; use one of {sorted(CROSS_EXAMINE_KINDS)}")
+        else:
+            if kind_of not in {"note", "claim", "evidence", "position", "question"}:
+                die(f"kind '{kind_of}' is only meaningful in CROSS_EXAMINE")
+
+    rec = {
+        "ts": now_iso(),
+        "from": who,
+        "kind": kind_of,
+        "subject": args.subject or "",
+        "body": body,
+        "evidence": _evidence_list(args),
+        "responds_to": args.responds_to or "",
+        "refs_seal": args.refs_seal or "",
+        "round": m["barrier"]["round"],
+        "phase": phase,
+    }
+
+    # ---- routing ---------------------------------------------------------
+    # A synthesis is a message *to the channel* even though the channel is in
+    # SYNTHESIS phase. Without this, the phase whose entire purpose is to
+    # publish a map would silently file it where nobody can read it.
+    to_public = kind_of == "synthesis" or phase not in ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
+
+    if not to_public:
+        gate(m, who, "private_say")
+        p = channel_dir(args.channel) / "private" / f"{who}.jsonl"
+        with Lock(channel_dir(args.channel) / ".lock"):
+            append_chained(p, rec)
+        print(f"[private/{who}] {kind_of} recorded ({len(body)} chars)")
+        return
+
+    # ---- public channel --------------------------------------------------
+    # Publishing a synthesis is the one public write permitted while the channel
+    # is still in SYNTHESIS. The role check above already established that only
+    # the appointed synthesizer can be here with this kind.
+    if kind_of != "synthesis":
+        gate(m, who, "channel_say")
+    log = channel_dir(args.channel) / "log.jsonl"
+
+    if phase == "CROSS_EXAMINE":
+        prior_log = read_jsonl(log)
+        known = {r.get("id") for r in prior_log}
+        if rec["responds_to"]:
+            if rec["responds_to"] not in known:
+                die(f"REFUSED: --responds-to '{rec['responds_to']}' is not a message in this channel")
+        elif known:
+            die(
+                "REFUSED: every CROSS_EXAMINE message must set --responds-to <msg-id>.\n"
+                "No free-floating broadcasts: you answer something specific, or you are silent.\n"
+                "(An opening message is the one exception, and only into an empty channel.)"
+            )
+
+        # Quota: your own top-level messages in this round. Direct replies to a
+        # question that named you are exempt — otherwise a question could never
+        # be answered. Everything else waits for the next round.
+        def is_answer_to_me(r):
+            tgt = next((q for q in prior_log if q.get("id") == r.get("responds_to")), None)
+            return bool(tgt and tgt.get("kind") == "question"
+                        and who in (tgt.get("subject") or "") + (tgt.get("body") or ""))
+
+        prior = [r for r in prior_log
+                 if r.get("from") == who and r.get("round") == m["barrier"]["round"]
+                 and r.get("kind") in CROSS_EXAMINE_KINDS
+                 and not is_answer_to_me(r)]
+        if prior and len(prior) >= MAX_MSGS_PER_ROUND:
+            die(
+                f"REFUSED: you have already used your {MAX_MSGS_PER_ROUND} messages this round "
+                f"(round {m['barrier']['round']}).\nTurn-taking is part of the barrier; "
+                f"wait for the leader to open round {m['barrier']['round'] + 1}."
+            )
+
+        peers = [r["body"] for r in read_jsonl(log) if r.get("from") != who]
+        ratio = echo_ratio(body, peers)
+        if ratio > ECHO_RATIO_LIMIT and not args.echo_ok:
+            die(
+                f"REFUSED: {ratio:.0%} of this message restates a peer verbatim "
+                f"(limit {ECHO_RATIO_LIMIT:.0%}).\n"
+                f"Restating a peer's framing is how a channel drifts to one position "
+                f"without evidence. Paraphrase in your own terms, add evidence, "
+                f"or pass --echo-ok with --echo-reason to record why quoting is necessary."
+            )
+        if args.echo_ok and not args.echo_reason:
+            die("--echo-ok requires --echo-reason (it is logged)")
+
+    with Lock(channel_dir(args.channel) / ".lock"):
+        seq = len(read_jsonl(log)) + 1
+        rec["id"] = f"m{seq:04d}"
+        rec["echo_ratio"] = round(echo_ratio(body, [r["body"] for r in read_jsonl(log)
+                                                    if r.get("from") != who]), 3)
+        if args.echo_ok:
+            rec["echo_override_reason"] = args.echo_reason
+        append_chained(log, rec)
+        if kind_of == "concession":
+            with Lock(channel_dir(args.channel) / ".ledger.lock"):
+                append_chained(channel_dir(args.channel) / "ledger.jsonl", {
+                    "ts": rec["ts"], "event": "concession", "agent": who,
+                    "target": rec["responds_to"], "refs_seal": rec["refs_seal"],
+                    "body": body,
+                })
+    print(f"[{args.channel}] {rec['id']} {who} -> {kind_of}")
+
+
+def cmd_seal(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if m["barrier"]["phase"] not in ("SEALED_DIVERGENT", "COMMIT"):
+        die(f"sealing is closed in {m['barrier']['phase']}")
+    if who not in m["participants"]:
+        die(f"'{who}' is not a participant")
+    text = args.body_file and Path(args.body_file).read_text(encoding="utf-8") or (args.summary or "")
+    if not text.strip():
+        die("need --summary or --body-file")
+    private = channel_dir(args.channel) / "private" / f"{who}.jsonl"
+    recs = read_jsonl(private)
+    seal = {
+        "ts": now_iso(),
+        "agent": who,
+        "kind": kind,
+        "model": load_registry()["agents"][who].get("model", ""),
+        "summary": text,
+        "claims": json.loads(Path(args.claims).read_text()) if args.claims else [],
+        # Hash of the frozen PREFIX, record by record. Appending after sealing is
+        # allowed and visible; editing what was sealed is not.
+        "private_log_hashes": [r.get("hash", "") for r in recs],
+        "private_log_len": len(recs),
+    }
+    seal["digest"] = sha256_hex(canonical({k: v for k, v in seal.items() if k not in ("digest",)}))
+    write_json(channel_dir(args.channel) / "seals" / f"{who}.json", seal)
+    with Lock(channel_dir(args.channel) / ".ledger.lock"):
+        append_chained(channel_dir(args.channel) / "ledger.jsonl", {
+            "ts": seal["ts"], "event": "seal", "agent": who,
+            "digest": seal["digest"], "claims": len(seal["claims"]),
+        })
+    print(f"sealed {who}: {seal['digest'][:16]}…  ({len(seal['claims'])} claims)")
+
+
+def cmd_inbox(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    out = []
+    can_read_others = PHASE_RULES[m["barrier"]["phase"]]["read_others"]
+    for r in read_jsonl(channel_dir(args.channel) / "log.jsonl"):
+        if r.get("from") == who or can_read_others:
+            out.append(r)
+    my_private = read_jsonl(channel_dir(args.channel) / "private" / f"{who}.jsonl")
+    if args.json:
+        print(json.dumps({"public": out, "private": my_private}, indent=2, ensure_ascii=False))
+        return
+    if not args.no_barrier_warning and not can_read_others:
+        print(f"# barrier: {m['barrier']['phase']} — you see your own messages only\n")
+    for r in out:
+        if args.since and r.get("id", "") <= args.since:
+            continue
+        print(f"--- {r.get('id', '(private)')} [{r['kind']}] {r['from']} @ {r['ts']}")
+        if r.get("subject"):
+            print(f"    subject: {r['subject']}")
+        print("    " + r["body"].replace("\n", "\n    "))
+        if r.get("evidence"):
+            for e in r["evidence"]:
+                print(f"    evidence: {e.get('ref')} {e.get('sha256', '')[:12]}")
+        print()
+    if my_private and args.show_private:
+        print("# --- your private log ---")
+        for r in my_private:
+            print(f"--- [private/{r['kind']}] {r['ts']}")
+            print("    " + r["body"].replace("\n", "\n    "))
+            print()
+
+
+def cmd_wait(args):
+    """Block until the channel has something new for you. Cheap polling."""
+    who, kind = resolve_actor(args)
+    deadline = time.time() + args.timeout
+    log = channel_dir(args.channel) / "log.jsonl"
+    seen = len(read_jsonl(log))
+    while time.time() < deadline:
+        recs = read_jsonl(log)
+        if len(recs) > seen:
+            new = recs[seen:]
+            for r in new:
+                if r.get("from") != who or args.include_own:
+                    print(json.dumps(r, ensure_ascii=False))
+            return
+        time.sleep(args.interval)
+    print(f"aim: timeout after {args.timeout}s with no new channel traffic", file=sys.stderr)
+    sys.exit(3)
+
+
+def cmd_advance(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    require_leader(who, kind, m)
+    cur = m["barrier"]["phase"]
+    to = args.to
+    if to is None:
+        nxt = TRANSITIONS[cur]
+        if not nxt:
+            die(f"{cur} is terminal")
+        to = nxt[0]
+    if to not in PHASES:
+        die(f"unknown phase '{to}'")
+    if to not in TRANSITIONS[cur] and not args.force:
+        die(f"illegal transition {cur} -> {to} (allowed: {TRANSITIONS[cur]}); --force to override")
+
+    if to == "SYNTHESIS":
+        missing = [p for p in m["participants"]
+                   if not (channel_dir(args.channel) / "seals" / f"{p}.json").exists()]
+        if missing and not args.force:
+            die(
+                "REFUSED: cannot enter SYNTHESIS before every participant has sealed.\n"
+                f"missing: {', '.join(missing)}\n"
+                "Sealing first is the whole point: a position committed before exposure "
+                "cannot be quietly retrofitted afterwards."
+            )
+    if to == "SYNTHESIS" and not m.get("synthesizer") and not args.synthesizer:
+        if not args.force:
+            die("REFUSED: SYNTHESIS needs a synthesizer (--synthesizer <agent>) — "
+                "someone who did not argue either side")
+    if args.synthesizer:
+        if args.synthesizer in m["participants"]:
+            die(
+                f"REFUSED: '{args.synthesizer}' is a participant in this channel.\n"
+                "The synthesizer's whole value is that they did not argue either side. "
+                "An advocate summarizing the disagreement is the first speaker wearing "
+                "a lab coat."
+            )
+        if agent_kind(args.synthesizer) is None:
+            die(f"'{args.synthesizer}' is not a registered agent")
+        m["synthesizer"] = args.synthesizer
+    if to == "CROSS_EXAMINE":
+        m["barrier"]["round"] += 1
+
+    m["barrier"]["phase"] = to
+    m["barrier"]["history"].append({
+        "phase": to, "at": now_iso(), "by": who,
+        "round": m["barrier"]["round"], "note": args.note or "",
+        "forced": bool(args.force),
+    })
+    save_manifest(args.channel, m)
+    with Lock(channel_dir(args.channel) / ".ledger.lock"):
+        append_chained(channel_dir(args.channel) / "ledger.jsonl", {
+            "ts": now_iso(), "event": "phase", "agent": who,
+            "from_phase": cur, "to_phase": to, "round": m["barrier"]["round"],
+            "forced": bool(args.force),
+        })
+    print(f"{args.channel}: {cur} -> {to} (round {m['barrier']['round']}, by {who})")
+
+
+def cmd_request_advance(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in m["participants"]:
+        die(f"'{who}' is not a participant")
+    log = channel_dir(args.channel) / "log.jsonl"
+    with Lock(channel_dir(args.channel) / ".lock"):
+        seq = len(read_jsonl(log)) + 1
+        append_chained(log, {
+            "ts": now_iso(), "id": f"m{seq:04d}", "from": who, "kind": "request",
+            "subject": f"request: {m['barrier']['phase']} -> {args.to}",
+            "body": args.reason, "evidence": [], "responds_to": "",
+            "round": m["barrier"]["round"], "phase": m["barrier"]["phase"],
+        })
+    print(f"request recorded: {m['barrier']['phase']} -> {args.to} (awaiting {m['leader']})")
+
+
+def cmd_synthesis_input(args):
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who != m.get("synthesizer") and kind != "human":
+        die(f"REFUSED: only the synthesizer ('{m.get('synthesizer') or 'unset'}') may read mixed inputs.\n"
+            "A participant reading the other side's reasoning before committing their own "
+            "is precisely the contamination the barrier exists to prevent.")
+    if m["barrier"]["phase"] != "SYNTHESIS":
+        die(f"REFUSED: synthesis input is only available in SYNTHESIS (now {m['barrier']['phase']})")
+    bundle = {"channel": args.channel, "topic": m["topic"], "participants": []}
+    for p in m["participants"]:
+        s = read_json(channel_dir(args.channel) / "seals" / f"{p}.json", {}) or {}
+        bundle["participants"].append({
+            "agent": p,
+            "seal": s,
+            "private_log": read_jsonl(channel_dir(args.channel) / "private" / f"{p}.jsonl"),
+        })
+    text = json.dumps(bundle, indent=2, ensure_ascii=False)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out} ({len(text)} bytes)")
+    else:
+        print(text)
+
+
+def cmd_reveal(args):
+    """Voluntarily disclose the reasoning behind one sealed claim.
+
+    Full private logs stay private. You disclose what you choose, when you
+    choose, and the disclosure is dated against the seal digest it came from.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if m["barrier"]["phase"] not in ("CROSS_EXAMINE", "RESOLVE"):
+        die(f"REFUSED: reveal is only open from CROSS_EXAMINE on (now {m['barrier']['phase']})")
+    seal = read_json(channel_dir(args.channel) / "seals" / f"{who}.json")
+    if seal is None:
+        die("you have no seal in this channel")
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
+    if not body.strip():
+        die("need --body or --body-file")
+    log = channel_dir(args.channel) / "log.jsonl"
+    with Lock(channel_dir(args.channel) / ".lock"):
+        seq = len(read_jsonl(log)) + 1
+        append_chained(log, {
+            "ts": now_iso(), "id": f"m{seq:04d}", "from": who, "kind": "disclosure",
+            "subject": f"reveal: {args.claim_id}", "body": body, "evidence": [],
+            "responds_to": "", "refs_seal": seal["digest"], "claim_id": args.claim_id,
+            "round": m["barrier"]["round"], "phase": m["barrier"]["phase"],
+        })
+    print(f"revealed {args.claim_id} against seal {seal['digest'][:16]}…")
+
+
+def cmd_push(args):
+    """Drop a message in a peer's outbox. Transport-agnostic delivery.
+
+    This is deliberately *not* the channel. The channel is the record; the
+    outbox is the doorbell. A doorbell can be rung by any means available
+    (shared file, another agent's hook, a human pasting it) without changing
+    what was actually said and when.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel) if args.channel else None
+    if args.channel and who not in m["participants"] and kind != "human":
+        die(f"'{who}' is not a participant in {args.channel}")
+    if args.to not in load_registry()["agents"]:
+        die(f"'{args.to}' is not a registered agent")
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
+    if not body.strip():
+        die("need --body or --body-file")
+    d = ROOT / "outbox" / args.to
+    d.mkdir(parents=True, exist_ok=True)
+    ts = now_iso()
+    stem = f"{ts.replace(':', '').replace('-', '')}-{who}"
+    rec = {
+        "ts": ts, "from": who, "to": args.to, "channel": args.channel or "",
+        "subject": args.subject or "", "body": body, "delivered_via": args.via or "",
+    }
+    write_json(d / f"{stem}.json", rec)
+    (d / f"{stem}.md").write_text(
+        f"# message from {who} -> {args.to}\n"
+        f"channel: {args.channel or '(none)'}\nsent: {ts}\nsubject: {args.subject or ''}\n\n"
+        f"{body}\n\n---\n"
+        f"Reply through the channel, not through this file:\n"
+        f"  aim inbox --as {args.to} --channel {args.channel or '<channel>'}\n"
+        f"  aim say   --as {args.to} --channel {args.channel or '<channel>'} ...\n",
+        encoding="utf-8")
+    print(f"outbox: {d}/{stem}.md  ({len(body)} chars)")
+
+
+def cmd_pull(args):
+    """Read everything in your outbox, newest last, and mark it claimed."""
+    who, kind = resolve_actor(args)
+    d = ROOT / "outbox" / who
+    items = sorted(d.glob("*.json")) if d.exists() else []
+    if not items:
+        print(f"aim: outbox empty for '{who}'")
+        return
+    unread = []
+    for p in items:
+        rec = read_json(p)
+        if not rec.get("claimed_at"):
+            unread.append((p, rec))
+    if args.unread_only and not unread:
+        print(f"aim: nothing unread for '{who}' ({len(items)} claimed)")
+        return
+    show = unread if args.unread_only else [(p, read_json(p)) for p in items]
+    for p, rec in show:
+        print(f"=== from {rec['from']} @ {rec['ts']}  channel={rec['channel'] or '-'}")
+        if rec.get("subject"):
+            print(f"    subject: {rec['subject']}")
+        print("    " + rec["body"].replace("\n", "\n    "))
+        print()
+        if args.claim and not rec.get("claimed_at"):
+            rec["claimed_at"] = now_iso()
+            write_json(p, rec)
+    if args.claim and unread:
+        print(f"claimed {len(unread)} message(s)")
+
+
+def cmd_nudge(args):
+    """Print the shortest thing you can hand a peer session to get it in."""
+    m = load_manifest(args.channel)
+    print(f"""A file-first agent IM is running in this workspace. `aim` is on PATH.
+
+  cd /root/tmp/agent-im
+  cat AGENTS.md            # the rule that matters, 40 lines
+  aim status  --channel {args.channel}
+  aim pull    --as {args.peer} --claim     # read what was sent to you
+
+You are '{args.peer}' in channel '{args.channel}', currently
+{m['barrier']['phase']}. Before you read anyone else's reasoning, write down
+your own:
+
+  aim seal --as {args.peer} --channel {args.channel} --summary "<your position>" --claims <file.json>
+
+A `claims` file is a JSON list of {{id, claim, confidence, kill_if}} — `kill_if`
+is the observation that would make you drop the claim. Then read
+channels/{args.channel}/seals/ and argue.
+
+Reply through the channel, not through whatever delivered this message.
+""")
+
+
+def _tokens(text):
+    stop = {
+        "the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "that", "this",
+        "for", "on", "as", "at", "be", "by", "with", "from", "are", "was", "were",
+        "not", "but", "if", "then", "than", "so", "we", "you", "i", "they", "it's",
+        "can", "cannot", "will", "would", "could", "should", "do", "does", "did",
+        "have", "has", "had", "what", "which", "who", "when", "where", "how", "why",
+        "one", "two", "there", "their", "its", "my", "our", "your", "about", "into",
+        "more", "most", "less", "least", "only", "also", "just", "some", "any",
+        "all", "no", "yes", "up", "out", "over", "under", "again", "very", "own",
+        "same", "other", "such", "nor", "too", "each", "both", "few", "many", "much",
+    }
+    return [w for w in re.findall(r"[a-z][a-z'\-]+", text.lower()) if w not in stop and len(w) > 2]
+
+
+def _tfidf_cosine(texts):
+    """Cosine similarity of tf-idf vectors. Pure python, no deps."""
+    import math
+    from collections import Counter
+    docs = [Counter(_tokens(t)) for t in texts]
+    df = Counter()
+    for d in docs:
+        for w in d:
+            df[w] += 1
+    n = len(docs)
+    vecs = []
+    for d in docs:
+        vec = {w: c * math.log((1 + n) / (1 + df[w])) for w, c in d.items()}
+        norm = math.sqrt(sum(v * v for v in vec.values())) or 1.0
+        vecs.append({w: v / norm for w, v in vec.items()})
+    return vecs
+
+
+def _cos(a, b):
+    return sum(v * b.get(w, 0.0) for w, v in a.items())
+
+
+def _containment(a, b, n=8):
+    """What fraction of a's n-grams also appear in b."""
+    sa = _shingles(a, n)
+    if not sa:
+        return 0.0
+    return len(sa & _shingles(b, n)) / len(sa)
+
+
+def _kill_overlap(kill_if, claim_text):
+    """Heuristic: how much of a kill_if condition is addressed by a claim.
+
+    This is lexical and it is weak. It cannot tell whether the claim actually
+    satisfies the condition — only whether the claim is even *about* the same
+    things. Weak signals reported as weak signals.
+    """
+    kt = set(_tokens(kill_if))
+    if not kt:
+        return 0.0
+    return len(kt & set(_tokens(claim_text))) / len(kt)
+
+
+def cmd_tension(args):
+    """Measure how far apart two sealed positions actually are.
+
+    Computed from the sealed material before anyone reads anyone. Visible to the
+    leader and the synthesizer only — a participant seeing this report before
+    CROSS_EXAMINE would be reading the other side through a summary, which is
+    the thing the barrier exists to prevent.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in (m["leader"], m.get("synthesizer")) and kind != "human":
+        die(
+            f"REFUSED: the tension report is visible to the leader ('{m['leader']}') and "
+            f"the synthesizer only.\nIt is a summary of the other side's reasoning. "
+            f"Reading it before CROSS_EXAMINE is exposure by another name."
+        )
+    parts = list(args.participants.split(",")) if args.participants else m["participants"]
+    if len(parts) != 2:
+        die("tension compares exactly two participants; pass --participants a,b")
+    seals = {}
+    for p in parts:
+        s = read_json(channel_dir(args.channel) / "seals" / f"{p}.json")
+        if s is None:
+            die(f"REFUSED: '{p}' has not sealed. There is nothing to compare yet.")
+        seals[p] = s
+    a, b = parts
+    la = "\n".join(r["body"] for r in read_jsonl(channel_dir(args.channel) / "private" / f"{a}.jsonl"))
+    lb = "\n".join(r["body"] for r in read_jsonl(channel_dir(args.channel) / "private" / f"{b}.jsonl"))
+    ta = la + "\n" + seals[a]["summary"]
+    tb = lb + "\n" + seals[b]["summary"]
+
+    va, vb = _tfidf_cosine([ta, tb])
+    rep = {
+        "channel": args.channel,
+        "topic": m["topic"],
+        "compared": [a, b],
+        "lexical_similarity": round(_cos(va, vb), 3),
+        "verbatim_containment": {
+            f"{a}->{b}": round(_containment(ta, tb), 3),
+            f"{b}->{a}": round(_containment(tb, ta), 3),
+        },
+        "claim_analysis": [],
+        "caveat": (
+            "Lexical only. It can see shared words and shared sentences. It cannot "
+            "see shared framing expressed in different words, which is the failure "
+            "mode that matters. A high score is weak evidence of independence; a "
+            "low score is strong evidence of contact."
+        ),
+    }
+
+    ca, cb = seals[a].get("claims", []), seals[b].get("claims", [])
+
+    def score_against(claim, others):
+        """Score one claim against another set, symmetrically.
+
+        Both directions get the same two measurements. An asymmetric loop here
+        would make whichever agent is listed first the reference frame inside
+        the very tool built to stop the first speaker setting the frame.
+        (Found by claude-session2 reading this file while unsealed — claim C6.)
+        """
+        best_dup = max(((_kill_overlap(claim["claim"], o["claim"]), o["id"]) for o in others),
+                       default=(0.0, ""))
+        best_kill = max(((_kill_overlap(claim.get("kill_if", ""), o["claim"]), o["id"]) for o in others),
+                        default=(0.0, ""))
+        return best_dup, best_kill
+
+    for side, others in ((a, cb), (b, ca)):
+        for c in (ca if side == a else cb):
+            best_dup, best_kill = score_against(c, others)
+            rep["claim_analysis"].append({
+                "agent": side, "id": c["id"], "claim": c["claim"][:80],
+                "closest_counterpart": best_dup[1], "counterpart_overlap": round(best_dup[0], 2),
+                "kill_if_addressed_by": best_kill[1], "kill_if_addressed": round(best_kill[0], 2),
+                "confidence": c.get("confidence"),
+            })
+
+    # Headline: how much of each side's sealed position is even about the same
+    # things as the other's. Very high coverage + low lexical distance = the two
+    # agents answered the same question the same way, which is the outcome the
+    # barrier was supposed to make less likely, not more.
+    overlaps = [r["counterpart_overlap"] for r in rep["claim_analysis"]]
+    rep["mean_claim_overlap"] = round(sum(overlaps) / len(overlaps), 2) if overlaps else 0.0
+    sim = rep["lexical_similarity"]
+    rep["reading"] = (
+        "positions look genuinely different" if sim < 0.25 else
+        "positions share substantial vocabulary — check whether they are answering the same question"
+        if sim < 0.5 else
+        "positions are lexically close; independent convergence or one position elaborated from the other"
+    )
+
+    if args.json:
+        print(json.dumps(rep, indent=2, ensure_ascii=False))
+        return
+    print(f"tension report  {args.channel}   ({a} vs {b})")
+    print(f"  lexical similarity     {sim}   (0 = no shared vocabulary, 1 = identical)")
+    for k, v in rep["verbatim_containment"].items():
+        print(f"  8-gram containment     {k}: {v}")
+    print(f"  mean claim overlap     {rep['mean_claim_overlap']}")
+    print()
+    print("  claims:")
+    for r in rep["claim_analysis"]:
+        kill = f"  kill_if addressed {r['kill_if_addressed']:.0%} by {r['kill_if_addressed_by']}" \
+            if r.get("kill_if_addressed_by") else ""
+        print(f"    {r['agent'][:12]:<12} {r['id']:<4} overlap {r['counterpart_overlap']:.0%} "
+              f"with {r['closest_counterpart'] or '-':<4} {r['claim'][:52]}{kill}")
+    print()
+    print(f"  reading: {rep['reading']}")
+    print(f"  caveat:  {rep['caveat']}")
+
+
+def cmd_status(args):
+    m = load_manifest(args.channel)
+    b = m["barrier"]
+    log = read_jsonl(channel_dir(args.channel) / "log.jsonl")
+    print(f"channel   {m['id']}")
+    print(f"topic     {m['topic']}")
+    print(f"phase     {b['phase']}   round {b['round']}")
+    print(f"leader    {m['leader']}   synthesizer {m.get('synthesizer') or '(unset)'}")
+    print(f"rules     {PHASE_RULES[b['phase']]}")
+    print("participants:")
+    for p in m["participants"]:
+        seal = read_json(channel_dir(args.channel) / "seals" / f"{p}.json")
+        priv = read_jsonl(channel_dir(args.channel) / "private" / f"{p}.jsonl")
+        pub = [r for r in log if r.get("from") == p]
+        mark = f"sealed {seal['digest'][:12]}…" if seal else "unsealed"
+        print(f"  {p:<16} private={len(priv):<4} public={len(pub):<4} {mark}")
+    print(f"history   " + " -> ".join(h["phase"] for h in b["history"]))
+    print(f"log       {len(log)} public messages")
+
+
+def cmd_verify(args):
+    ok = True
+    for rel in ("log.jsonl", "ledger.jsonl"):
+        p = channel_dir(args.channel) / rel
+        prev = "genesis"
+        for i, r in enumerate(read_jsonl(p), 1):
+            h = r.get("hash")
+            body = {k: v for k, v in r.items() if k != "hash"}
+            if sha256_hex(canonical(body)) != h:
+                print(f"TAMPER {rel}:{i} content does not match its hash")
+                ok = False
+            if r.get("prev") != prev:
+                print(f"TAMPER {rel}:{i} broken chain (prev={r.get('prev', '')[:12]}… expected {prev[:12]}…)")
+                ok = False
+            prev = h
+    for p in sorted((channel_dir(args.channel) / "seals").glob("*.json")):
+        s = read_json(p)
+        d = sha256_hex(canonical({k: v for k, v in s.items() if k != "digest"}))
+        if d != s["digest"]:
+            print(f"TAMPER seal {p.name}: digest mismatch")
+            ok = False
+        # The seal covers the private log as a frozen PREFIX: the record hashes
+        # that existed at sealing time, in order. Appending after sealing is
+        # legitimate — you keep reasoning — and is reported as a note, not a
+        # failure. Editing or reordering what was already sealed is not.
+        pl = channel_dir(args.channel) / "private" / f"{s['agent']}.jsonl"
+        expected = s.get("private_log_hashes") or []
+        if pl.exists():
+            # The log's own chain first: a record whose body was edited without
+            # its hash being recomputed is caught here, independently of the seal.
+            prev = "genesis"
+            for i, r in enumerate(read_jsonl(pl), 1):
+                if sha256_hex(canonical({k: v for k, v in r.items() if k != "hash"})) != r.get("hash"):
+                    print(f"TAMPER private/{s['agent']}.jsonl:{i} content does not match its hash")
+                    ok = False
+                if r.get("prev") != prev:
+                    print(f"TAMPER private/{s['agent']}.jsonl:{i} broken chain")
+                    ok = False
+                prev = r.get("hash")
+            # Then the sealed prefix: appending after sealing is legitimate — you
+            # keep reasoning — and is a note, not a failure. Editing, removing or
+            # reordering what was already sealed is not.
+            actual = [r.get("hash", "") for r in read_jsonl(pl)]
+            if expected and actual[:len(expected)] != expected:
+                print(f"TAMPER private log {s['agent']}: a record sealed at {s['ts']} "
+                      f"was removed or reordered")
+                ok = False
+            elif expected and len(actual) > len(expected):
+                print(f"note   private log {s['agent']}: {len(actual) - len(expected)} record(s) "
+                      f"appended after sealing (allowed; the sealed prefix is intact)")
+    print("chain OK" if ok else "chain BROKEN")
+    sys.exit(0 if ok else 1)
+
+
+
+# --------------------------------------------------------------------------
+def main():
+    ap = argparse.ArgumentParser(prog="aim", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, **kw):
+        p = sub.add_parser(name, **kw)
+        p.set_defaults(func=fn)
+        return p
+
+    add("init", cmd_init)
+    p = add("register", cmd_register)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--kind", required=True, choices=["claude", "codex", "human", "other"])
+    p.add_argument("--model", default="")
+    p.add_argument("--session", default="")
+
+    p = add("new-channel", cmd_new_channel)
+    p.add_argument("--id", required=True)
+    p.add_argument("--topic", required=True)
+    p.add_argument("--participants", required=True, help="comma-separated agent ids")
+    p.add_argument("--leader", default="human")
+    p.add_argument("--synthesizer", default="")
+
+    p = add("say", cmd_say)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--kind")
+    p.add_argument("--subject", default="")
+    p.add_argument("--body", default="")
+    p.add_argument("--body-file")
+    p.add_argument("--evidence", action="append")
+    p.add_argument("--responds-to")
+    p.add_argument("--refs-seal")
+    p.add_argument("--echo-ok", action="store_true")
+    p.add_argument("--echo-reason", default="")
+
+    p = add("seal", cmd_seal)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--summary", default="")
+    p.add_argument("--body-file")
+    p.add_argument("--claims")
+
+    p = add("inbox", cmd_inbox)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--since")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--show-private", action="store_true")
+    p.add_argument("--no-barrier-warning", action="store_true")
+
+    p = add("wait", cmd_wait)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--timeout", type=float, default=300)
+    p.add_argument("--interval", type=float, default=1.0)
+    p.add_argument("--include-own", action="store_true")
+
+    p = add("advance", cmd_advance)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--to")
+    p.add_argument("--note", default="")
+    p.add_argument("--synthesizer")
+    p.add_argument("--force", action="store_true")
+
+    p = add("request-advance", cmd_request_advance)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--to", required=True)
+    p.add_argument("--reason", required=True)
+
+    p = add("synthesis-input", cmd_synthesis_input)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--out")
+
+    p = add("reveal", cmd_reveal)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--claim-id", required=True)
+    p.add_argument("--body", default="")
+    p.add_argument("--body-file")
+
+    p = add("push", cmd_push)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--to", required=True)
+    p.add_argument("--channel", default="")
+    p.add_argument("--subject", default="")
+    p.add_argument("--body", default="")
+    p.add_argument("--body-file")
+    p.add_argument("--via", default="", help="how you intend to deliver this (recorded for the ledger)")
+
+    p = add("pull", cmd_pull)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--claim", action="store_true", help="mark the messages as read")
+    p.add_argument("--unread-only", action="store_true")
+
+    p = add("nudge", cmd_nudge)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--peer", required=True)
+
+    p = add("tension", cmd_tension)
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--participants", default="", help="exactly two agent ids; default = channel participants")
+    p.add_argument("--json", action="store_true")
+
+    p = add("status", cmd_status)
+    p.add_argument("--channel", required=True)
+
+    p = add("verify", cmd_verify)
+    p.add_argument("--channel", required=True)
+
+    args = ap.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,18 @@
+{
+  "ts": "2026-09-21T07:45:17.285Z",
+  "agent": "claude-session2",
+  "kind": "claude",
+  "model": "Opus 5",
+  "summary": "scratch seal",
+  "claims": [
+    {
+      "id": "S1",
+      "claim": "scratch",
+      "confidence": 0.5,
+      "kill_if": "n/a"
+    }
+  ],
+  "private_log_sha256": "5f884245983d276ce292ec1e2e65c3528f83a03771347c760b41130abb7d859c",
+  "private_log_len": 1,
+  "digest": "72c1b37c4cfa8d0c8a9454374e5d52e5d08e2701d5ad0c7ecc8f2979871f1b37"
+}
