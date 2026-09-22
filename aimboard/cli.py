@@ -162,7 +162,7 @@ def port_holder(port):
     return None
 
 
-def take_port(host, port, root, verbose=False):
+def take_port(host, port, root, verbose=False, force=False):
     """Take the canonical port, replacing our own stale server if it holds it.
 
     The rule is asymmetric on purpose. A previous `aimboard serve` for this same
@@ -171,9 +171,11 @@ def take_port(host, port, root, verbose=False):
     down is how a project ends up with three boards on three ports and no idea
     which one answered.
 
-    A process that is not ours is not killed. Reporting who holds it and refusing
-    is the honest outcome; killing a stranger's process to take a port is not a
-    convenience this tool should have.
+    A process that is not ours is reported, not killed, unless the caller passes
+    `force=True` -- which `aimboard serve --force` does, because the leader's rule
+    is "if that port is occupied, investigate and kill it, rather than moving".
+    The investigation happens either way and is printed before anything is
+    signalled, so a forced takeover leaves a record of what it displaced.
     """
     holder = port_holder(port)
     if not holder:
@@ -189,12 +191,16 @@ def take_port(host, port, root, verbose=False):
     except OSError:
         cwd = ""
     ours = "aimboard" in cmd and (cwd == str(root) or str(root) in cmd)
-    if not ours and not getattr(take_port, "force", False):
+    if not ours and not force:
         raise SystemExit(
             f"aimboard: port {port} is held by pid {pid}: {cmd or '(no cmdline)'}\n"
             f"         that is not an `aimboard serve` for {root}, so this will not kill it.\n"
-            f"         Free the port, or run with AIM_PORT=<other> if you really mean to move."
+            f"         Kill pid {pid} yourself, or re-run with --force to have this do it\n"
+            f"         (the holder is always named first). AIM_PORT=<n> moves the board, and\n"
+            f"         moving it is a deliberate act, not a fallback."
         )
+    if not ours:
+        print(f"aimboard: --force: pid {pid} holds port {port} and is not ours: {cmd or '(no cmdline)'}")
     import signal
     try:
         os.kill(pid, signal.SIGTERM)
@@ -203,7 +209,14 @@ def take_port(host, port, root, verbose=False):
     for _ in range(40):
         time.sleep(0.1)
         if not port_holder(port):
-            print(f"aimboard: took port {port} from a stale `aimboard serve` (pid {pid})")
+            # Say which of the two things just happened. A forced takeover that
+            # printed the stale-server line would read, in a log, as if the port
+            # had been ours -- and the log is the only record that a stranger's
+            # process was killed.
+            if ours:
+                print(f"aimboard: took port {port} from a stale `aimboard serve` (pid {pid})")
+            else:
+                print(f"aimboard: --force: killed pid {pid}, which was not ours, and took port {port}")
             return holder
     os.kill(pid, signal.SIGKILL)
     time.sleep(0.3)
@@ -595,7 +608,7 @@ def cmd_serve(args):
     except OSError as exc:
         if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
             raise
-        take_port(args.host, args.port, root)
+        take_port(args.host, args.port, root, force=args.force)
         server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
     host, port = server.server_address[0], server.server_address[1]
     print(f"aimboard: serving {root} on http://{host}:{port}/  as {args.viewer or 'the channel leader'}"
@@ -662,6 +675,11 @@ def main(argv=None):
                         "write is a second client of the write discipline, and the leader should "
                         "have to say yes to that out loud.")
     v.add_argument("--verbose", action="store_true")
+    v.add_argument("--force", action="store_true",
+                   help="if the canonical port is held by a process that is not an aimboard "
+                        "serve for this checkout, name it and kill it instead of refusing. "
+                        "Default is to refuse: killing a stranger's process is not a "
+                        "convenience this tool should have by accident.")
     v.set_defaults(func=cmd_serve)
     args = parser.parse_args(argv)
     return args.func(args)

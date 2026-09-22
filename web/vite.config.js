@@ -112,6 +112,14 @@ export default defineConfig({
     },
   },
   server: {
+    // One port, and if it is taken this fails instead of moving to the next free
+    // one. Vite's default behaviour -- try a port, silently take port+1 when it is
+    // busy -- is a moving interface: the URL in a report, a probe script or the
+    // leader's browser tab quietly points at a different process. 8788 is declared
+    // for the dev server and is not the board (that is 8777, always); 8788 with
+    // `strictPort` means a busy port is an error the reader can act on.
+    port: 8788,
+    strictPort: true,
     proxy: {
       // `npm run dev` against a running `aimboard serve`, so the front-end can be
       // edited with hot reload without teaching it a second way to read the fabric.

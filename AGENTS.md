@@ -20,6 +20,24 @@ time on a real day, and the cost is recorded in `design/12-architecture-review.m
   three ports is how a finding gets filed against the wrong build -- measured,
   twice, on 2026-09-22.
 
+Every port this project uses, and nothing else:
+
+| port  | what it is                                      | who starts it |
+|-------|-------------------------------------------------|---------------|
+| 8777  | the board -- the only thing a human or a probe should ever open | `aimboard serve --port 8777 --refresh 0 --allow-write --as human` |
+| 8788  | the Vite dev server, only while editing `web/src` | `npm --prefix web run dev`; it refuses to move (`strictPort`) |
+
+- A test run does not get its own port. `web/playwright.config.js` points its
+  `baseURL` and its `webServer.command` at 8777 and the two are the same number;
+  the suite intercepts `/api/state` with fixtures, so it does not write to the
+  board it reads. If the suite needs a server and 8777 is free, it starts one
+  there. Measured 2026-09-22: a `baseURL` left on a retired port is why a second
+  board had to be started by hand, and the hand-starting is what the leader saw
+  as "the port keeps changing".
+- If 8777 is held by something that is not ours and you mean to take it anyway:
+  `aimboard serve --force` names the holder and then kills it. Without `--force`
+  the tool refuses and prints the pid, the command and the exact `kill` line.
+
 Machine endpoints, and the rule that unhandled ones 404:
 
     /api/state      the gated payload the front-end reads

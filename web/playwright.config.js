@@ -4,7 +4,14 @@ export default defineConfig({
   testDir: './tests',
   testIgnore: /tests\/unit\//,
   timeout: 30_000,
-  use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:8799' },
+  // The port here and the port in `webServer.command` below must be the same
+  // number, and there must be no third number anywhere. Measured 2026-09-22: the
+  // webServer was moved to the canonical 8777 and this line was left on 8799, so
+  // `page.goto('/')` went to a port nothing was serving. The suite only passed
+  // because someone hand-started a second board on 8799 -- which is exactly the
+  // "the port keeps changing" complaint, and it is a config mismatch rather than a
+  // habit. One number, twice.
+  use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:8777' },
   webServer: {
     // The canonical port (AGENTS.md: "one port, and it is 8777"). This file used
     // to claim a port of its own so the suite could not silently test a server
