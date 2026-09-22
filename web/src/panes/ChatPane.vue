@@ -29,6 +29,27 @@ const composerEl = ref(null)
 
 const threads = computed(() => {
   const byKey = new Map()
+  for (const channel of board.conversation.channels) {
+    byKey.set(`ch:${channel.id}`, {
+      key: `ch:${channel.id}`,
+      group: 'channel',
+      label: `#${channel.id}`,
+      gated: Boolean(channel.gated),
+      note: channel.rule || '',
+      target: { type: 'channel', id: channel.id },
+      msgs: [],
+    })
+  }
+  for (const room of board.conversation.rooms) {
+    byKey.set(`room:${room.channel}:${room.id}`, {
+      key: `room:${room.channel}:${room.id}`,
+      group: 'room',
+      label: `#${room.channel} / #${room.room}`,
+      note: 'a room inherits the parent channel gate; draft by default, publishing is deliberate',
+      target: { type: 'room', id: room.id, channel: room.channel },
+      msgs: [],
+    })
+  }
   for (const row of board.conversationRows) {
     const key = row.shape === 'channel'
       ? `ch:${row.channel}`
