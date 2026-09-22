@@ -173,12 +173,30 @@ check("the follow-up is addressed to the id the record allocated",
 
 print("== the claim control answers to the gate of the write it names ==")
 claim = region(script, "const claimable =", "\n\n")
+# This pair was written against the pane as it shipped with T-0176, where the
+# predicate was the literal `write.as === 'human'` and the argv builder was a
+# function called `claimCommand`. Both moved under T-0227, and the checks are
+# re-pointed at what the pane now does rather than at the spellings it used:
+#
+#   * the literal form asserts a fact about the payload (that the writer happens
+#     to be the leader) where the clause asks about the *action* -- a write may
+#     not assume a seat other than the writer's. The pane compares writer-kind
+#     to viewer-kind instead (`sameSeat`), which is the same gate stated over the
+#     thing it is a gate on.
+#   * the argv builder is `rowCommand`, because it is the row's *one* command:
+#     the control and the text a reader copies come from the same function, so a
+#     reader whose seat cannot run it is still owed the string.
+#
+# Measured before this edit: the checks were reading `claim` for `=== 'human'`
+# and an empty string for `function claimCommand(`, so both failed on a pane that
+# is correct, and the failure read as a pane defect rather than a drift.
 check("a claim is offered only to the seat the server writes as",
-      "=== 'human'" in claim and "!== 'human'" not in claim,
-      "the predicate does not name the writer's own kind: " + " ".join(claim.split())[:160])
+      "sameSeat()" in claim and "=== 'human'" not in claim,
+      "the predicate does not compare the writer's seat with the viewer's: "
+      + " ".join(claim.split())[:160])
 check("and only when the board can write at all",
       "board.canWrite" in claim and "board.writer" in claim, claim)
-claim_cmd = region(script, "function claimCommand(", "\n}\n")
+claim_cmd = region(script, "function rowCommand(", "\n}\n")
 check("the claim names the writer, the item's own channel and its id",
       "board.writer" in claim_cmd and "task.channel || task.context_id" in claim_cmd
       and "${task.id}" in claim_cmd, " ".join(claim_cmd.split())[:160])
