@@ -1104,25 +1104,28 @@ the task-actor rules genuinely stop a bystander from submitting another's card.
 Those are the load-bearing mechanisms and they work.
 
 **But a count is not a weight, and these 280 rows are not what I read them as.**
-Every sentence above this one counted refusals. Classifying them by *what they
-actually refused* — reading each row's own `reason` rather than its `class` —
-splits them very differently:
+Every sentence above this one counted refusals. Classifying them by *what each
+row says it refused* — its own `action` field plus its own `reason`, never the
+`class` — splits them very differently:
 
-| what was refused | rows | class the tool gave it |
+| what the row says was refused | rows | class the tool gave it |
 |---|---|---|
-| the task **draft** gate (a peer's card in a divergence phase) | **132** | all `barrier` |
+| the task **draft** gate (a peer's card in a divergence phase) | **128** | all `barrier` |
 | the task **state machine** (an illegal `TASK_FLOW` edge) | **93** | 91 `form`, 2 `unrecorded` |
-| a card id that does not exist | 21 | all `form` |
-| the owner rules on `task move` | 18 | 13 `barrier`, 5 `form` |
-| **the agent-to-agent barrier itself** (read or write across it) | **11** | 6 `form`, 5 `barrier` |
-| the phase machine (an illegal `TRANSITIONS` edge) | 4 | 2 `form`, 2 `barrier` |
-| membership | 1 | `form` |
+| a card id that does not exist | 20 | all `form` |
+| **the agent-to-agent barrier itself** (a read or write across it) | **11** | 6 `form`, 5 `barrier` |
+| `task new` (a bad value, a closed channel, a non-participant) | 11 | 5 `form`, 6 `barrier` |
+| the owner rule on `task move` (submit / approve) | 7 | all `barrier` |
+| the phase machine (`advance`: 3 "you are not the leader", 1 bad argument) | 4 | 2 `form`, 2 `barrier` |
+| publishing while the channel is closed | 2 | `barrier` |
+| the owner / draft rules on one card | 3 | 1 `form`, 2 `barrier` |
+| a terminal card is not a workspace | 1 | `form` |
 
 **So of the 152 rows classed `barrier`, five are the barrier the whole system
-exists for.** The other 147 are the draft gate (132) and the owner/phase rules
-(15) — real rules, and not one of them is about an agent seeing another agent's
-reasoning. The class token and the thing it names are 147 rows apart, which is a
-wider gap than §4.6's 36, in the same direction and for the same reason.
+exists for.** The other 147 are the draft gate (128), the owner and publish rules
+(16) and `advance` (2) — real rules, and not one of them is about an agent seeing
+another agent's reasoning. The class token and the thing it names are 147 rows
+apart, a wider gap than §4.6's 36, in the same direction and for the same cause.
 
 **And the deeper fact, which no count reaches:** `read_others` is `True` only in
 `CROSS_EXAMINE`, `RESOLVE` and `CLOSED`, and **no channel in this repo has ever
@@ -1130,6 +1133,25 @@ entered one of those phases.** Eight transitions across five channels in two day
 of real use, all of them into `SEALED_DIVERGENT` (5), `COMMIT` (2) or `SYNTHESIS`
 (1). Every barrier refusal in the table above was recorded with the barrier
 *closed*, refusing an act that would have crossed it early.
+
+That is the honest version of "the phase gate is real": **the lock is real, there
+are 280 recorded attempts to turn it, and the door has never been opened.** The
+mechanism this repo spent its effort on has never been exercised on the thing it
+was built for — agent-to-agent contact after a committed position — because the
+run never got past the phase where contact is what the fabric forbids. What the
+280 rows measure is the *pre-barrier* discipline, which is the half of the design
+`design/00` calls contact control. What they cannot measure is contamination
+control, which `design/00` says outright is "not enforceable, and arguably not
+even measurable", and which is the half nobody has a test for.
+
+*(The first version of this table was built by keyword-matching the reason text
+and had two errors: it counted 21 "card id does not exist" against a true 20 and
+20 owner/other rows against a true 7, because `illegal transition` is emitted by
+**two** verbs — `cmd_advance:1464` speaks in phase names, `cmd_task_move:2116`
+speaks in card ids — and a substring test cannot tell them apart. Counting by the
+ledger's own `action` field is what makes the split decidable. Every refusal die()
+carries `action`; the mapping from that field to a verb is the tool's, not a
+reader's judgement.)*
 
 That is the honest version of "the phase gate is real": **the lock is real, there
 are 280 recorded attempts to turn it, and the door has never been opened.** The
