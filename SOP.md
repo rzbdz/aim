@@ -1216,7 +1216,7 @@ a `file:line`.
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
 | 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
-| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563` the file holds 358 rows; 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree the totals have already grown to 363 rows / 292 refusals / 161 `barrier` | measured **[V]**, §4.6 |
+| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563`, in `channels/*` only, the five ledgers hold 358 rows and 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree those five files have grown to **372 rows / 293 refusals / 363 class-bearing / 162 `barrier`** | measured **[V]**, §4.6 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -1802,10 +1802,17 @@ from a working tree, so these are numbers anyone can re-derive:
 **These numbers move, and that is the shape of the finding.** Section 4.6 has now
 been measured several times, and only one of the printed triples is reproducible:
 a first draft read 352 / 276 / 343; the verifier re-counted 354 / 276 / 345; at
-`7def563` it is **358 / 280 / 349** in `channels/*` (363 / 280 / 354 including
-`.dbg`). The head sentence of Part V carried a *third* history — "an earlier pass
-printed 137 `barrier` and a later one 148" — and neither number exists at any
-commit of the store: the `barrier` count over all tracked ledgers runs
+`7def563` it is **358 / 280 / 349** in `channels/*` — and **363 / 280 / 349**
+over every tracked ledger, because `.dbg`'s five rows carry no `class` and
+therefore move the row count and nothing else. *(This sentence used to say
+"363 / 280 / 354 including `.dbg`", which is wrong in the one column where it
+could be checked: the class-bearing total is `refusals + non-refusal
+class-bearing`, and `.dbg` contributes to neither term. A caption that had just
+been corrected for leaving `.dbg` out of its glob then double-counted it in its
+arithmetic.)* The head sentence of Part V carried a *third* history — "an
+earlier pass printed 137 `barrier` and a later one 148" — and neither number
+exists at any commit of the store: the `barrier` count over all tracked ledgers
+runs
 **109** (`94a8e34`) → **109** (`9fc4d7d`) → **152** (`7def563`) → **155**
 (`d7130fc`). 137 and 148 were working-tree readings of an uncommitted store, so
 they are unrecoverable rather than merely stale — the same defect the paragraph
@@ -1833,12 +1840,41 @@ while the table they introduce is of the second.
 
 So `class` is not what makes a row a refusal, and a reader who counts either one
 for the other is off by a figure that looks like a measurement. Over the whole
-tree at `7def563`: `grep -c '"class": "barrier"'` returns **188**, and the
-refusals *of that class* number **152** — 36 rows apart. Count every class-bearing
-row as a refusal and the total is 349 against the true 280 — 69 rows apart. Both
-numbers are the kind that gets quoted without a second look. (The two gaps are
-themselves stable across all three measurements: 36 and 69, unchanged, while
-every total around them grew.)
+tree at `7def563`: `grep -c '"class": "barrier"'` over every *tracked* ledger
+returns **188**, and the refusals *of that class* number **152** — 36 rows apart.
+Count every class-bearing row as a refusal and the total is 349 against the true
+280 — 69 rows apart. Both numbers are the kind that gets quoted without a second
+look.
+
+**The first of those two gaps is stable and the second only looks it.** Re-derived
+at four revisions and in both denominators, so the reader can see which is which:
+
+| revision | refusals | class-bearing rows | gap A | `barrier` rows | `barrier` refusals | gap B |
+|---|---|---|---|---|---|---|
+| `94a8e34` | 229 | 265 | **36** | 145 | 109 | **36** |
+| `9fc4d7d` | 229 | 265 | **36** | 145 | 109 | **36** |
+| `7def563` | 280 | 349 | **69** | 188 | 152 | **36** |
+| `d7130fc` | 283 | 352 | **69** | 191 | 155 | **36** |
+| working tree, `channels/*` | 293 | 363 | **70** | 198 | 162 | **36** |
+
+**Gap B is a fact about the store and does not move: 36, at every revision.** It
+is `task_published_during_divergence` 35 + `channel_member_added` 1 — one row per
+publication, and those are the rows README §3 asks for. **Gap A moved, 36 → 69,
+in the commit that added the two channels that hold work**, and it is not the
+same quantity at all: it is gap B *plus* the 33 `push` rows that carry
+`class: "record"`, a token that is in no vocabulary. So the sentence this
+paragraph replaces — *"the two gaps are themselves stable across all three
+measurements: 36 and 69"* — was true of the three revisions it had seen and false
+as a rule: it compared a structural number with an arithmetic leftover, and the
+leftover is 36 + (number of push rows), which grows every time an agent sends
+mail. **That is this section's own subject one table further down**: a count that
+only rises is a ledger, a count that does not move is a structure, and the two
+were printed as a pair. (Re-derived here rather than re-read; the counts above are
+blob-for-blob from `git show <rev>:<path>`, over every *tracked* ledger, `.dbg`
+included — which is another unit this section had been quoting loosely. `grep -c`
+does not read `**` recursively, so a shell glob that misses `.dbg` reports 186 for
+the `barrier` rows at `7def563` and 196 at the working tree; the file counts above
+are the ones that include it. The `349` is correct at `7def563` in both.)
 
 **The 36 rows are not noise. They are the mechanism README §3 asks for.** The
 comment above the writer (`bin/aim:2373-2381`) says so outright:
