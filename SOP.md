@@ -222,6 +222,83 @@ The allocator is per-channel (`bin/aim:1832`); the merge is per-root
 (`aimboard/fabric.py:281`). Either half alone is defensible; together they are
 a data-loss shape, and nothing warns.
 
+**And it has already happened, on the live tree, more than twice over.** This is
+not a constructed risk. Measured right now: **six task ids are recorded in more
+than one channel** —
+
+    T-0156 .. T-0161   recorded in channels/hello AND channels/barrier-v0
+
+— and in every case the two channels are recording *different work under one id*:
+
+| id | `hello` says | `barrier-v0` says |
+|---|---|---|
+| T-0156 | *Add Help/Concepts page and remove raw phase enums from user-facing UI* (created 02:40:32Z, 8 events) | *Leader: approve the plan; advance hello past SEALED_DIVERGENT* (created 03:26:33Z, 1 event) |
+| T-0159 | *Make every summary signal and task-shaped identifier a deep link* | *(same leader title)* |
+
+The board folds to **one row each**, and the one that survives is `hello`'s —
+`list_channels` returns `sorted(...)` (`aimboard/fabric.py:117`) and the merge is
+a dict comprehension that overwrites (`:281`), so the channel that sorts *last*
+wins: `barrier-v0` < `hello`, so `hello` overwrites it. The `barrier-v0` copy is
+gone with nothing said, and the winner is decided by the alphabet rather than by
+recency or authority.
+
+**The record counts them; the board does not, and the two numbers are both
+published.** Measured at two viewers, so the discrepancy is not a gating
+artefact — it is the same 7 at both:
+
+| | raw `created` in the store | `/api/flow` `opened` | `board.tasks` created events | the 7 |
+|---|---|---|---|---|
+| `as=human` | 97 | 97 | 90 | 6 dual-channel ids + 1 retracted |
+| `as=claude-session1` | 97 | 70 | 63 | the same 6 + 1 |
+
+(`done` agrees exactly at both viewers — 65 and 59.) `flow_series` reads the raw
+event list and counts **both** copies of a dual-channel id; `fold_tasks` keys by
+id and keeps one. The seventh is `T-0001`: the store holds
+`created 02:16:37Z` then `retracted 02:28:03.908Z`, while the payload's `T-0001`
+row is the **plan seed of the same id** — a different title
+(`Freeze the PM contract…` vs `Fix Kanban filtering…`), `source: plan.json`,
+`provenance: seed only`, and `events: []`. So one id carries a retracted store
+event and a live plan seed, and the board shows the seed while `flow` counts the
+event. Neither number is wrong; they answer different questions about the same
+log, and nothing tells a reader which one they are looking at.
+
+**One id space for N projects means the second project's board is a partial view
+of the first's, and nothing says so.**
+
+**The leader's own blocker is that measurement, and it is filed eight times
+[V].** Eight `created` rows carry the exact title *"Leader: approve the plan;
+advance hello past SEALED_DIVERGENT"* — `T-0233`, `T-0234`, `T-0240` in `hello`
+(all 08:28:0x–08:28:23Z, three created inside 14 seconds) and `T-0156`,
+`T-0157`, `T-0158`, `T-0159`, `T-0161` in `barrier-v0`, whose `hello` copies are
+the entries in the table above. Measured on the rendered board, not the store:
+the three `hello` cards fold to `owner=human, status=review, visibility=draft` —
+**the leader owns the cards asking the leader to act.**
+
+**And a ninth copy arrives by the other id source, so the count depends on
+which surface you ask [V].** The board's 177 rendered tasks include **four**
+rows whose title asks the leader to act: the three `hello` cards above, plus
+`T-0004` — same title, `owner=human`, and `status=dropped`, `visibility=published`,
+`source: plan.json`, `provenance: seed only (not yet in the store)`,
+`events: []`. It is a *plan seed*, not a store event. So a reader counting the
+store finds eight and a reader counting the board finds nine — and the ninth is
+the **only one of the four rendered copies that looks already handled**, because
+`dropped` is terminal. Both id sources of the next paragraph meet in this one
+card.
+
+**And the same ask is also buried under an id `hello` has since closed as
+unrelated work [V].** `T-0156` in the rendered board is
+`status=done, owner=claude-session1, title="Add Help/Concepts page…"` — a
+finished card. Its `barrier-v0` twin, *"Leader: approve the plan…"*, is the one
+the fold discards. So `barrier-v0`'s ledger holds the leader's blocker with a
+`created` row and nothing after it, its `T-0157`/`T-0158`/`T-0159`/`T-0161` sit
+in `ready`, and **the browser will never show any of them**, because the board
+folds by id and `hello` won the id. The one project's view of the other
+project's blocker is: not present.
+
+*(Re-verified 2026-09-23 against the live tree and `127.0.0.1:8777/api/state?as=human`
+at HEAD `9d64d36`; an earlier draft of this paragraph said "four times" and
+counted the id ranges rather than the `created` rows.)*
+
 **And there is a second, root-wide source of ids the allocator does not merge
 with the first.** `_plan_id_floor` (`bin/aim:1788`) reads every `plan/*.json`
 under the root and floors the per-channel counter above it. That was added
@@ -229,7 +306,10 @@ because plan seeds once collided with store events, and it works — but it mean
 a root's id space is *two* sources constrained by *one* floor, and the seed
 files could collide with each other. `plan/plan.json` alone carries 155 seeds,
 which is why this root's `hello` allocator is at `T-0245` rather than `T-0091`.
-Constructible, not measured live; recorded here because it is the same seam.
+Measured separately on a throwaway root: `plan/a.json` and `plan/b.json` each
+seeding `T-0001`, then a real `aim task new` → `T-0002` (the floor works), and
+the board folds `{'T-0001': 'seed from plan A', 'T-0002': 'real work'}` —
+`plan B`'s description is gone with nothing said.
 
 `channel_kind` / `channel_lifecycle` (`aimboard/fabric.py:49,58`) compute
 scratch-vs-project and empty/dormant/active. **Nothing reads either.** `hello`
