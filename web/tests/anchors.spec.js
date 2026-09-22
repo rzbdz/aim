@@ -32,7 +32,10 @@ const STATE = {
   conversation: { channels: [], rooms: [], mail: [] },
   channels: [],
   unacked: [],
-  drift: [],
+  // The attention page's "Plan disagreements" tile is a link only when there is a
+  // disagreement to land on -- a zero signal is deliberately a plain tile (T-0180),
+  // so the self-link this file is about cannot be tested against an empty drift.
+  drift: [{ id: 'T-0001', field: 'status', plan: 'doing', store: 'review' }],
   withheld_tasks: 0,
   write: { enabled: false, as: '' },
 }
@@ -134,5 +137,108 @@ test.describe('a link that names a row lands on that row', () => {
     await expect(page).toHaveURL(/#\/help/)
     await expect(page.locator('#phase-cross_examine')).toBeVisible()
     expect(await page.evaluate(() => document.querySelector('.aim-main').scrollTop)).toBe(0)
+  })
+})
+
+/**
+ * T-0183: a tile that says needs-action has to move the reader, and a nav click
+ * has to put the reader at the top of the page they asked for.
+ *
+ * Two measured symptoms, one mechanism. The app's scroller is `.aim-main`, and
+ * nothing reset it: at 1280x800, `#/items` at 4787/4787 -> nav "Help & concepts"
+ * -> `#/help` at 3937/3937, the bottom of a 4688px glossary. And the attention
+ * page's own tiles link to fragments *of the page the reader is already on*, so
+ * `#/attention#drift` put the fragment in the address bar and moved nothing.
+ *
+ * Every assertion is against the app's scroller, never `window.scrollY`: the
+ * document is 0px tall here, so a window assertion passes on a page that did not
+ * move at all.
+ */
+test.describe('a link that is a way somewhere, on this page or another', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/state**', (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify(STATE),
+    }))
+    await page.route('**/api/digest**', (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ digest: STATE.digest }),
+    }))
+  })
+
+  test('a nav click opens the page it names at its top', async ({ page }) => {
+    // Parked deep, the way a reader parks: a real wheel over real content. The
+    // fixture's Help page is a 4688px wall, which is the page the defect was
+    // measured on -- `#/items` at 4787/4787 -> "Help & concepts" -> `#/help` at
+    // 3937/3937, the end of the glossary.
+    await page.goto('/#/help')
+    await expect(page.locator('#phase-cross_examine')).toBeVisible()
+    await page.mouse.move(600, 400)
+    await page.mouse.wheel(0, 1400)
+    await expect.poll(() => page.evaluate(() => document.querySelector('.aim-main').scrollTop))
+      .toBeGreaterThan(0)
+
+    await page.locator('.el-menu-item').filter({ hasText: 'Work items' }).click()
+    await expect(page.locator('.aim-page h2')).toHaveText('Work items')
+    // Not just "a number changed": the new page is at its top.
+    await expect.poll(() => page.evaluate(() => document.querySelector('.aim-main').scrollTop)).toBe(0)
+  })
+
+  test('a reader who is deep in a page and asks for that page still arrives at its top', async ({ page }) => {
+    // The direction that made this a defect rather than a rough edge: the reader
+    // clicks Help to *escape* a wall of numbers and lands at the end of the wall.
+    // Arriving here by fragment is how they get deep in the first place.
+    await page.goto('/#/help#phase-resolve')
+    await expect(page.locator('#phase-resolve')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.querySelector('.aim-main').scrollTop))
+      .toBeGreaterThan(0)
+
+    await page.locator('.el-menu-item').filter({ hasText: 'Attention' }).click()
+    await expect(page.locator('.aim-page h2')).toHaveText('Attention')
+    await expect.poll(() => page.evaluate(() => document.querySelector('.aim-main').scrollTop)).toBe(0)
+
+    await page.locator('.el-menu-item').filter({ hasText: 'Help & concepts' }).click()
+    await expect(page.locator('#phase-cross_examine')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.querySelector('.aim-main').scrollTop)).toBe(0)
+  })
+
+  test('a tile whose destination is on this page still moves the reader', async ({ page }) => {
+    // `#/attention#drift` is the strongest form of the defect: a *self*-link, on
+    // the pane that is already open, from the row of tiles that exists to tell
+    // the reader what to do. "Nothing happened" is the only reading available.
+    await page.goto('/#/attention')
+    await expect(page.locator('#drift')).toBeAttached()
+    const before = await page.evaluate(() => document.querySelector('.aim-main').scrollTop)
+
+    await page.locator('.aim-signal').filter({ hasText: 'Plan disagreements' }).click()
+    await expect(page).toHaveURL(/#\/attention#drift/)
+    const after = await page.evaluate(() => document.querySelector('.aim-main').scrollTop)
+    expect(after).toBeGreaterThan(before)
+
+    // In view, not merely scrolled: the target is within a viewport of the top.
+    const offset = await rowOffset(page, 'drift')
+    expect(offset).toBeGreaterThanOrEqual(0)
+    expect(offset).toBeLessThan(
+      await page.evaluate(() => document.querySelector('.aim-main').clientHeight))
+  })
+
+  test('a fragment link still lands when the reader is already below the target', async ({ page }) => {
+    // The measured trap: the same code path gave two results depending on whether
+    // the target was above or below the current position. `#/help#concept-drift`
+    // -> scrollTop 3289 with the target mid-viewport, `#/help#phase-commit` ->
+    // scrollTop 980 with the target at the top. So the direction is asserted, not
+    // just the movement.
+    await page.goto('/#/help#concept-drift')
+    await expect(page.locator('#concept-drift')).toBeVisible()
+    const low = await page.evaluate(() => document.querySelector('.aim-main').scrollTop)
+    expect(low).toBeGreaterThan(0)
+
+    // A phase row that sits above it: the reader must come back up to it.
+    await page.goto('/#/help#phase-commit')
+    await expect(page.locator('#phase-commit')).toBeVisible()
+    const high = await page.evaluate(() => document.querySelector('.aim-main').scrollTop)
+    expect(high).toBeLessThan(low)
+    const offset = await rowOffset(page, 'phase-commit')
+    expect(offset).toBeGreaterThanOrEqual(0)
+    expect(offset).toBeLessThan(
+      await page.evaluate(() => document.querySelector('.aim-main').clientHeight))
   })
 })
