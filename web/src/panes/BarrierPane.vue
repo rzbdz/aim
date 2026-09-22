@@ -21,33 +21,60 @@ const channels = computed(() => board.doc?.channels || [])
  * and the one they will believe is the wrong one.
  *
  * So the fallback *is* the selection: the id that is drawn is written to the URL,
- * and the URL stays the source of truth for every other change. Reading
- * `filters.channel || first` in one place and letting the tab strip read
- * `filters.channel` alone is exactly how the two got out of step.
+ * and the URL stays the source of truth for every other change.
+ *
+ * The strip is *bound*, not `v-model`ed. `v-model="shown"` was the second half of
+ * this defect: `shown` is a computed, so the tab's `update:modelValue` assigned
+ * to a readonly ref, the assignment was dropped, and in a production build Vue's
+ * dev-time warning is stripped -- so `el-tabs` moved its own highlight and the
+ * pane switched on screen while `filters.channel` and the URL did not move at
+ * all. Measured: click `#hello` and `location.hash` still ended in
+ * `channel=barrier-v0`, with the refusals table rendering nothing. The reader is
+ * now the one who writes the selection, through the same `filters.channel` the
+ * rest of the page reads.
  */
 const shown = computed(() => filters.channel || channels.value[0]?.id || '')
 const current = computed(() => channels.value.find((c) => c.id === shown.value) || {})
 watch(shown, (id) => {
   if (id && filters.channel !== id) filters.channel = id
 }, { immediate: true })
+
+/**
+ * The rows a refusal table draws, asked for a named channel rather than for "the
+ * current one".
+ *
+ * The table is rendered inside `v-for="ch in channels"`, and it used to read the
+ * filters against `current` -- the channel named by the URL. On load those are
+ * the same channel, so the page looked right. After a tab click they are not, and
+ * the sentence above the table printed a numerator from one channel over a
+ * denominator from another: measured, "0 of 13 record(s)" over an empty table,
+ * while 15 refusals sat one click away. A number and the list under it have to be
+ * the same question asked once, so both are computed from the `ch` the table is
+ * actually drawn in.
+ */
+function refusalsOf(channel) {
+  return (channel?.refusals || []).filter((row) => {
+    if (filters.q) {
+      const needle = filters.q.toLowerCase()
+      if (!`${row.agent} ${row.action} ${row.reason}`.toLowerCase().includes(needle)) return false
+    }
+    if (filters.agent && row.agent !== filters.agent) return false
+    if (filters.refusalClass && row.class !== filters.refusalClass) return false
+    if (filters.phase && row.phase !== filters.phase) return false
+    return true
+  })
+}
+
+function refusalAgentsOf(channel) {
+  return [...new Set((channel?.refusals || []).map((row) => row.agent).filter(Boolean))].sort()
+}
 const chainRows = computed(() => Object.entries(current.value.chain || {})
   .map(([file, s]) => ({ file, ...s })))
-const refusalRows = computed(() => (current.value.refusals || []).filter((row) => {
-  if (filters.q) {
-    const needle = filters.q.toLowerCase()
-    if (!`${row.agent} ${row.action} ${row.reason}`.toLowerCase().includes(needle)) return false
-  }
-  if (filters.agent && row.agent !== filters.agent) return false
-  if (filters.refusalClass && row.class !== filters.refusalClass) return false
-  if (filters.phase && row.phase !== filters.phase) return false
-  return true
-}))
-const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
-  .map((row) => row.agent).filter(Boolean))].sort())
 </script>
 
 <template>
-  <el-tabs v-model="shown" v-if="channels.length">
+  <el-tabs :model-value="shown" @update:model-value="(id) => { filters.channel = id }"
+           v-if="channels.length">
     <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id"
                    :label="`#${ch.id} — ${phaseLabel(ch.phase)}`">
       <el-descriptions :column="3" border size="small" style="margin-bottom:14px">
@@ -115,10 +142,10 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
       <el-card shadow="never" style="margin-bottom:14px">
         <template #header>
           <div class="aim-filterbar">
-            <span>refusals — {{ refusalRows.length }} of {{ (ch.refusals || []).length }} record(s)</span>
+            <span>refusals — {{ refusalsOf(ch).length }} of {{ (ch.refusals || []).length }} record(s)</span>
             <el-input v-model="filters.q" placeholder="search action or reason" clearable />
             <el-select v-model="filters.agent" placeholder="agent" clearable>
-              <el-option v-for="agent in refusalAgents" :key="agent" :value="agent" :label="agent" />
+              <el-option v-for="agent in refusalAgentsOf(ch)" :key="agent" :value="agent" :label="agent" />
             </el-select>
             <el-select v-model="filters.refusalClass" placeholder="class" clearable>
               <el-option value="barrier" label="barrier" />
@@ -133,7 +160,7 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
             <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
           </div>
         </template>
-        <el-table :data="refusalRows" size="small">
+        <el-table :data="refusalsOf(ch)" size="small" class="aim-refusal-table">
           <el-table-column prop="ts" label="at" width="200" />
           <el-table-column prop="agent" label="agent" width="160" />
           <el-table-column prop="action" label="attempted" min-width="240" />
@@ -149,7 +176,7 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
           </el-table-column>
           <el-table-column prop="reason" label="reason" min-width="320" />
         </el-table>
-        <el-empty v-if="!refusalRows.length" description="no refusal matches these filters" />
+        <el-empty v-if="!refusalsOf(ch).length" description="no refusal matches these filters" />
       </el-card>
 
       <el-card shadow="never">
