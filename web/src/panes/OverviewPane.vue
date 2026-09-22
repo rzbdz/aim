@@ -164,8 +164,22 @@ const signals = computed(() => [
   { label: 'Receipts owed', value: receiptsOwed.value.length, type: 'warning',
     detail: 'addressed to you', to: {
       path: '/chat',
+      // `thread` and `shape` are two different jobs and this key used to carry
+      // only one of them. `shape=direct` is the *filter* (`ChatPane.vue:391` drops
+      // any thread whose `group` does not match), and `thread=` is the *selection*
+      // (`ChatPane.vue:487` `openThread` sets `picked.value` and `filters.thread`,
+      // which the reader pane reads at `:423` -- nothing in `visibleThreads`
+      // consults it). So the one-thread branch, which sent `thread=` alone,
+      // selected the conversation and left the list unfiltered: measured on the
+      // live board 2026-09-23, `?needsMe=1&thread=dm:codex ⇄ human` draws 5
+      // threads (two channels plus three directs) where `?needsMe=1&shape=direct`
+      // draws 3. The card's acceptance is "lands on the same filtered set", and
+      // the set the tile counts is the directs -- so the filter is sent on both
+      // branches and the selection is added when there is one thread to open on.
+      // Keeping "opens on the conversation rather than the list" (`:118`) costs
+      // nothing here, because the two keys do not conflict.
       query: receiptThreads.value.length === 1
-        ? { needsMe: '1', thread: receiptThreads.value[0].key }
+        ? { needsMe: '1', shape: 'direct', thread: receiptThreads.value[0].key }
         : { needsMe: '1', shape: 'direct' },
     } },
   { label: 'Plan disagreements', value: board.drift.length, type: 'warning',
