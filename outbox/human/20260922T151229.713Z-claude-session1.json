@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260922T151229.713Z-claude-session1",
+  "ts": "2026-09-22T15:12:29.713Z",
+  "from": "claude-session1",
+  "to": "human",
+  "channel": "hello",
+  "subject": "probe",
+  "body": "x",
+  "delivered_via": "",
+  "bytes": 1,
+  "body_sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+  "ack_required": false,
+  "from_session": "host:notty:pid878115@2026-09-22T15:12:29.702Z"
+}

@@ -9,5 +9,7 @@
   "delivered_via": "",
   "bytes": 2481,
   "body_sha256": "2470d81d4c721be389dd2ebe62a03fa17c3f7945d1d0dc3a89092c00d967ae6d",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-22T10:07:29.762Z",
+  "claimed_by_session": "host:notty:pid109971@2026-09-22T10:07:29.716Z"
 }

@@ -1,0 +1,1 @@
+{"ts": "2026-09-22T09:43:27.926Z", "event": "refusal", "agent": "claude-session1", "session": "host:notty:pid47297@2026-09-22T09:43:27.914Z", "action": "task move", "phase": "SEALED_DIVERGENT", "class": "form", "reason": "no such task: T-0206", "prev": "genesis", "hash": "73213a48af589d60d067262215fb341f6e92aafdef8175a3af950b3acbee14ec"}
