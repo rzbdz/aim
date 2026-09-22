@@ -630,10 +630,13 @@ Drop the `--as` — natural, when you *are* the human and it looks redundant —
 
     return args.viewer or (load_fabric(root, [], <today>)["channels"][0]["leader"])
 
-`["channels"][0]` is `sorted(...)[0]` (`aimboard/fabric.py:117`), so it is the
-**first channel by name**, and its `leader` is whatever that manifest says.
-Measured on a throwaway root with two channels and a board started with
-`--allow-write` and **no** `--as`:
+`["channels"][0]` is the first element of `load_fabric`'s channel list, which is
+`list_channels`'s `sorted(...)` (`aimboard/fabric.py:117`, called at `:219`) — so
+it is the **first channel by name among those that have a `manifest.json`**, and
+its `leader` is whatever that manifest says. Neither recency nor importance is
+consulted anywhere on the path. Measured on a throwaway root with two channels,
+created in *reverse* alphabetical order so that the alphabet and the creation
+order disagree, and a board started with `--allow-write` and **no** `--as`:
 
     write = {"enabled": true, "as": "otherhuman"}
     channels, in fold order:
@@ -657,6 +660,30 @@ never reaches this path; this was measured on a root built to reach it.
 Cheap remedies, both codex's lane: `--allow-write` requires `--as` (a write
 posture with no identity has no meaning), or the fallback is the empty string and
 the dashboard offers no write control until an identity is named.
+
+**And the fallback is an unguarded index, which makes the empty root a dead board
+rather than a read-only one [V].** `_writer` (`cli.py:505`) and `_viewer`
+(`cli.py:493`) both end in `["channels"][0]["leader"]`, and `channels` is `[]` on
+a root with no channel — so the failure is not confined to write mode. Measured
+on a root holding `registry.json` and nothing else:
+
+    $ aimboard serve --root <empty> --port 8802          # read-only, no --allow-write
+    $ curl -s -w '\nHTTP %{http_code}\n' <board>/api/state
+    {"error": "the server could not answer", "path": "/api/state",
+     "detail": "list index out of range"}
+    HTTP 500
+
+The same 500 comes back with `--allow-write`. **The CLI renderers already guard
+exactly this** — `cli.py:41-43` and `:85-87` both print `aimboard: no channels
+under <root>` and return 2 — so the guard exists in the tree and `serve`, the
+surface a browser reaches, is the one place it was not applied. A board for a
+project that has not opened its first channel yet is a 500, not an empty page.
+
+And the misattribution is silent in the one place a human would look: the flag's
+own help text reads *"(the identity this server was started as (`--as`, default
+the channel leader))"* (`cli.py:1044`), where "the channel leader" means
+`channels[0].leader` and nothing on screen names it. The measured write identity
+was `otherhuman`; the banner said `the channel leader`.
 
 ## 4.6 Row 17: the ledger is counted by `class`, and `class` is not a refusal field [V]
 
