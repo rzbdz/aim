@@ -99,25 +99,49 @@ There is no list, the string is stored verbatim as `"claims": "not-a-list"`, and
 `10` is `len("not-a-list")` — the character count, reported to the sealer as a
 claim count. **The seal reports a quantity it did not measure.**
 
-**And the board cannot render any payload containing that seal.** Measured on a
-throwaway root: `fabric.load_fabric` succeeds, and then
-`api.channel_payload` (`aimboard/api.py:356-357`, `[{"id": c.get("id", "")…}
-for c in (seal.get("claims") or [])]`) raises
-`AttributeError: 'str' object has no attribute 'get'` — so `/api/state` returns
-**HTTP 500 for every viewer**, permanently, until someone hand-edits the seal
-file. One agent typing a malformed claims path bricks the dashboard for the
-whole team, and `aim seal` exits 0 while writing it. `aim verify` still returns
-`chain OK` rc 0 and never touches `claims`.
+**And the board cannot render any payload containing that seal — for exactly
+the viewers the barrier is aimed at.** Measured on a throwaway root:
+`fabric.load_fabric` succeeds, and then `api.channel_payload`
+(`aimboard/api.py:354-357`, `[{"id": c.get("id", "")…} for c in
+(seal.get("claims") or [])]`) raises `AttributeError: 'str' object has no
+attribute 'get'`. `aim seal` exits 0 while writing it, and `aim verify` still
+returns `chain OK` rc 0 and never touches `claims`.
+
+Six viewers against that one root, `GET /api/state?as=…`:
+
+| viewer | kind | who they are | HTTP |
+|---|---|---|---|
+| the leader | `human` | channel `leader` | **500** |
+| a second `human` | `human` | not the leader, not a participant | **500** |
+| the sealer | `claude` | participant | **500** |
+| a peer participant | `codex` | participant | 200 |
+| a registered stranger | `claude` | not a participant | 200 |
+| `codex-orangement` | — | — | 200 |
+
+No viewer with `kind == "human"` can be 200, and no participant can read
+**their own** seal — `channel_payload`'s exempting branch is `if secrets or who
+== viewer` (`:353`), one condition, and `secrets = not walled_off(...)` is
+`False` for every participant while the phase is `SEALED_DIVERGENT`. So the
+seal that crashes is always reached by *someone*: if the malformed seal belongs
+to a human, the humans 500; if it belongs to a participant, that participant
+500s. A dashboard where the leader and the sealer both 500 while the peers
+render is a bricked board, and it stays bricked until someone hand-edits the
+seal file. What survives is the *rendering*, not the whole board — the sentence
+this replaces said "for every viewer" and was wrong in the direction of
+understating the rule and overstating the blast radius at once.
 
 *(This paragraph has now been wrong twice, in opposite directions, and the
 sequence is the finding. A falsifier said the seal crashes with `AttributeError`
 — it does not; that trace comes from the board two layers away. I wrote the
-crash version in without running it. The falsifier then withdrew it, I re-ran and
-measured rc 0, wrote "does not crash" — and *stopped there*, which missed the
-whole-board 500 that the same malformed input causes. Both wrong versions came
+crash version in without running it. The falsifier then withdrew it, I re-ran
+and measured rc 0, wrote "does not crash" — and *stopped there*, which missed
+the board 500 that the same malformed input causes. Then I "fixed" it by naming
+a blast radius I had not measured: I tested the leader and one peer, got 500
+and 200, and generalised to "every viewer". Both the original and the fix came
 from the same move: **stopping at the first command instead of following the
 value to where it is read.** That is the thesis of this document, committed
-against this document, twice, in one paragraph.)*
+against this document, twice, in one paragraph — and the correction was the
+second time.)*
 
 ## 1.2 Progress
 
