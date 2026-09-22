@@ -301,6 +301,15 @@ const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone
  * row was a promise. `rows` and `drawn` apply the same predicate to the same list,
  * so a filter cannot move one without the other.
  *
+ * It is *not* the number of bars the chart draws, and `recorded-vs-seed.spec.js`
+ * reads it as that (`data-drawn`, asserted "11" against a fixture where 11 bars are
+ * drawn and this answers 3, the recorded rows). Measured: with no filter active and
+ * a board under the page size the two are `rows.length` and `datedRecorded.length`,
+ * so on the live board -- 107 dated rows, `per=25` -- they are 25 and 20. Which of
+ * the two the attribute should carry is a contract decision about the spec, not a
+ * fact this file can settle, so it is left as it is and the disagreement is
+ * reported rather than resolved by changing the number under the name.
+ *
  * The row text carries the lane as well (`◌` promise, `●` recorded). The legend
  * names the lanes and toggles them, but a legend is at the top of a 1600px chart
  * and the reader is at row 90; the glyph travels with the row.
@@ -483,6 +492,19 @@ onBeforeUnmount(() => {
  * break would draw its lane at the top of the axis while the offsets sat below.
  * The lane's own legend entry is its bar series and `selected` is the toggle
  * state, so hiding a lane hides the bars the reader was looking at.
+ *
+ * The lead-in is one entry per category *before* the lane, not one entry.
+ *
+ * A lane that is not the first has to skip the categories the earlier lanes and
+ * the break already own, and the number to skip is theirs, not one. This emitted a
+ * single zero, so the second lane's bars were drawn from category 1: measured on
+ * the served bundle with the T-0188 fixture, the promise lane's rows sat in
+ * categories 0..7 and the recorded lane's three bars were painted into categories
+ * 1, 2, 3 -- the rows of T-9002, T-9003 and T-9004 -- while the rows they belong to
+ * (T-9009, T-9010, T-9011) carried no label at all. A census of the canvas agrees
+ * with the index arithmetic: the recorded bar's opaque run is inside the promise
+ * bar's row. The one-lane case is unchanged (the lead is empty), which is why a
+ * fixture with only records always looked right.
  */
 const option = computed(() => {
   const { lo, n } = span.value
@@ -493,8 +515,12 @@ const option = computed(() => {
   const breakAt = () => {
     offsets.push({ value: n, itemStyle: { color: 'transparent' }, silent: true })
   }
+  // How many categories this lane starts after: every earlier lane's rows plus one
+  // for each break between them. It is advanced by this lane's own rows at the
+  // bottom of the loop, so it is the lane's own first category at the top.
+  let at = 0
   laneRows.value.forEach((lane) => {
-    if (series.length) breakAt()
+    if (series.length) { breakAt(); at += 1 }
     offsets.push(...lane.rows.map((r) => ({
       value: Math.max(0, days(lo, r.task.start || r.task.due)),
       itemStyle: { color: 'transparent' }, silent: true,
@@ -502,9 +528,9 @@ const option = computed(() => {
     series.push({
       name: lane.label, type: 'bar', stack: 'gantt', barMaxWidth: 16,
       data: [
-        // The break's bar is zero-width and it still carries the transparent
-        // style, so it draws nothing at any bar width the axis chooses.
-        ...(series.length ? [{ value: 0, itemStyle: { color: 'transparent' } }] : []),
+        // The lead-in's bars are zero-width and they still carry the transparent
+        // style, so they draw nothing at any bar width the axis chooses.
+        ...Array.from({ length: at }, () => ({ value: 0, itemStyle: { color: 'transparent' } })),
         ...lane.rows.map((r) => {
           const start = r.task.start || r.task.due
           const end = r.task.due || r.task.start
@@ -512,6 +538,7 @@ const option = computed(() => {
         }),
       ],
     })
+    at += lane.rows.length
   })
   return {
     backgroundColor: 'transparent',
