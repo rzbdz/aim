@@ -111,6 +111,7 @@ def conversation_view(state, viewer):
                 continue
             messages.append({"from": m.get("from", ""), "ts": m.get("ts", ""),
                              "kind": m.get("kind", ""), "responds_to": m.get("responds_to", ""),
+                             "subject": m.get("subject", ""), "phase": m.get("phase", ""),
                              "body": m.get("body", ""), "hash": m.get("hash", "")})
         channels.append({"id": ch["id"], "phase": ch["phase"], "gated": gated,
                          "messages": messages,
@@ -140,6 +141,7 @@ def conversation_view(state, viewer):
             "bytes": rec.get("bytes", 0),
             "state": ("acked" if rec.get("acked_at") else
                       "claimed" if rec.get("claimed_at") else "unread")})
+    mail_out.sort(key=lambda rec: rec.get("ts", ""))
 
     return {"viewer": viewer, "is_leader": is_leader, "channels": channels,
             "rooms": rooms_out, "mail": mail_out, "withheld": withheld}
