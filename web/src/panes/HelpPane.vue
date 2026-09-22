@@ -31,8 +31,96 @@ const countOf = {
   D: () => (board.register?.decisions || []).length,
   R: () => (board.register?.risks || []).length,
 }
+
+/**
+ * `T-` is the one prefix whose count covers more than one universe, and the row
+ * used to describe only one of them.
+ *
+ * Measured live 2026-09-22: `board.tasks.length` was 161, of which 87 carried
+ * `provenance: "seed only (not yet in the store)"`. The row's sentence --
+ * "minted by aim task new; the store is the authority" -- was therefore false of
+ * 87 of the ids it counted. Not a wording nit: `aim task move --id T-0042`
+ * answers `no such task: T-0042` (`_load_task_or_die`, `bin/aim:1682`), because
+ * `fold_tasks('hello')` folds the *events* and the store has no event for it;
+ * the id exists only in `plan/plan.json`. A reader who believed the row goes
+ * looking for T-0042 in the store and does not find it, which is what "the
+ * store is the authority" promises he can do.
+ *
+ * The count moved 115 -> 151 -> 161 without the sentence becoming true, so the
+ * sentence is not a claim that gets truer with time; it is a claim about *which*
+ * ids are counted. The clauses below are counted from `provenance` -- the one
+ * field that distinguishes the universes -- so they cannot drift from the
+ * payload the way a written-down "87 of them" could.
+ */
+const PROVENANCE = {
+  seedOnly: 'seed only (not yet in the store)',
+  both: 'store + seed',
+  storeOnly: 'store only',
+}
+
+const taskSplit = computed(() => {
+  const total = board.tasks.length
+  // Whole-value tests, not `includes('seed')`: the seed-only sentence contains
+  // the word "store" ("not yet in the store"), so a substring test for one
+  // universe answers yes for the other -- which is how a single field came to
+  // be counted as two different things (`board.js:62` reads it the same way,
+  // which is why `isPromise` counts a "store + seed" item as a promise).
+  const count = (value) => board.tasks.filter((t) => (t.provenance || '') === value).length
+  const seedOnly = count(PROVENANCE.seedOnly)
+  const both = count(PROVENANCE.both)
+  const storeOnly = count(PROVENANCE.storeOnly)
+  const unknown = total - seedOnly - both - storeOnly
+  const clauses = [`recorded in the store: ${storeOnly} of ${total}`,
+                   `seeded and recorded both: ${both}`,
+                   `plan seeds the store has no record of: ${seedOnly}`]
+  // A zero is stated rather than dropped, because the row states counts at all:
+  // `0` and "this row did not look here" are different facts, and the reader
+  // cannot tell them apart from an omitted clause. The fourth clause is the
+  // exception -- it names a category with no definition in the vocabulary, so a
+  // sentence about it at zero would be noise rather than a measurement.
+  if (unknown) clauses.push(`provenance this row does not know: ${unknown}`)
+  return {
+    total,
+    seed: seedOnly,
+    recorded: storeOnly,
+    text: `${clauses.join('; ')}.`,
+    // The consequence, not the taxonomy. A seed is not a work item the reader
+    // can do anything with, and the row used to imply the opposite. The
+    // condition ("the store has no record of") is kept in the sentence because
+    // it is what makes it true: a "store + seed" id *can* be moved.
+    limit: 'A seed the store has no record of cannot be moved, assigned or recorded: '
+      + '`aim task move`, `aim task assign` and `aim task comment` answer `no such task` for its '
+      + 'id, because there is no event of it for the store to change.',
+  }
+})
+
+/**
+ * Which plan file each milestone actually came from, read off the payload.
+ *
+ * Same audit as the `T-` row, one row down: the vocabulary says milestones are
+ * "written by hand in plan/plan.json", and on 2026-09-22 one of the ten (M6,
+ * Dogfooding) carried `source: "dogfood.json"`. The count was right and the
+ * sentence was not, which is the defect this card is about -- so the filename is
+ * derived here too rather than written down twice.
+ */
+const milestoneFiles = computed(() => [...new Set(Object.values(board.milestones || {})
+  .map((m) => m.source).filter(Boolean))].sort())
+
 const identifierRows = computed(() =>
-  ID_PREFIXES.map((entry) => ({ ...entry, count: countOf[entry.prefix]?.() ?? 0 })))
+  ID_PREFIXES.map((entry) => {
+    const count = countOf[entry.prefix]?.() ?? 0
+    if (entry.prefix === 'T-') {
+      // The T- row's `where` in `concepts.js` is the convention for an id the
+      // *store* minted, and it is true of `taskSplit.recorded` of them. The
+      // split is what the row has to say instead, so the override lives here
+      // rather than as a second, contradicting entry in the shared vocabulary.
+      return { ...entry, count, split: taskSplit.value, where: 'the plan seeds it, or `aim task new` records it' }
+    }
+    if (entry.prefix === 'M' && milestoneFiles.value.length) {
+      return { ...entry, count, where: `written by hand in ${milestoneFiles.value.map((f) => `plan/${f}`).join(', ')}` }
+    }
+    return { ...entry, count }
+  }))
 </script>
 
 <template>
@@ -183,6 +271,17 @@ const identifierRows = computed(() =>
             <td>
               <p style="margin:0 0 5px">
                 <code class="aim-mono aim-dim" style="font-size:11.5px">{{ row.where }}</code>
+              </p>
+              <!-- The split, and nothing else, for a prefix that has one: 87 of
+                   the 161 ids this row counts are not on the record, and the
+                   number above them cannot be read without it. Styled with the
+                   page's existing consequence mark rather than a new class, so
+                   this edit adds no rule to style.css. -->
+              <p v-if="row.split" style="margin:0 0 5px" class="aim-help-consequence">
+                {{ row.split.text }}
+              </p>
+              <p v-if="row.split?.limit" style="margin:0 0 5px" class="aim-help-consequence">
+                {{ row.split.limit }}
               </p>
               <p style="margin:0" class="aim-dim">{{ row.detail }}</p>
             </td>
