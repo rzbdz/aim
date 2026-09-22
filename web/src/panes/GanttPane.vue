@@ -293,22 +293,27 @@ const matches = (task) => {
 const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone).filter(Boolean))].sort())
 
 /**
- * The rows are the bars; the promise count is not the row count.
+ * The three numbers the header publishes, and which list each is over.
  *
- * `drawn` exists because the header has to say how much of the drawn set is work,
- * and a filter is exactly where the two diverge: measured by narrowing to one id,
- * the old header read `1 of 107 dated item(s)` with no way to tell whether the one
- * row was a promise. `rows` and `drawn` apply the same predicate to the same list,
- * so a filter cannot move one without the other.
+ * `data-drawn` is the total the filter leaves -- every dated row the chart is asked
+ * to draw -- and `data-recorded` and `data-seeds` are that same set split by
+ * `isPromise`. So the three are one statement rather than three: `drawn` is
+ * `recorded` + `seeds`, and the split is what the header's sentence is about.
  *
- * It is *not* the number of bars the chart draws, and `recorded-vs-seed.spec.js`
- * reads it as that (`data-drawn`, asserted "11" against a fixture where 11 bars are
- * drawn and this answers 3, the recorded rows). Measured: with no filter active and
- * a board under the page size the two are `rows.length` and `datedRecorded.length`,
- * so on the live board -- 107 dated rows, `per=25` -- they are 25 and 20. Which of
- * the two the attribute should carry is a contract decision about the spec, not a
- * fact this file can settle, so it is left as it is and the disagreement is
- * reported rather than resolved by changing the number under the name.
+ * That is a fix, and the defect it fixes is one the attribute's own name carried.
+ * `drawn` was `rows.filter((r) => !isPromise(r.task)).length`, i.e. the *recorded*
+ * rows -- so `data-drawn` published `data-recorded` under a second name, and on any
+ * board with no filter and fewer rows than the page size the two were the same
+ * number. Measured on the live board: 107 dated rows, `data-drawn` 20 and
+ * `data-recorded` 20; `?status=done` gave 17 and 20, `?owner=codex` 2 and 20,
+ * `?milestone=M1` 0 and 20 -- a number that is *called* drawn and answers "how many
+ * of these are recorded work" is the second answer to a question the element already
+ * answers beside it. `recorded-vs-seed.spec.js` reads it as the total and expects 11
+ * on a fixture where 11 dated rows are drawn; the pane answered 3.
+ *
+ * The sentence itself is unchanged and was never wrong: it prints `rows.length` for
+ * the shown count and the split for the two halves. Only the attribute was ever
+ * saying the wrong thing, and it was saying it twice.
  *
  * The row text carries the lane as well (`◌` promise, `●` recorded). The legend
  * names the lanes and toggles them, but a legend is at the top of a 1600px chart
@@ -327,7 +332,8 @@ const allRows = computed(() => {
   })
 })
 const rows = computed(() => allRows.value.filter((r) => matches(r.task)))
-const drawn = computed(() => rows.value.filter((r) => !isPromise(r.task)).length)
+/** Every dated row the filter leaves: what the chart is asked to draw. */
+const drawn = computed(() => rows.value.length)
 
 /**
  * The bound on the list, and it is the reader's (T-0161 clause 1).

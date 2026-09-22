@@ -310,9 +310,22 @@ test.describe('a plan seed is not work, on the two panes that draw the merge', (
     expect(amber.opaque).toBe(1)
     expect(amber.translucent).toBe(2)
 
-    // And the legend decodes the mark, because a reader who has not hovered
-    // anything has to be able to read the one non-status fill on the chart.
-    await expect(page.locator('.aim-sticky-head .aim-filterbar .aim-chip.seed')).toHaveText('plan seed')
+    // And the mark is decoded where the reader meets it, by the two elements that
+    // do the decoding rather than by a chip the pane never drew.
+    //
+    // This clause read `toHaveText('plan seed')` on `.aim-filterbar .aim-chip.seed`,
+    // and that element renders `plan seeds` -- one character, and the clause could
+    // never pass. The chip is the filter sentence's copy of the fill's name
+    // (`8 plan seeds (promises, not work)`), not a legend entry; what decodes the
+    // glyphs is the swatch beside it. Both are asserted here, so the clause now
+    // asks the pane for the two things it actually says, and a pane that renamed
+    // either one fails.
+    // Measured on the served board: the filterbar's only `.aim-chip` is
+    // `{"cls":"aim-chip seed","text":"plan seeds"}`, and the decode is
+    // `◌ plan promise, not work · ● recorded work`.
+    await expect(page.locator('.aim-sticky-head .aim-filterbar .aim-chip.seed')).toHaveText('plan seeds')
+    await expect(page.locator('.aim-sticky-head .aim-filterbar .aim-dim')
+      .filter({ hasText: 'plan promise' }).first()).toHaveText('◌ plan promise, not work · ● recorded work')
   })
 
   test('the tooltip says which authority the status and the dates came from', async ({ page }) => {
