@@ -5,6 +5,7 @@ import { useQueryFilters } from '../composables/useQueryFilters'
 import { listQuery } from '../composables/useTaskDrawer'
 import PromiseTag from '../components/PromiseTag.vue'
 import TaskLink from '../components/TaskLink.vue'
+import { CALENDAR_ZONE } from '../dates'
 
 const board = useBoard()
 const { filters, activeCount, clear } = useQueryFilters({
@@ -320,6 +321,15 @@ const argvLine = (action) => {
       <div class="aim-filterbar">
         <span>milestones ({{ visibleMilestones.length }} of {{ milestones.length }}) — progress counts
           <b>the record</b>, the <code class="aim-mono">planned</code> chips are plan seeds</span>
+        <!-- Every `due` below is a bare `YYYY-MM-DD`: it carries no instant, so
+             there is nothing to convert and nothing to append to the cell. What it
+             does have is a calendar it is read in -- `plan/plan.json:5`, which
+             `design/17-org-and-project.md` §4 names as the source ("a task due
+             'today' is due in the leader's day and not in UTC's") and `dates.js`
+             `CALENDAR_ZONE` reads. Said once here, over the column, rather than
+             repeated in every row. -->
+        <span class="aim-dim" style="font-size:11.5px">every due date is a calendar day
+          in {{ CALENDAR_ZONE }}</span>
         <el-input v-model="filters.q" placeholder="search milestones, risks, decisions" clearable />
         <el-select v-model="filters.progress" placeholder="progress">
           <el-option value="all" label="all progress" />

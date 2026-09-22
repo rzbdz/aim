@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { useBoard } from '../stores/board'
+import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { listQuery } from '../composables/useTaskDrawer'
 import { STATUS_TYPE, statusLabel } from '../theme'
@@ -146,16 +146,36 @@ watch(events, () => { boardRefreshes.value += 1 })
  * counting it as finished is the failure this line exists to make visible.
  * `dropped` is excluded from the denominator on the same principle in reverse
  * -- a card someone deliberately dismissed is neither done nor outstanding.
+ *
+ * Every scope is the *merge*: `visible` is `state["tasks"]` through the gate and
+ * `fabric` is the whole dict, and both hold the plan's seeds (measured on this
+ * tree, 2026-09-22: `visible` 148/131/14 for `claude-session1`, `fabric`
+ * 177/139/16, `report.recorded` 90, `report.seed_only` 87 -- so 72 of the 131
+ * "done" rows this seat can see are plan text with no events). The server has no
+ * per-scope provenance split and this pane cannot add one, which is why the
+ * headline no longer prints these figures as work: `recordedTally` below folds
+ * the same rows again for the record, and `tally` stays on the page as the merge
+ * it is -- named, and never carrying a percentage on its own.
+ *
+ * The scope's *rows* are not published either: `board_scope` is counts only
+ * (`by_status`, `total`, `done`, `dropped`, `scored`, `undone`, `finished_pct`,
+ * measured against the live payload), which is the whole point of the key -- the
+ * server counted them so that a gated seat reads a count instead of a list. So
+ * the row set this key is a count *of* is taken from `board.tasks`, which is the
+ * `tasks` dict the server folded `visible` over: measured for `claude-session1`,
+ * 148 rows and `board_scope.visible.total` 148, the same set. If a payload ever
+ * ships `rows` on the scope (the server has the counter it would need), that wins
+ * and this fold reads it -- which is what the spread below does.
  */
 const tally = computed(() => {
   const scope = board.boardScope
   const pick = scope[scopeMode.value] || scope.visible || scope.fabric || undefined
-  if (pick) return pick
+  if (pick) return { ...pick, rows: pick.rows || board.tasks }
   // A server that predates `board_scope`. Falling back to the old client-side
   // fold keeps the page readable rather than blank, and `stale: true` in the
   // shell is what says the bundle and the server disagree -- inventing a number
   // silently is the thing this file stopped doing.
-  const out = { undone: 0, done: 0, dropped: 0, total: 0 }
+  const out = { undone: 0, done: 0, dropped: 0, total: 0, rows: board.tasks }
   for (const t of board.tasks) {
     out.total += 1
     const s = t.status
@@ -181,8 +201,133 @@ const otherScope = computed(() => {
   return scope[other] || null
 })
 
-/** How much of the board is finished, in the selected scope. */
-const finishedPct = computed(() => tally.value.finished_pct ?? 0)
+/**
+ * The same scope, folded again over the *record* -- and this is the fold the
+ * headline prints.
+ *
+ * Measured on this tree (2026-09-22, `reports.board_scope`), the two folds of
+ * one scope are not the same set and the difference is the whole defect:
+ *
+ *   scope           merge (server)   record (this fold)   promise lines inside the merge's done
+ *   visible human   177 /139 /16      90 / 67 / 1          72
+ *   visible s1      148 /131 /14      63 / 59 / 1          72
+ *   visible codex   128 / 97 /16      54 / 38 / 1          59
+ *   fabric          177 /139 /16      90 / 67 / 1          72
+ *
+ * Every other number on this page already counts the record (`events`,
+ * `with_history`, `median_cycle`) or says it is a plan figure (`seed_only`), so
+ * the three that did not were the only three that read as work and were not.
+ * `tally` still draws the merge -- the plan's size is real information, and
+ * deleting it is the failure this round exists to stop -- but it is drawn in its
+ * own clause and it no longer carries the percentage.
+ *
+ * `by_status` is folded here rather than read from `board.recordedByStatus`,
+ * which is the whole board: this fold is over *one scope*, and on the gate that
+ * matters -- `codex` can read 128 of the 177 rows and 54 of the record, so the
+ * board-wide getter would print 90 in a sentence about this view, which is the
+ * same class of error one level up.
+ *
+ * `terminal` counts `done` *and* `dropped` (`board.terminal`), which is this
+ * page's own standing rule and not the same rule as the milestone card below:
+ * a dropped card is a decision somebody recorded, so it is not "undone" here.
+ * `pct`'s denominator is `total - dropped` and not `total - terminal`, which is
+ * the server's own rule for `finished_pct` (`aimboard/api.py:471`, `scored =
+ * total - dropped`) and the narrower of the two: `dropped` is the only member of
+ * `terminal` that is not work finished, so subtracting all of `terminal` would
+ * count a dropped card's row as a close. The numerator stays `done` alone.
+ *
+ * The fold reads `status` and `provenance` and nothing else, because those are
+ * the two fields the two questions are about: `isPromise` reads `provenance`,
+ * and the status is the status. Whatever else a scope publishes travels with the
+ * row and is not consulted.
+ */
+const recordedTally = computed(() => {
+  const rows = tally.value.rows || []
+  const out = { total: 0, done: 0, dropped: 0, terminal: 0, undone: 0, pct: 0,
+                by_status: {}, record: 0, seed: 0, promise_done: 0, merged: tally.value }
+  for (const t of rows) {
+    out.total += 1
+    out.by_status[t.status] = (out.by_status[t.status] || 0) + 1
+    if (isPromise(t)) out.seed += 1
+    else out.record += 1
+    if (t.status === 'done') {
+      out.done += 1
+      // The promise half of `done`, counted in the same pass over the same rows
+      // rather than derived from the merge's own `done` minus this fold's. That
+      // subtraction is the same number only while the two folds draw the same
+      // rows: measured on the `codex` scope the merge drops 16 and the record
+      // drops 14, so the difference carries two rows that are neither promises
+      // nor work. Both counters here see every row, so the recorded half is
+      // exactly `out.done - out.promise_done`.
+      if (isPromise(t)) out.promise_done += 1
+    } else if (t.status === 'dropped') {
+      out.dropped += 1
+    }
+    if (board.terminal.includes(t.status)) out.terminal += 1
+  }
+  out.undone = out.total - out.terminal
+  // The denominator is `total - dropped`, which is the rule the comment above
+  // states and the server's own (`aimboard/api.py:471`, `scored = total -
+  // dropped`). It read `out.total` before, so the pane printed the more
+  // pessimistic of the two numbers -- measured 74.4% against its own described
+  // 75.3% on the fabric scope, 93.7% against 95.2% for `claude-session1`, 70.4%
+  // against 71.7% for `codex` -- while `out.terminal`, computed for exactly this,
+  // was never read. `dropped` is included in `terminal`, so subtracting it is
+  // the narrower of the two and the one the sentence is about.
+  out.pct = out.total > out.dropped
+    ? Math.round(1000 * out.done / (out.total - out.dropped)) / 10 : 0
+  return out
+})
+
+/** The merge, named so the sentence that prints it cannot be read as the record. */
+const mergedDone = computed(() => tally.value.done ?? 0)
+const mergedUndone = computed(() => tally.value.undone ?? 0)
+const mergedDropped = computed(() => tally.value.dropped ?? 0)
+
+/**
+ * The milestones this page can draw at all, with their record fold.
+ *
+ * Measured before this change, the server's `reports.milestones` fold is over
+ * the merged dict (`aimboard/api.py:414`) and read `M0 5/8`, `M3 16/16`,
+ * `M4 4/5`, `M7 4/4`, `M9 36/37`; over the record the same ten milestones are
+ * `0/3`, `3/3`, `0/1`, `2/2`, `25/26`. So this page's `5 of 8 item(s) done` sat
+ * two clicks from the Plan pane's `0/3 recorded` about the same milestone, and
+ * `M0`/`M4`/`M8` were the worst of it: a milestone with **nothing recorded
+ * complete** reading as mostly done, because the plan file says its lines are.
+ *
+ * Two things this card needs that the payload does not publish, and the reason
+ * both are derived here rather than read from `reports.milestones`:
+ *
+ *  * `board.milestones` and `reports.milestones` carry the same keys today
+ *    (measured: all ten, `M0`..`M9`), and `board.milestones` is the raw manifest
+ *    -- it has no `total` and no `done` for the card to print, which is why the
+ *    server's fold existed. This derives the pair over `board.recorded` the same
+ *    way `PlanPane.vue:329-334` does, so the two panes cannot disagree: the
+ *    numerator is `terminal` (done or dropped) exactly as that pane counts it,
+ *    because the card's own sentence is `item(s) done` and a milestone is the one
+ *    place the two panes are read against each other. Measured, no recorded row in
+ *    any milestone is `dropped`, so the two readings coincide today; matching the
+ *    pane is what keeps them from diverging tomorrow.
+ *  * a milestone with no recorded row *and* no plan row is a line nothing
+ *    references. Drawing it as `0 of 0 item(s) done` would put a fourth empty
+ *    state beside the three the card already has (`data-zero`, `no due date`, and
+ *    the chip a promised-only milestone carries); it is dropped instead. Measured
+ *    today there is no such milestone -- 0 dropped out of ten -- so the filter
+ *    changes nothing on this tree and exists for the board where it does.
+ *
+ * `false` and `"0"` both fall through: a count that arrived as a string would
+ * otherwise be kept, and `"0"` and `[]` are both falsy in JS.
+ */
+const milestoneRows = computed(() => {
+  const zero = (v) => v === 0 || v === '0'
+  return Object.values(board.milestones).map((m) => {
+    const mine = board.recorded.filter((t) => t.milestone === m.id)
+    const done = mine.filter((t) => board.terminal.includes(t.status)).length
+    const promises = board.tasks.filter((t) => t.milestone === m.id).length - mine.length
+    return { ...m, done, total: mine.length, promises }
+  }).filter((m) => !(zero(m.total) && zero(m.promises)))
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+})
 
 const flow = computed(() => {
   // The window ends at the newest recorded event, not at the clock: a store
@@ -468,13 +613,7 @@ watch([blockedRows, perPage], () => {
   if (page.value > last) page.value = last
 })
 
-/** Milestones with work behind them, so the signal leads to the items it counts. */
-const milestoneRows = computed(() => Object.entries(board.report.milestones || {})
-  .map(([id, m]) => ({ id, ...m }))
-  .sort((a, b) => (a.id < b.id ? -1 : 1)))
-
-/**
- * A clock the page re-reads once a minute.
+/** A clock the page re-reads once a minute.
  *
  * The board already polls the record every 2.5s (`main.js`), so a new event
  * arrives on its own; what does not move without help is *time* -- the age of
@@ -507,8 +646,20 @@ const quietLabel = computed(() => {
       <span v-else class="aim-dim" style="font-size:11.5px" data-zero="1">0 item(s) with move history</span>
     </el-card>
     <el-card shadow="never">
-      <el-statistic title="recorded in the store (items)" :value="board.report.recorded" />
-      <span class="aim-dim" style="font-size:11.5px">{{ board.report.seed_only }} item(s) are plan seed only</span>
+      <!-- Two keys, two different questions, and the label says which one is
+           being answered. `report.recorded` is `len(dated)` where `dated` is
+           "this row has a `created` event" (`aimboard/fold.py:307`) and
+           `report.seed_only` is `len(tasks) - len(dated)`, i.e. "has no event at
+           all" -- measured on this tree both read 90 and 87, the same numbers
+           `board.recorded` and `board.seedOnly` give, and they are the same sets
+           only while no row is `store + seed` (measured: 0 rows). Two different
+           definitions of "recorded" sat on this page under one word; this tile
+           now says what its own key means, and the headline's figures come from
+           `isPromise` over the scope. -->
+      <el-statistic title="items with a recorded creation" :value="board.report.recorded"
+                    data-recorded-creation />
+      <span class="aim-dim" style="font-size:11.5px" data-seed-no-record>{{ board.report.seed_only }} item(s) have
+        no event at all, so nothing the store knows about them is recorded</span>
     </el-card>
     <el-card shadow="never">
       <el-statistic title="closes in the drawn window (items)"
@@ -529,18 +680,23 @@ const quietLabel = computed(() => {
       <strong>{{ board.withheld }}</strong> of <strong>{{ tally.total + board.withheld }}</strong>
       item(s) are withheld from this seat.
     </span>
-    <el-radio-group v-model="scopeMode" size="small" data-filter="scope">
+    <el-radio-group v-model="scopeMode" size="small" data-filter="scope" :data-scope="scopeMode">
       <el-radio-button value="visible">this view</el-radio-button>
       <el-radio-button value="fabric">whole fabric</el-radio-button>
     </el-radio-group>
   </div>
 
-  <p v-if="otherScope" class="aim-dim" style="font-size:12px; margin:0 0 10px">
-    In {{ SCOPE_LABELS[scopeMode === 'visible' ? 'fabric' : 'visible'] }}:
+  <!-- The scope the reader is *not* looking at, printed in the merge's own words.
+       It is the same fold as the headline's (`board_scope` over the merged dict),
+       so it says `on the board` and not `work`: measured for `claude-session1`,
+       this sentence read `131 done ... 97.8% finished (148 item(s))` where 72 of
+       those 131 are plan text. -->
+  <p v-if="otherScope" class="aim-dim" style="font-size:12px; margin:0 0 10px" data-other-scope>
+    In {{ SCOPE_LABELS[scopeMode === 'visible' ? 'fabric' : 'visible'] }}, on the board (plan seeds included):
     <strong>{{ otherScope.undone }}</strong> undone,
     <strong>{{ otherScope.done }}</strong> done,
     <strong>{{ otherScope.dropped }}</strong> dropped,
-    <strong>{{ otherScope.finished_pct }}%</strong> finished
+    <strong>{{ otherScope.finished_pct }}%</strong> closed
     ({{ otherScope.total }} item(s)).
   </p>
 
@@ -562,12 +718,64 @@ const quietLabel = computed(() => {
     <div class="aim-flow-stats">
       <!-- The board's standing figures first, and the window's rate after them:
            `undone` is the count the leader reads, and it is the one number on
-           this row that a minute-bucket chart cannot draw. -->
-      <span><strong>{{ tally.undone }}</strong> undone</span>
-      <span><strong>{{ tally.done }}</strong> done</span>
-      <span><strong>{{ tally.dropped }}</strong> dropped</span>
-      <span><strong>{{ finishedPct }}%</strong> of the board finished</span>
-      <span class="aim-dim"><strong>{{ tally.total }}</strong> work item(s) in {{ SCOPE_LABELS[scopeMode] }}</span>
+           this row that a minute-bucket chart cannot draw.
+
+           And it is counted over the *record*, not over the merge. These three
+           were `tally.undone / done / dropped`, folded by the server over the
+           merged scope, under the word `work item(s)`: measured for
+           `claude-session1` that read `131 done` of which 72 are plan text, and
+           `97.8% of the board finished` over a scope whose own `undone` the seat
+           can check item by item. The record's figures are computed in
+           `recordedTally` above; the merge is in its own clause below rather than
+           removed, because the plan's size is real information. -->
+      <span data-record-undone :data-record-total="recordedTally.total"
+            :data-merged-undone="mergedUndone" :data-seeds="recordedTally.seed"
+            :data-scope="scopeMode">
+        <strong>{{ recordedTally.undone }}</strong> undone
+        <span class="aim-dim">of <strong>{{ recordedTally.total }}</strong> work item(s) on the record
+          in {{ SCOPE_LABELS[scopeMode] }}</span>
+      </span>
+      <span data-record-done :data-merged-done="mergedDone" :data-seeds="recordedTally.seed">
+        <strong>{{ recordedTally.done }}</strong> done <span class="aim-dim">on the record</span>
+      </span>
+      <span data-record-dropped :data-merged-dropped="mergedDropped">
+        <strong>{{ recordedTally.dropped }}</strong> dropped <span class="aim-dim">on the record</span>
+      </span>
+      <!-- The percentage, and the one claim on this page that was 72 plan lines
+           wide. It is over the record and it says so in the figure and in the
+           parenthetical; `recordedTally.pct` subtracts `dropped` from the
+           denominator, which is the server's own rule for `finished_pct`
+           (`aimboard/api.py:471`). Measured, `claude-session1` reads 95.2% here
+           (59 of 62) against the 97.8% the merge printed, and `codex` reads 71.7%
+           (38 of 53) against 86.6%. -->
+      <span data-record-pct :data-record-done="recordedTally.done"
+            :data-record-total="recordedTally.total" :data-record-dropped="recordedTally.dropped"
+            :data-seeds="recordedTally.seed"
+            :data-merged-done="mergedDone" :data-merged-total="tally.total"
+            :data-scope="scopeMode">
+        <strong>{{ recordedTally.pct }}%</strong> of the record finished
+        <span class="aim-dim">({{ recordedTally.done }} of
+          {{ recordedTally.total - recordedTally.dropped }} work item(s) on the record —
+          {{ recordedTally.total }} rows less the {{ recordedTally.dropped }} dismissed;
+          the board would read {{ tally.finished_pct ?? 0 }}% over all {{ tally.total }})</span>
+      </span>
+      <!-- The merge, kept and labelled. `139 done` is not false, it is the plan
+           file plus the store, and the clause that used to hide which of the two
+           it was is now the clause that says so. The promise count is the fold's
+           own `promise_done`, not the difference of the two totals: measured on
+           the `codex` scope the merge drops 16 rows and the record drops 14, so
+           the difference carries two rows that are neither promises nor work. -->
+      <span class="aim-dim" data-merged :data-merged-done="mergedDone"
+            :data-merged-undone="mergedUndone" :data-merged-dropped="mergedDropped"
+            :data-merged-total="tally.total" :data-record-done="recordedTally.done"
+            :data-record-undone="recordedTally.undone" :data-seeds="recordedTally.seed"
+            :data-promise-done="recordedTally.promise_done">
+        on the whole board, plan seeds included: {{ mergedUndone }} undone, {{ mergedDone }} done,
+        {{ mergedDropped }} dropped, {{ recordedTally.promise_done }} of those "done" rows are
+        plan seeds — promises with no event behind them, not work — so the board's own
+        {{ tally.finished_pct ?? 0 }}% counts {{ tally.total }} rows where the record has
+        {{ recordedTally.total }}.
+      </span>
       <span><strong>{{ flow.opened }}</strong> opened in this window</span>
       <span><strong>{{ flow.done }}</strong> closed in this window</span>
       <span><strong>{{ (flow.opened / windowMinutes * 60).toFixed(1) }}</strong> opened / h</span>
@@ -642,15 +850,29 @@ const quietLabel = computed(() => {
   </el-card>
 
   <!-- A milestone is a promise with a date, so the count leads to the items that
-       carry it rather than sitting as a number the reader cannot act on. -->
+       carry it rather than sitting as a number the reader cannot act on.
+
+       The count is over the *record* and the header says so, because the server's
+       fold this card used to print was over the merged dict: measured, `M0` read
+       `5 of 8 item(s) done` while its record is `0/3` -- a milestone with nothing
+       recorded complete, reading as mostly done. `PlanPane.vue:355-358` has drawn
+       the record on this same board for as long as the split has existed, so the
+       two panes were describing one milestone with two numbers and no way for a
+       reader to tell which was which. The plan's share is not hidden: a milestone
+       with no recorded row draws `no recorded item yet` beside its planned count,
+       and the link stays on the merged list, which is what a reader clicking a plan
+       line wants to see. -->
   <el-card v-if="milestoneRows.length" shadow="never" style="margin-bottom:14px">
-    <template #header>milestones — progress, and the items behind it</template>
+    <template #header>milestones — progress counts <b>the record</b>, the promised lines are plan seeds</template>
     <div class="aim-flow-stats">
-      <span v-for="m in milestoneRows" :key="m.id">
+      <span v-for="m in milestoneRows" :key="m.id" :data-milestone="m.id"
+            :data-record-done="m.done" :data-record-total="m.total" :data-promises="m.promises">
         <RouterLink v-if="m.total" :to="{ path: '/items', query: listQuery('milestone', m.id) }" class="aim-task-link">
-          {{ m.name || m.id }} — {{ m.done }} of {{ m.total }} item(s) done
+          {{ m.name || m.id }} — {{ m.done }} of {{ m.total }} item(s) done on the record
         </RouterLink>
-        <span v-else class="aim-dim" data-zero="1">{{ m.name || m.id }} — 0 item(s)</span>
+        <span v-else class="aim-dim" data-zero="1">{{ m.name || m.id }} — no recorded item yet</span>
+        <span v-if="m.promises" class="aim-dim" style="font-size:11px">
+          · <span class="aim-chip seed">{{ m.promises }} planned</span></span>
         <span class="aim-dim" style="font-size:11px">{{ m.due ? `due ${m.due}` : 'no due date' }}</span>
       </span>
     </div>

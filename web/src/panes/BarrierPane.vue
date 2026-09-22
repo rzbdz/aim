@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { PHASES, phaseConcept, phaseLabel } from '../concepts'
+import { STORE_ZONE, zoneAbbrev } from '../dates'
 import PhaseChip from '../components/PhaseChip.vue'
 
 const ctx = inject('ctx')
@@ -311,8 +312,50 @@ function refusalsOf(channel) {
 function refusalAgentsOf(channel) {
   return [...new Set((channel?.refusals || []).map((row) => row.agent).filter(Boolean))].sort()
 }
+
+/**
+ * The refusal class, by its entry in the payload's one dictionary.
+ *
+ * `design/17-org-and-project.md` §4: "Every user-visible word resolves through a
+ * concept registry keyed by the raw token." The three classes are `barrier`,
+ * `form` and `unrecorded` -- the record's own values, what `bin/aim` writes into
+ * the ledger, and the left column of the Help page's token table. The registry is
+ * `board.doc.concepts` (`aimboard/api.py:253`, built out of `refusal_classes()` at
+ * `:243`), so the label is the server's and not this pane's, and the raw token
+ * rides in the cell's tooltip where a bug report can cite it.
+ *
+ * The filter above is deliberately left keyed on the token (`row.class !==
+ * filters.refusalClass`, `:306`) and the select that feeds it still offers
+ * `barrier` / `form` as its values: a filter over a *translated* label would break
+ * the day the label changes, and this is a query against the record, not a label.
+ */
+const classLabel = (token) => {
+  const published = board.doc?.concepts
+  const entry = published && typeof published === 'object' ? published[token] : null
+  return (entry && typeof entry === 'object' && entry.label) || token
+}
 const chainRows = computed(() => Object.entries(current.value.chain || {})
   .map(([file, s]) => ({ file, ...s })))
+
+/**
+ * The zone every timestamp on this page is printed in, and where it is printed.
+ *
+ * `design/17-org-and-project.md` §4: "Every rendered date names its timezone. A
+ * date without a zone is a statement the reader cannot audit" -- and until now this
+ * page named none. Three surfaces here print an instant: `sealed[].ts` and the
+ * refusals' `ts`, both `el-table-column prop="ts"` (the raw string, whole), and the
+ * phase-history timeline's `h.at`.
+ *
+ * The values are *not* converted, and that is the decision rather than an omission.
+ * The store's instant is the store's byte -- `aimboard/primitives.py:101` mints it
+ * as `...Z`, and the hash chain compares that byte -- so a renderer that shifted it
+ * into the reader's offset would print a different value from the one a reader
+ * quotes at a terminal. What was missing is the label, and it goes in the *header*
+ * beside `at`: one word per column, no conversion, and no second copy of the value
+ * for anything to drift from.
+ */
+const TS_ZONE = zoneAbbrev(STORE_ZONE)
+const colAt = `at (${TS_ZONE})`
 </script>
 
 <script>
@@ -539,7 +582,7 @@ export default { name: 'BarrierPane' }
               <span v-else class="aim-dim">{{ row.claims_count }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="ts" label="at" width="200" />
+          <el-table-column prop="ts" :label="colAt" width="200" />
           <el-table-column label="digest" min-width="200">
             <template #default="{ row }"><span class="aim-mono aim-dim">{{ (row.digest || '').slice(0, 24) }}…</span></template>
           </el-table-column>
@@ -612,11 +655,22 @@ export default { name: 'BarrierPane' }
           no refusal matches these filters.
         </p>
         <el-table v-else :data="refusalsOf(ch)" size="small" class="aim-refusal-table">
-          <el-table-column prop="ts" label="at" width="200" />
+          <el-table-column prop="ts" :label="colAt" width="200" />
           <el-table-column prop="agent" label="agent" width="160" />
           <el-table-column prop="action" label="attempted" min-width="240" />
-          <el-table-column prop="class" label="class" width="110">
-            <template #default="{ row }"><el-tag size="small" type="danger" effect="plain">{{ row.class }}</el-tag></template>
+          <el-table-column label="class" width="110">
+            <!-- The token, named by the dictionary rather than echoed raw: this
+                 cell printed `barrier` / `form` while the Help page explained the
+                 same three tokens in prose (`REFUSAL_PROSE`, keyed by the same
+                 class names), which is one value with two renderings. The label
+                 comes off the payload's registry (`board.doc.concepts`, group
+                 `refusal`); the token stays in the tooltip, because it is what
+                 `bin/aim` files the row under. -->
+            <template #default="{ row }">
+              <el-tooltip :content="row.class" placement="top" :show-after="200">
+                <el-tag size="small" type="danger" effect="plain">{{ classLabel(row.class) }}</el-tag>
+              </el-tooltip>
+            </template>
           </el-table-column>
           <el-table-column label="phase" width="150">
             <template #default="{ row }">

@@ -178,7 +178,7 @@ const matched = computed(() => board.tasks.filter(visible).length)
  *
  * The badge was `(cols[st] || []).length`, and that was wrong twice over. It is
  * the count of *cards drawn on this page* (`cols` is sliced by the page bound at
- * `:218-228`), so a column of ninety with `per=25` said 25; and the set it
+ * `:226-236`), so a column of ninety with `per=25` said 25; and the set it
  * counted is the merge, so the `done` column's number carried promises whose only
  * evidence is `plan/plan.json`. Measured on this tree
  * (`fabric.load_fabric(root, ['plan/*.json'], date(2026,9,22))`, 177 rows): 87

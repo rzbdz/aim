@@ -84,12 +84,31 @@ export const messageWaiting = (message, viewer) => message.to === viewer
  * printing a 0 the server never stated -- and only then does the caller fall
  * back to the board's own rows (`workFromBoard` below), because a second fold of
  * the same question is how two surfaces come to disagree about one number.
+ *
+ * `hasPayloadCount` is that distinction, published rather than left as prose, and
+ * it is the fix for a flag that could not be checked. Measured on this tree
+ * (2026-09-22): `channels[].tasks_recorded` is published for all five channels
+ * (`hello 90`, `barrier-v0 6`, `dev`/`s2-scratch`/`s2-scratch2` 0), so the
+ * fallback is dead code on the live payload and no assertion over `/api/state`
+ * can tell which of the two counts a row printed. The other flag the pane used to
+ * set -- `thread.tasksFromRows` -- was written once and read nowhere (`grep -rn
+ * tasksFromRows web/` returned the write and nothing else), so the title below
+ * could claim `from the payload:` over a number folded from the board's own rows
+ * and nothing in the DOM, the tests, or the type of the object said otherwise.
+ * A boolean the template reads is the difference: `data-count-from` on the row is
+ * a string a test can assert, and it is `board-rows` exactly when the payload did
+ * not answer the question.
  */
 export const channelFacts = (entry) => {
   const count = Number(entry?.tasks_recorded)
   return {
     topic: String(entry?.topic || '').trim(),
     tasks: Number.isFinite(count) ? count : null,
+    // A `0` is an answer ("the server counted zero") and a `null` is the absence
+    // of one. `Number.isFinite(undefined)`, `NaN` and `0` all have to be told
+    // apart from each other, which is what this flag does for the two callers
+    // that have only the object.
+    hasPayloadCount: Number.isFinite(count),
     // Who the channel is for. Published beside the topic (`channels[].participants`,
     // `aimboard/api.py:358`) and, like the topic, absent from the gate's copy of
     // the same channel -- so it is carried on the thread here rather than looked
@@ -110,11 +129,26 @@ export const channelFacts = (entry) => {
 export const isProbe = (thread) => thread.group === 'channel' && thread.tasks === 0
   && thread.msgs.length === 0
 
-/** "2 work items, no messages" -- the two halves of what a thread holds. */
-export const held = (thread) => [
+/**
+ * "2 work items, no messages" -- the two halves of what a thread holds.
+ *
+ * `recorder` is the name of the fold that produced a count the server did not
+ * publish (`workFromBoard` at the call sites). The default is empty, and empty
+ * means "the server did not answer this question", so the sentence says
+ * `work count not published` instead of printing a `0` nobody stated -- which is
+ * what this did before, and it is still the honest sentence.
+ *
+ * What it stopped doing is saying it in a way that could not be checked. The two
+ * `null`s a thread can carry are different facts -- "no key in the payload" (a
+ * channel the server did not describe) and "this is not a channel at all" (a room
+ * and a direct thread both hardcode `tasks: null` at the thread construction
+ * above) -- and the second argument is the only place that difference can be
+ * spent, because by the time a row is drawn both are the same `null`.
+ */
+export const held = (thread, recorder = '') => [
   thread.group === 'channel'
     ? thread.tasks === null
-      ? 'work count not published'
+      ? (recorder ? `work count not published (${recorder})` : 'work count not published')
       : thread.tasks
         ? `${thread.tasks} work item${thread.tasks === 1 ? '' : 's'}`
         : 'no work items'
@@ -325,10 +359,22 @@ const threads = computed(() => {
      * becomes two. So the empty case is counted from the payload's own rows and
      * the row says which count it is printing -- a channel drawn as a probe for
      * the want of a field would be the wrong side of that trade.
+     *
+     * Both provenance fields are written here because they are read at different
+     * times and by different things. `hasPayloadCount` is the one the *template*
+     * reads: `channelFacts` above sets it true for every declared channel, and
+     * this branch is by definition the case where no declared channel answered.
+     * `tasksFromRows` is the same fact stated for the object a caller holds, and
+     * it is the field the old code wrote on its own -- writing only it left the
+     * assertion to the prose below; writing both means the row, the title and a
+     * test all read one value. Measured: `channels[].tasks_recorded` is present
+     * for all five live channels, so neither field is `true` on today's board and
+     * the pair exists for the payload that omits the key.
      */
     if (thread.group === 'channel' && thread.tasks === null) {
       thread.tasks = workFromBoard(thread)
       thread.tasksFromRows = true
+      thread.hasPayloadCount = false
     }
     thread.msgsCount = thread.msgs.length
   }
@@ -800,8 +846,26 @@ async function sendDirect() {
                         title="no work items and no messages: this channel was opened and nothing was recorded in it">
                   scaffolding — no work, no messages
                 </el-tag>
+                <!-- Two sentences, because there are two sources and one string
+                     used to cover both of them.
+                     `from the payload:` was true of the count only while the
+                     server published `tasks_recorded`; the same tooltip covered
+                     the work count in a case where the number came from the
+                     board's own rows instead (`workFromBoard`, the merge, folded
+                     one property above), and nothing outside the JS object could
+                     tell the reader which of the two they were looking at.
+                     `hasPayloadCount` is published by `channelFacts` and set false
+                     by the fallback, and it is read here -- and as
+                     `data-count-from` on the element, because a flag that only a
+                     tooltip's prose mentions is not checkable by a test. -->
                 <el-tag v-else class="aim-held" size="small" effect="plain"
-                        :title="`from the payload: ${t.topic || 'no topic'}`">{{ held(t) }}</el-tag>
+                        :data-count-from="t.hasPayloadCount ? 'payload' : 'board-rows'"
+                        :data-tasks="t.tasks"
+                        :title="t.hasPayloadCount
+                          ? `counts from the payload: ${t.topic || 'no topic'}`
+                          : `work count folded from the board's own rows, because this channel's record publishes no count: ${t.topic || 'no topic'}`">
+                  {{ held(t, t.hasPayloadCount ? '' : "the board's own rows") }}
+                </el-tag>
               </div>
               <div v-if="t.group === 'channel' && t.topic" class="aim-dim aim-thread-topic">
                 {{ t.topic }}
@@ -828,10 +892,18 @@ async function sendDirect() {
                  The card's third clause: the header named the id, the gate and the
                  phase note, which is a state and not a purpose. The words come
                  from `held()` and `isProbe()`, the same two the list rows use, so
-                 the header and the row cannot describe one channel differently. -->
+                 the header and the row cannot describe one channel differently.
+                 That last sentence is why the second argument is passed here too:
+                 `held` names the fold that produced a count the server did not
+                 publish, and a header that said only `work count not published`
+                 where the row said `(the board's own rows)` would be the same
+                 channel described two ways by two renderers -- the defect the
+                 sentence above is about, reintroduced one line down. -->
             <el-tag v-if="current?.group === 'channel'" size="small"
+                    :data-count-from="current?.hasPayloadCount ? 'payload' : 'board-rows'"
                     :type="isProbe(current) ? 'info' : 'success'" effect="plain">
-              {{ isProbe(current) ? 'scaffolding — no work, no messages' : held(current) }}
+              {{ isProbe(current) ? 'scaffolding — no work, no messages'
+                 : held(current, current.hasPayloadCount ? '' : "the board's own rows") }}
             </el-tag>
             <span class="aim-dim" style="font-size:11.5px">{{ current?.note }}</span>
             <span style="flex:1" />

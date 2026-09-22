@@ -601,6 +601,31 @@ const ACTIONS = computed(() => {
         beside the English, never instead of it. These are the values the rest of the board shows.
       </p>
 
+      <!-- T-0202's label clause, answered where the reader can check it.
+           `design/17-org-and-project.md` §4 is the convention: "one dictionary,
+           keyed by token" -- the raw value stays canonical and stays available, and
+           stops being the *primary* label. The dictionaries are real and split
+           across the wire:
+             en  the key set inside `concepts.js` and `theme.js`, plus the labels the
+                 kernel registers per view (`aimboard/kernel.py:70`), which this page
+                 prints as the pane directory below;
+             zh  `aimboard/const.py:28` `LABELS`, read by the **server-rendered**
+                 page (`aimboard/page.py:25`: `title_zh` when the lang is `zh`).
+           The browser shell carries only `en`: `titleZh` was removed from all eight
+           view registrations on 2026-09-22 (commit `5e21423`, with the nav and the
+           `h2` that read `titleZh || title`), and `web/tests/boards.spec.js:141`
+           now asserts the rendered document contains no CJK at all. So the honest
+           sentence is not "this page is bilingual" -- it is which half is where,
+           which is what a reader looking for the zh label needs in order to find
+           it. One paragraph, because the token tables below are already long. -->
+      <p class="aim-dim" style="font-size:12px;margin:10px 0 0;padding-left:10px;border-left:2px solid var(--aim-line)">
+        <b>Two languages, one dictionary.</b> Every word below is keyed by the raw token the record and
+        <code class="aim-mono">aim</code> use, and the label names that token rather than replacing it —
+        which is why the token is on the page beside the English. The <b>zh</b> half lives in
+        <code class="aim-mono">aimboard/const.py</code> and is read by the server-rendered page; this
+        browser shell draws the <b>en</b> half only.
+      </p>
+
       <h4 style="margin:14px 0 6px;font-size:12.5px">Work item status — what a card in a column means</h4>
       <table class="aim-help-table">
         <thead>

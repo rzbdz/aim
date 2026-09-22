@@ -4,6 +4,7 @@ import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import TaskLink from '../components/TaskLink.vue'
 import { color, days, isOverdue, today } from '../theme'
+import { axisDay, CALENDAR_ZONE } from '../dates'
 
 const ctx = inject('ctx')
 const board = useBoard()
@@ -254,8 +255,16 @@ const barTooltip = (p) => {
   if (!t) return ''
   const seed = isPromise(t)
   const when = seed ? 'planned dates' : 'recorded dates'
+  // The calendar rides on the word `planned`/`recorded` rather than on each of the
+  // two dates, because it is the same fact for both and it is the fact that makes
+  // them readable: `dates.js` `CALENDAR_ZONE` is `plan/plan.json:5`'s timezone, the
+  // one `design/17` §4 names as the source for what a due date *means*. The strings
+  // `planned dates` / `recorded dates` are asserted by `web/tests/card-t0188-gantt-seeds.spec.js:203`
+  // and `web/tests/recorded-vs-seed.spec.js:345`, so the clause is appended and the
+  // two words are left exactly where those tests read them.
+  const calendar = ` (${CALENDAR_ZONE} calendar)`
   return `${laneMark(t)} <b>${t.id}</b> ${t.title}<br/>${t.status} · ${t.owner || 'unassigned'} · ${t.priority || '-'}<br/>`
-    + `${when}: ${t.start || '?'} → ${t.due || '?'}${t.estimate ? ` (${t.estimate}d estimate)` : ''}<br/>`
+    + `${when}${calendar}: ${t.start || '?'} → ${t.due || '?'}${t.estimate ? ` (${t.estimate}d estimate)` : ''}<br/>`
     + (seed
       ? '<i>plan seed, not recorded</i>: this bar is a promise from plan/*.json, '
         + 'there is no work item behind it and no event has ever moved it'
@@ -571,10 +580,14 @@ const option = computed(() => {
     xAxis: {
       type: 'value', min: 0, max: n, position: 'top',
       axisLabel: {
-        formatter: (v) => {
-          const d = new Date(Date.parse(lo) + v * 86400000)
-          return `${d.getMonth() + 1}/${d.getDate()}`
-        },
+        // The tick at `lo + v` is a *calendar date* from the horizon, and this used
+        // to read it back with `getMonth()/getDate()` -- browser-local. Measured on
+        // this machine, `lo = 2026-09-21` at `v = 3` labels `9/24` under
+        // `Asia/Shanghai` and `9/23` under `America/New_York`: one plan, two axes,
+        // a day apart, decided by where the reader was sitting. `axisDay` does the
+        // same arithmetic and reads the day back the way it computed it, so the
+        // label is a property of the horizon and not of the browser.
+        formatter: (v) => axisDay(lo, v),
       },
       splitLine: { show: true, lineStyle: { opacity: 0.18 } },
     },
@@ -634,7 +647,15 @@ const undatedOpen = ref(false)
         <span :data-recorded="datedRecorded.length" :data-seeds="datedSeeds.length" :data-drawn="drawn">
           timeline — {{ rows.length }} shown; of {{ allDated.length }} dated bar(s),
           <b>{{ datedRecorded.length }}</b> on the record and {{ datedSeeds.length }}
-          <span class="aim-chip seed">plan seeds</span> (promises, not work), {{ span.lo }} → {{ span.hi }}</span>
+          <span class="aim-chip seed">plan seeds</span> (promises, not work), {{ span.lo }} → {{ span.hi }}
+          <!-- The calendar the horizon is drawn in. The two dates beside this are
+               bare `YYYY-MM-DD` -- they have no instant in them to be in a zone --
+               and `design/17` §4 makes the one they *mean* something in the plan's:
+               `plan/plan.json:5`, which `dates.js` `CALENDAR_ZONE` reads. Without
+               it the axis is a run of dates the reader has to assume a calendar
+               for, and the tick labels it generates are the "M/D" of that same
+               assumption. -->
+          <span class="aim-dim">· calendar {{ CALENDAR_ZONE }}</span></span>
         <el-input v-model="filters.q" size="small" placeholder="search id, title, acceptance" clearable />
         <el-select v-model="filters.owner" size="small" placeholder="owner" clearable>
           <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />
