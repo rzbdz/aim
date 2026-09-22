@@ -1,6 +1,7 @@
 """The command line."""
 import argparse
 import errno
+import hashlib
 import json
 import subprocess
 import os
@@ -8,16 +9,16 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 from .const import LABELS
 from .api import payload as json_state
 from .exporters import export_csv, export_ical, json_payload
 from .fabric import fabric_digest, load_fabric
 from .revision import describe as describe_revision
-from .fold import drift
+from .fold import drift, flow_series, parse_span
 from .gate import gate_channel, visible_tasks
 from .page import render_html
-from .primitives import now_iso, parse_day, read_json
+from .primitives import now_iso, parse_day, read_json, read_jsonl
 
 
 def cmd_render(args):
@@ -361,6 +362,82 @@ def cmd_serve(args):
                             live[(r.get("task"), r.get("configId"))] = r
             return [(task, c) for (task, _cid), c in live.items()]
 
+        def _flow(self):
+            """GET /api/flow - the opened/done rate, folded from the raw events.
+
+            Two traps, both named in the contract on T-0217, shape this method:
+
+              * `do_GET` splits the query string off `self.path` before
+                dispatch, so a handler reading the stripped `path` sees every
+                parameter as its default. The query is parsed from `self.path`
+                here, and a bad value is refused rather than defaulted.
+              * the series is folded from the raw `tasks.jsonl` list, not from
+                `fold_tasks` output, so `unplaced` and `retracted` survive into
+                the answer and a consumer can reconcile it against the board.
+
+            `revision.digest` is `fabric_digest(root)`, the same function
+            `/api/digest` uses, so a monitor can poll the cheap digest and fetch
+            this only when it changes, then check the two agree. The viewer is
+            the one `/api/state` uses (`?as=`), and the gate is applied to the
+            raw events by id before the fold: a chart that counted a peer's
+            divergence-phase draft would be a route around a refusal `aim`
+            records, which is the one thing this dashboard must not be.
+            """
+            params = parse_qs(urlsplit(self.path or "").query)
+
+            def one(name, default=""):
+                return (params.get(name) or [default])[0]
+
+            bucket, window = one("bucket", "10m"), one("window", "24h")
+            wanted, provenance = one("channel", ""), one("provenance", "recorded")
+            if parse_span(bucket) is None:
+                self._send(json.dumps({"error": "bad bucket", "bucket": bucket,
+                                       "accepts": "an integer and a unit: 30s, 10m, 1h, 1d"}),
+                           "application/json; charset=utf-8", status=400)
+                return
+            if parse_span(window) is None:
+                self._send(json.dumps({"error": "bad window", "window": window,
+                                       "accepts": "an integer and a unit: 30m, 12h, 24h, 7d"}),
+                           "application/json; charset=utf-8", status=400)
+                return
+            if provenance not in ("recorded", "all"):
+                # Refuse rather than default. The store's events carry no import
+                # marker, so `provenance=import` cannot be honoured, and a
+                # filter that quietly answers as if it had been is the failure
+                # mode the contract's rate fields exist to avoid.
+                self._send(json.dumps({
+                    "error": "unsupported provenance", "provenance": provenance,
+                    "accepts": ["recorded", "all"],
+                    "why": "no event in the store carries an import marker, so an "
+                           "import burst cannot be filtered out of the series; the "
+                           "contract publishes opened_first_ts/opened_last_ts so a "
+                           "consumer picks its own burst threshold"}),
+                    "application/json; charset=utf-8", status=400)
+                return
+            state = self._state()
+            known = sorted(c["id"] for c in state["channels"])
+            if wanted and wanted not in known and not (root / "channels" / wanted).is_dir():
+                self._send(json.dumps({"error": "no such channel", "channel": wanted,
+                                       "channels": known}, ensure_ascii=False),
+                           "application/json; charset=utf-8", status=404)
+                return
+            ids = [wanted] if wanted else known
+            events, blob = [], b""
+            for cid in ids:
+                path = root / "channels" / cid / "tasks.jsonl"
+                if path.is_file():
+                    blob += path.read_bytes()
+                    events += read_jsonl(path)
+            viewer = self._viewer()
+            visible, _hidden = visible_tasks(state, viewer, gate_channel(state, viewer, {}))
+            hidden_ids = set(state["tasks"]) - set(visible)
+            events = [ev for ev in events if ev.get("task") not in hidden_ids]
+            self._send(json.dumps(flow_series(
+                events, bucket=bucket, window=window, channels=ids,
+                digest=fabric_digest(root), tasks_sha256=hashlib.sha256(blob).hexdigest(),
+                seeds=state["seed_tasks"], provenance=provenance), ensure_ascii=False),
+                "application/json; charset=utf-8")
+
         def _rpc_POST(self):
             """Serve the A2A JSON-RPC surface at /rpc (T-0122)."""
             try:
@@ -527,6 +604,9 @@ def cmd_serve(args):
                     self._send(json.dumps(describe_revision(root, web), ensure_ascii=False),
                                "application/json; charset=utf-8")
                     return
+                if path == "/api/flow":
+                    self._flow()
+                    return
                 if path.startswith("/api/"):
                     # An unhandled API path is a 404, never the app.
                     #
@@ -542,7 +622,8 @@ def cmd_serve(args):
                         "error": "no such endpoint",
                         "path": path,
                         "endpoints": ["/api/state", "/api/digest", "/api/agents",
-                                      "/api/revision", "/api/command (POST, --allow-write)"],
+                                      "/api/revision", "/api/flow",
+                                      "/api/command (POST, --allow-write)"],
                     }, ensure_ascii=False), "application/json; charset=utf-8", status=404)
                     return
                 if path == "/api/agents":

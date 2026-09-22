@@ -1,9 +1,13 @@
 """Board state is a fold over the log, never a file."""
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta, timezone
 
 from .const import TERMINAL
 from .const import PLAN_FIELDS
 from .primitives import as_list, day_of
+
+
+_SPAN_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def fold_tasks(events):
@@ -164,11 +168,25 @@ def report_data(tasks, milestones, as_of, days=14):
                                         if day_of(h["created"]) <= d
                                         and not (h["done"] and day_of(h["done"]) <= d)),
                        "done": throughput.get(key, 0)})
+    def unmet_dependency(task):
+        """A block is an unmet edge, not the existence of one.
+
+        Carrying a `blocked_by` is not the same as being blocked: a dependency
+        whose target is already terminal is met, and a row that carries one is
+        not blocked in any reading. Terminal work is excluded outright -- a
+        finished item cannot be blocked, whatever edge it carries.
+        """
+        if task.get("status") in TERMINAL:
+            return False
+        for dep in task.get("blocked_by") or []:
+            if (tasks.get(dep) or {}).get("status") not in TERMINAL:
+                return True
+        return False
+
     blocked = [{"id": tid, "title": h["task"].get("title", ""),
                 "status": h["task"].get("status", ""), "owner": h["task"].get("owner", ""),
                 "blocked_by": h["task"].get("blocked_by") or []}
-               for tid, h in hist.items()
-               if (h["task"].get("blocked_by") or h["task"].get("status") == "blocked")]
+               for tid, h in hist.items() if unmet_dependency(h["task"])]
     by_milestone = {}
     for mid, m in milestones.items():
         items = [t for t in tasks.values() if t.get("milestone") == mid]
@@ -180,3 +198,254 @@ def report_data(tasks, milestones, as_of, days=14):
             "median_cycle": (sorted(cycles)[len(cycles) // 2] if cycles else None),
             "recorded": len(dated), "with_history": len(done), "seed_only": len(tasks) - len(dated),
             "blocked": sorted(blocked, key=lambda b: b["id"]), "milestones": by_milestone}
+
+
+def parse_span(text):
+    """'10m' -> 600. None when it is not a span.
+
+    One parser for `bucket` and `window` both. Two slightly different regexes
+    is how a request is accepted as a bucket and rejected as a window, or the
+    reverse, and the caller never learns which one was reading it.
+    """
+    m = re.fullmatch(r"(\d+)\s*([smhd])", str(text or "").strip().lower())
+    if not m:
+        return None
+    return int(m.group(1)) * _SPAN_UNITS[m.group(2)]
+
+
+def _epoch(ts):
+    """An ISO-8601 timestamp to seconds since the epoch, or None."""
+    if not ts:
+        return None
+    try:
+        # Python 3.10's fromisoformat does not accept the trailing Z the store
+        # writes, and a parser that silently returns None for every record is
+        # how a chart of an empty store looks exactly like a chart of no work.
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _iso(seconds):
+    return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _flip(kind):
+    kind = str(kind or "")
+    return kind[5:] if kind.startswith("task.") else kind
+
+
+def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
+                digest="", tasks_sha256="", seeds=None, provenance="recorded"):
+    """The `GET /api/flow` answer: a dense opened/done series, folded from RAW events.
+
+    `events` is the raw `channels/<ch>/tasks.jsonl` list, not `fold_tasks`
+    output. `fold_tasks` drops a record whose `created` it never saw and erases
+    a retracted card, so a series folded through it could publish neither
+    `unplaced` nor `retracted` -- and then a consumer could not reconcile the
+    chart against the board it is charting. The counts here are *event* counts;
+    the board is a fold of *items*; publishing both is the point.
+
+    Decisions the contract leaves open, named here because each is a place where
+    a silent default gets read as a measurement:
+
+      * `opened` counts recorded `created` events, including one later retracted;
+        `retracted` publishes the retraction events per bucket, so the board's
+        number is `opened - retracted`. The contract's sample agrees: totals 71
+        opened against `sources.store_recorded` 70, the extra one being T-0001.
+      * `done` counts recorded `moved ... to: done` events only. `dropped` is
+        terminal but is not "done", and a plan seed with `status: done` has no
+        event at all: it appears in `sources.done_from_seed` and never in the
+        series. That is what "which authority produced the number" means here.
+      * `unplaced` counts events whose task's `created` was never seen before
+        them (fold_tasks' `unknown`), so a store with a broken chain still draws
+        a series that says how much of it could not be placed.
+      * `opened_inferred` is 0: nothing in this fold is dated by inference. The
+        field exists so a later "date the seed from the plan" change cannot slip
+        into `opened` without the number moving.
+      * `hours_opened`/`hours_done` come from `estimate_hours` and from nothing
+        else; `estimate_pts` is not converted. They are `null` while no record
+        carries the field (`sources.estimate_hours_records == 0` today) and also
+        `null` for a bucket where only some counted tasks carry it, because a
+        partial sum presented as the bucket's hours is a substitute value.
+      * The window ends at the exclusive end of the bucket containing `now`, so
+        every `series[].start` is a multiple of the width and the current,
+        partial bucket is included: a chart that omits the bucket happening now
+        looks stalled in the middle of a burst.
+    """
+    width = parse_span(bucket)
+    span = parse_span(window)
+    if not width:
+        raise ValueError("bucket must be an integer and a unit: 30s, 10m, 1h, 1d")
+    if not span:
+        raise ValueError("window must be an integer and a unit: 30m, 12h, 24h, 7d")
+    seeds = seeds or {}
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now_epoch = now.timestamp()
+    end = int(now_epoch) // width * width + width
+    rows_n = max(1, -(-span // width))
+    start = end - rows_n * width
+
+    rows, index = [], {}
+    for k in range(rows_n):
+        st = start + k * width
+        row = {"start": _iso(st), "opened": 0, "opened_by": {}, "opened_inferred": 0,
+               "opened_first_ts": None, "opened_last_ts": None,
+               "done": 0, "done_by": {}, "done_first_ts": None, "done_last_ts": None,
+               "hours_opened": None, "hours_done": None, "unplaced": 0, "retracted": 0}
+        index[st] = row
+        rows.append(row)
+    # Private per-bucket piles, stripped before the answer is returned: keeping
+    # them off the row means the public shape cannot drift by accident.
+    acc = {start + k * width: {"o": [], "d": [], "open_ids": [], "done_ids": []}
+           for k in range(rows_n)}
+
+    live, retracted_ids, status, done_ids = set(), set(), {}, set()
+    est_created, est_seed = {}, {}
+    unplaced_all, retracted_all = 0, 0
+    data_start = last_ts = None
+    data_start_e = last_e = None
+    stamps = {}          # epoch -> the ts string, for the idle gap's endpoints
+
+    for ev in events:
+        ts = str(ev.get("ts") or "")
+        e = _epoch(ts)
+        if e is not None:
+            if data_start_e is None or e < data_start_e:
+                data_start_e, data_start = e, ts
+            if last_e is None or e > last_e:
+                last_e, last_ts = e, ts
+        kind = _flip(ev.get("event"))
+        tid = ev.get("task") or ev.get("id")
+        actor = str(ev.get("actor") or "")
+
+        if kind == "created":
+            live.add(tid)
+            retracted_ids.discard(tid)
+            status[tid] = ev.get("status") or "backlog"
+            if "estimate_hours" in ev:
+                est_created[tid] = ev.get("estimate_hours")
+        elif kind == "retracted":
+            live.discard(tid)
+            retracted_ids.add(tid)
+            status.pop(tid, None)
+            retracted_all += 1
+        elif tid in retracted_ids or tid in live:
+            if kind == "moved":
+                status[tid] = ev.get("to", status.get(tid))
+                if ev.get("to") == "done":
+                    done_ids.add(tid)
+            elif kind == "dropped":
+                status[tid] = "dropped"
+        else:
+            # An event for a task whose creation the fold never saw. It is not
+            # silence and it is not a create; it is counted and skipped, the
+            # same way fold_tasks skips it, so the two counts agree.
+            unplaced_all += 1
+            if e is not None and int(e) // width * width in index:
+                index[int(e) // width * width]["unplaced"] += 1
+            continue
+
+        if e is None:
+            continue
+        st = int(e) // width * width
+        if st not in index:
+            continue
+        stamps[e] = ts
+        if kind == "created":
+            row = index[st]
+            row["opened"] += 1
+            row["opened_by"][actor] = row["opened_by"].get(actor, 0) + 1
+            acc[st]["o"].append((e, ts))
+            acc[st]["open_ids"].append(tid)
+        elif kind == "retracted":
+            index[st]["retracted"] += 1
+        elif kind == "moved" and ev.get("to") == "done":
+            row = index[st]
+            row["done"] += 1
+            row["done_by"][actor] = row["done_by"].get(actor, 0) + 1
+            acc[st]["d"].append((e, ts))
+            acc[st]["done_ids"].append(tid)
+
+    est = dict(est_created)
+    for tid, task in seeds.items():
+        value = task.get("estimate_hours") if isinstance(task, dict) else None
+        if tid not in est and isinstance(value, (int, float)) and not isinstance(value, bool):
+            est[tid] = value
+            est_seed[tid] = value
+
+    def hours(ids):
+        if not est:
+            return None              # no record carries estimate_hours: unknowable
+        values = [est.get(i) for i in ids]
+        if any(v is None for v in values):
+            return None              # partial coverage: a sum would understate
+        return sum(values)
+
+    for st, pile in acc.items():
+        row = index[st]
+        if pile["o"]:
+            row["opened_first_ts"] = min(pile["o"])[1]
+            row["opened_last_ts"] = max(pile["o"])[1]
+        if pile["d"]:
+            row["done_first_ts"] = min(pile["d"])[1]
+            row["done_last_ts"] = max(pile["d"])[1]
+        row["hours_opened"] = hours(pile["open_ids"])
+        row["hours_done"] = hours(pile["done_ids"])
+        row["opened_by"] = dict(sorted(row["opened_by"].items()))
+        row["done_by"] = dict(sorted(row["done_by"].items()))
+
+    times = sorted(stamps)
+    idle = None
+    if len(times) >= 2:
+        gap, a, b = max((b - a, a, b) for a, b in zip(times, times[1:]))
+        if gap > 0:
+            idle = {"from": stamps[a], "to": stamps[b], "minutes": int(round(gap / 60.0))}
+
+    merged = {}
+    for tid in set(status) | set(seeds):
+        merged[tid] = (status.get(tid)
+                       or (seeds.get(tid) or {}).get("status") or "backlog")
+    claiming_done = [t for t, v in merged.items() if v == "done"]
+    sources = {
+        # Which authority produced each number. The done series is recorded
+        # events only, which is exactly why it reads 3 while 45 items claim
+        # `status: done`: the other 42 are inherited from plan seeds.
+        "opened_series": "store events",
+        "done_series": "store events",
+        "provenance": provenance,
+        "store_recorded": len(live),
+        "seed_only": len([i for i in seeds if i not in live]),
+        "items_claiming_done": len(claiming_done),
+        "done_from_seed": len([t for t in claiming_done if t not in done_ids]),
+        "retracted_events": retracted_all,
+        "unplaced_events": unplaced_all,
+        # 0 today. It is the reason every hours field is null; a consumer that
+        # sees null can tell "no estimate exists" from "the estimates are 0".
+        "estimate_hours_records": len(est),
+        "estimate_hours_from_seed": len(est_seed),
+    }
+
+    return {
+        "generated_at": datetime.fromtimestamp(now_epoch, timezone.utc)
+                                .strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        "revision": {"digest": digest, "tasks_sha256": tasks_sha256,
+                     "store_last_event_ts": last_ts},
+        "channels": list(channels),
+        "bucket": {"width_seconds": width, "key": "start",
+                   "alignment": f"floor(ts,{width}s) in UTC", "timezone": "UTC"},
+        "window": {"requested": window, "start": _iso(start), "end": _iso(end),
+                   "buckets": rows_n, "data_start": data_start},
+        "series": rows,
+        "totals": {"opened": sum(r["opened"] for r in rows),
+                   "done": sum(r["done"] for r in rows),
+                   "hours_opened": hours([i for st in acc for i in acc[st]["open_ids"]]),
+                   "hours_done": hours([i for st in acc for i in acc[st]["done_ids"]])},
+        "idle_gap": idle,
+        "sources": sources,
+    }
