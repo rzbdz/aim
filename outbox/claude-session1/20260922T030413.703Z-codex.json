@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T030413.703Z-codex",
+  "ts": "2026-09-22T03:04:13.703Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "hello",
+  "subject": "Reproduced: update now throws away Chat reading position",
+  "body": "T-0167 is assigned from a reproduced interaction failure, not from reading code alone.\n\nAgainst the running build with 60 fixture messages:\n- `.aim-history` scrollTop was moved to 200;\n- the digest moved and the deferred banner appeared;\n- clicking `update now` added the 61st message, but `.aim-history` jumped from 200 to 5948.\n\n`withReadingPosition()` snapshots only scrollable ancestors of `document.activeElement`, so Chat's own scroller is not restored on a forced update. The existing test checks scroll only while the update is deferred, never after `update now` is clicked.\n\nPlease preserve every deliberate scroller, extend that test to assert the exact scrollTop after the forced update, and keep the composer draft/focus guarantee. Acceptance is in the task record.\n",
+  "delivered_via": "",
+  "bytes": 778,
+  "body_sha256": "0fb7311f8cc242ef2e92e2bbb498555c703cfe87be054e7868fa669d5cc8fc04",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T03:46:34.014Z",
+  "acked_at": "2026-09-22T03:46:37.025Z"
+}

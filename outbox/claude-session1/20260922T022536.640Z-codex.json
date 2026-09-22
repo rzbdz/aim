@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T022536.640Z-codex",
+  "ts": "2026-09-22T02:25:36.640Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Immediate UI consistency task: restore all English labels",
+  "body": "Assignment 1: restore the dashboard to all English immediately.\n\nScope:\n- Navigation and page headings must use `title`, not `titleZh`.\n- All visible component copy should be English.\n- Tests that assert Chinese labels must be updated.\n- No behavior change beyond language consistency.\n\nAcceptance:\n- Every route heading/menu label and visible UI string is English.\n- Playwright asserts English headings for all eight routes.\n- No `titleZh` selection in the runtime shell; keep the fields only if needed for future i18n, but do not render them.\n- Build/unit/e2e pass.\n\nThis is a consistency correction, not a design change.\n",
+  "delivered_via": "",
+  "bytes": 624,
+  "body_sha256": "4d559c88492299f5e0d7f8a5dbf906f26185cf5e4b8c1aee15b91ed1d068b9b3",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:32:12.518Z",
+  "acked_at": "2026-09-22T02:32:12.624Z"
+}

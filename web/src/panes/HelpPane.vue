@@ -25,22 +25,50 @@
 import { computed, inject, ref } from 'vue'
 import PhaseChip from '../components/PhaseChip.vue'
 import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASE_ACCESS, PHASES, TRANSITIONS, phaseAnchor } from '../concepts'
+import { STATUS_TYPE, statusLabel } from '../theme'
 import { useBoard } from '../stores/board'
 
 const board = useBoard()
 const ctx = inject('ctx')
 
 /**
- * The scroller is named, not looked up.
+ * The shell's groups, in the shell's order, over the panes it registered.
  *
- * `main.js:81-101` resolves a fragment against `.aim-main` because
- * `vue-router`'s scroll handling is about the window and this shell's window
- * never scrolls. The contents has to move the same element, so it is handed the
- * same selector: an `ElAnchor` left on its default container would write into
- * `document.documentElement` and move nothing, which is the exact failure
- * `main.js:66-79` was written to fix.
+ * The shell draws this grouping in its sidebar (`App.vue:53-67`) and this page
+ * has to agree with it or the map is a second opinion about the same nav. Only
+ * the membership is written here; the title and the purpose sentence are read off
+ * the registration, so a pane that renames itself renames its row.
  */
-const scroller = '.aim-main'
+const PANE_GROUPS = [
+  { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
+  { title: 'Conversation', keys: ['chat'] },
+  { title: 'Insight', keys: ['reports'] },
+  { title: 'Governance', keys: ['barrier', 'plan'] },
+  { title: 'Reference', keys: ['help'] },
+]
+
+/**
+ * Move the pane's own scroller to a row, and keep the address bar honest.
+ *
+ * A plain `<a href="#phase-commit">` cannot be used here: in hash mode the whole
+ * route lives *in* the fragment, so the browser's own fragment jump rewrites the
+ * route to `phase-commit` ("no such pane") and moves the window, which this shell
+ * does not scroll. `main.js:141-158` resolves a fragment against `.aim-main` for
+ * exactly that reason, and this is the same move made by the page that owns the
+ * links -- same selector, same 12px offset, so a row lands identically whether the
+ * reader followed a chip or a contents line. The fragment is replaced rather than
+ * pushed, so Back still returns to the pane the reader came from.
+ */
+function goTo(id) {
+  const scroller = document.querySelector('.aim-main')
+  const target = document.getElementById(id)
+  if (!scroller || !target) return
+  const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+  scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 12), behavior: 'smooth' })
+  const parts = String(window.location.hash || '').split('#')
+  parts[parts.length - 1] = id
+  history.replaceState(null, '', parts.join('#'))
+}
 
 /**
  * The pane directory, straight off the shell's own registrations.
@@ -59,27 +87,21 @@ const scroller = '.aim-main'
  * of the answer to "what am I looking at". A key the shell no longer registers is
  * dropped rather than drawn as a dead row.
  */
-const navGroups = computed(() => {
-  const byKey = new Map((ctx?.views || []).map((view) => [view.key, view]))
-  return [
-    { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
-    { title: 'Conversation', keys: ['chat'] },
-    { title: 'Insight', keys: ['reports'] },
-    { title: 'Governance', keys: ['barrier', 'plan'] },
-    { title: 'Reference', keys: ['help'] },
-  ].map((group) => ({ title: group.title, panes: group.keys.map((key) => byKey.get(key)).filter(Boolean) }))
+const panes = computed(() => {
+  const index = new Map((ctx?.views || []).map((view) => [view.key, view]))
+  return PANE_GROUPS.map((group) => ({ title: group.title, panes: group.keys.map((key) => index.get(key)).filter(Boolean) }))
     .filter((group) => group.panes.length)
 })
 
 /**
- * Which section the contents says the reader is in, for the first paint.
+ * A deep link into this page is the shell's job, not this page's.
  *
- * `ElAnchor` works this out itself on mount, but only for an href that is a real
- * selector, and the shell's whole hash is `#/help#phase-resolve` -- one string
- * with two `#` in it. So the id is read the way `main.js:57-63` reads it, with
- * the last `#` as the separator, and handed over as `currentAnchor`. Without it a
- * deep link opens with nothing marked, which reads as "you are nowhere" on
- * exactly the arrival every phase chip in the product links to.
+ * `main.js:141-158` splits the fragment at the last `#` (the whole route lives in
+ * it: `#/help#phase-resolve` is one string with two) and scrolls `.aim-main` to
+ * the row, retrying until the lazy chunk has mounted. This page therefore has to
+ * do exactly one thing for that to work: carry the ids. It used to keep a local
+ * `currentAnchor` for an `ElAnchor` that was never rendered, which marked the
+ * contents for nobody.
  */
 const initial = ref('')
 {
@@ -88,6 +110,15 @@ const initial = ref('')
   const fragment = cut === -1 ? '' : decodeURIComponent(raw.slice(cut + 1))
   if (fragment && document.getElementById(fragment)) initial.value = fragment
 }
+
+/**
+ * A pane's URL, by the shell's own rule.
+ *
+ * `main.js:292-295` registers `/${view.key}` for every view, so a link to a pane
+ * is derived the same way the route is: the help map is written once and cannot
+ * point at a path a pane stopped having.
+ */
+const pathOf = (view) => `/${view.key}`
 
 /**
  * The contents is built from this list, and the cards below carry these ids.
@@ -101,9 +132,23 @@ const SECTIONS = [
   { id: 'concepts', title: 'Why this is shaped the way it is' },
   { id: 'phases', title: 'Phases — where a channel is and what that lets you do' },
   { id: 'machine', title: 'The state machine — how a channel moves' },
+  { id: 'tokens', title: 'The words on the screen — every token the board draws' },
+  { id: 'inspecting', title: 'How a person acts on a work item — and on a decision' },
   { id: 'identifiers', title: 'Identifiers — what a bare M3 or R7 means' },
   { id: 'glossary', title: 'Glossary' },
 ]
+
+/**
+ * The phase enum, always drawn through its chip.
+ *
+ * `PHASES` carries a `next` that is a protocol value, and `TRANSITIONS` carries
+ * `from`/`to` protocol values. Drawn raw those are enums in a label, which is the
+ * defect this page exists to answer -- so both go through the one component that
+ * knows the English word and keeps the raw value one hover away. The anchor is
+ * built here rather than in a second lookup, so the row a chip links to and the
+ * row the contents links to are the same expression.
+ */
+const phaseAt = (key) => ({ key, label: phaseLabel(key), anchor: phaseAnchor(key) })
 
 /**
  * The convention from `concepts.js`, joined to the counts in the live record.
@@ -209,32 +254,84 @@ const identifierRows = computed(() =>
   }))
 
 /**
- * The transition table's caption, read off `TRANSITIONS` rather than written out.
+ * The task state machine, cited from `bin/aim:95-102`.
  *
- * Both sentences used to spell out two phase names in prose ("Synthesising →
- * Cross-examining", "Sealed, Committed and Synthesising"): a second copy of the
- * dictionary, in the one direction that cannot be caught, because prose does not
- * fail when the dictionary changes. They are now the chips' own labels, and the
- * anchored rows they point at are read from the list, so a renamed phase renames
- * its sentence.
- *
- * `el-tag` rather than `PhaseChip` for the enum beside it: a chip inside a `p`
- * wraps an `el-tooltip` around a `<span>`, and a tooltip's trigger keys swallow
- * the keys of whatever it wraps (components/PhaseChip.vue:30-40). Nothing here is
- * a control, so a tag is the honest element.
+ * `board.statuses` is the live list of statuses the tool can write and the
+ * payload carries no transition table, so the moves are the one thing on this
+ * card that cannot be read off the record. They are the tool's own `TASK_FLOW`,
+ * quoted, and the statuses they are looked up by come off the payload -- so a
+ * vocabulary the build no longer has draws nothing rather than a table of
+ * statuses this page invented.
  */
-const edgeTo = (key) => TRANSITIONS.find((edge) => edge.from === key && edge.to === 'CROSS_EXAMINE')
-const rowAt = (key) => (key ? `#${phaseAnchor(key)}` : '')
-const labelOf = (rows) => rows.map((row) => phaseLabel(row.key)).join(', ')
+const TASK_FLOW = {
+  backlog: ['ready', 'blocked', 'dropped'],
+  ready: ['doing', 'blocked', 'dropped'],
+  doing: ['review', 'blocked', 'dropped'],
+  review: ['done', 'doing', 'blocked', 'dropped'],
+  done: [],
+  blocked: ['ready', 'doing', 'dropped'],
+  dropped: [],
+}
+
 /**
- * The cells the raw enums sit in, keyed by the enum.
+ * The refusal classes, from `aimboard/api.py:70-112`.
  *
- * `phase.next` is the protocol value of the phase a reader goes to next, and the
- * protocol-value column of the row above is the same string -- so this is the
- * one lookup that puts the English word beside the enum without writing the
- * mapping a third time.
+ * The three strings are what the barrier's class column and the refusal filter
+ * offer, and until this card they were the only tokens on the board with no
+ * definition anywhere a reader could reach. Written here rather than derived
+ * because the registry that defines them (`concept_group`) is served by the API
+ * in another agent's card (T-0214); when that payload key lands these three rows
+ * become a read of it, and the class names do not change.
  */
-const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
+const REFUSAL_CLASSES = [
+  { class: 'barrier',
+    label: 'the barrier',
+    how: 'You asked for something the phase withholds — reading a sealed peer, speaking in Resolving, '
+      + 'advancing without being the leader. Recorded with the phase it happened in, because the '
+      + 'temptation is the evidence.' },
+  { class: 'form',
+    label: 'a malformed request',
+    how: 'The call was rejected before the phase was consulted: a missing argument, an id that does not '
+      + 'exist, a value the verb cannot take. A bug or a typo, not a protocol finding — so it is not '
+      + 'evidence about the barrier.' },
+  { class: 'unrecorded',
+    label: 'a class the refusing site did not state',
+    how: 'The refusal is real and the reason is missing. A weaker claim than either of the two above, '
+      + 'and drawn as one rather than guessed at.' },
+]
+
+/**
+ * The verbs a person actually reaches for, with their flags.
+ *
+ * Every flag here except `--force` is quoted from `bin/aim:4118-4170`; `--force`
+ * is on `task link` and is named because it is the one flag that writes a
+ * deadlock into the record on purpose. The channel is the live one, so the
+ * sentence is runnable rather than illustrative, and `--as` carries the identity
+ * the server declares rather than a placeholder.
+ */
+const ACTIONS = computed(() => {
+  const as = board.writer || board.viewer || '<you>'
+  const ch = board.doc?.channel || '<channel>'
+  const at = `--as ${as} --channel ${ch}`
+  return [
+    { want: 'Take a work item nobody has taken', where: 'Items, Kanban and Attention mark it unassigned',
+      argv: `aim task claim ${at} --id <T-…>` },
+    { want: 'Move one along the board', where: 'drag a card, or the drawer on any row',
+      argv: `aim task move ${at} --id <T-…> --to <status> [--reason "…"]` },
+    { want: 'Hand one to somebody else', where: 'the owner control in the item drawer',
+      argv: `aim task assign ${at} --id <T-…> --owner <who> [--reason "…"]` },
+    { want: 'Answer a decision that is waiting on you', where: 'the decisions card on Attention',
+      argv: `aim task move ${at} --id <T-…> --to <status> --reason "…"` },
+    { want: 'Ask the leader to open cross-examination', where: 'a participant cannot advance a channel',
+      argv: `aim request-advance ${at} --to CROSS_EXAMINE --reason "…"` },
+    { want: 'Advance the channel yourself (leader only)', where: 'the phase control on Audit & barrier',
+      argv: `aim advance ${at} --to <PHASE>` },
+    { want: 'Record a blocker between two items', where: 'the dependency editor on Gantt and Plan',
+      argv: `aim task link ${at} --id <T-…> --blocked-by <T-…>` },
+    { want: 'Write down what you found', where: 'the drawer, on any item',
+      argv: `aim task comment ${at} --id <T-…> --body "…"` },
+  ]
+})
 </script>
 
 <template>
@@ -246,7 +343,49 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
       </template>
     </el-alert>
 
-    <el-card shadow="never" style="margin-bottom:14px" class="aim-help-concepts">
+    <!-- The contents and the pane map, first, because the two complaints this
+         page earned were "no way in" and "never says what any pane is for", and
+         both are about the reader who has not started reading yet. -->
+    <el-card shadow="never" style="margin-bottom:14px">
+      <template #header><span>On this page</span></template>
+      <ol class="aim-help-contents">
+        <!-- A button, not an `<a href="#id">`: see `goTo` above -- in hash mode
+             the route is the fragment, so the browser's own jump is a navigation
+             to a pane that does not exist. -->
+        <li v-for="entry in SECTIONS" :key="entry.id">
+          <button type="button" class="aim-help-toc" @click="goTo(entry.id)">{{ entry.title }}</button>
+        </li>
+      </ol>
+      <p class="aim-dim" style="font-size:12px;margin:10px 0 0">
+        Every section also has a stable anchor — <code class="aim-mono">{{ SECTIONS[0].id }}</code>,
+        <code class="aim-mono">phase-commit</code>, <code class="aim-mono">concept-barrier</code> — which is
+        what a chip or an identifier on another page links to. The page never renames one of those quietly:
+        a link from a page the reader cannot see is broken without anyone noticing.
+      </p>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px" id="panes">
+      <template #header><span>The panes — what each page is for</span></template>
+      <p class="aim-dim" style="font-size:12.5px;margin-top:0">
+        The sidebar names tools; this says what each one is for. The title and the purpose sentence are the
+        pane's own registration, not a second copy of it, and the grouping is the shell's.
+      </p>
+      <div v-for="group in panes" :key="group.title" class="aim-help-pane-group">
+        <h4>{{ group.title }}</h4>
+        <table class="aim-help-table">
+          <tbody>
+            <tr v-for="pane in group.panes" :key="pane.key">
+              <td style="width:180px">
+                <RouterLink :to="pathOf(pane)">{{ pane.title }}</RouterLink>
+              </td>
+              <td class="aim-dim">{{ pane.hint }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px" id="concepts" class="aim-help-concepts">
       <template #header><span>Why this is shaped the way it is</span></template>
       <article v-for="concept in CONCEPTS" :key="concept.id" :id="concept.id" class="aim-help-concept">
         <h3>{{ concept.title }}</h3>
@@ -259,7 +398,7 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
       </article>
     </el-card>
 
-    <el-card shadow="never" style="margin-bottom:14px">
+    <el-card shadow="never" style="margin-bottom:14px" id="phases">
       <template #header>
         <span>Phases — where a channel is in its lifecycle, and what that lets you do</span>
       </template>
@@ -281,7 +420,11 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
         <tbody>
           <tr v-for="phase in PHASES" :key="phase.key" :id="phaseAnchor(phase.key)">
             <td>
-              <el-tag size="small" effect="dark" type="warning">{{ phase.label }}</el-tag>
+              <!-- The chip, not a bare tag: the header, the barrier tabs and the
+                   refusal filter all say a phase through this component, and a
+                   page about the words cannot be the one place that says it
+                   differently. -->
+              <PhaseChip :phase="phase.key" effect="dark" />
               <div class="aim-dim" style="font-size:11.5px;margin-top:3px">{{ phase.summary }}</div>
             </td>
             <td><code class="aim-mono aim-dim">{{ phase.key }}</code></td>
@@ -290,7 +433,10 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
               <p style="margin:0" class="aim-help-consequence">{{ phase.consequence }}</p>
             </td>
             <td>
-              <span v-if="phase.next">{{ phase.next }}</span>
+              <!-- The `next` field is a protocol value. Drawn raw it is the
+                   exact defect this page exists after, so it is drawn as the
+                   phase it names, with the enum one hover away. -->
+              <PhaseChip v-if="phase.next" :phase="phase.next" link />
               <span v-else class="aim-dim">—</span>
             </td>
           </tr>
@@ -298,7 +444,7 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
       </table>
     </el-card>
 
-    <el-card shadow="never" style="margin-bottom:14px">
+    <el-card shadow="never" style="margin-bottom:14px" id="machine">
       <template #header><span>The state machine — how a channel moves, and who may move it</span></template>
       <p class="aim-dim" style="font-size:12.5px;margin-top:0">
         Phase transitions are <strong>leader-only</strong> — every one of them, not just the
@@ -361,7 +507,139 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
       </p>
     </el-card>
 
-    <el-card shadow="never" style="margin-bottom:14px">
+    <!-- The tokens card is the page's half of T-0156's rule: every raw value the
+         board prints in a chip, a column or a row is explained here. It is
+         *derived* wherever the record can answer (the status vocabulary and its
+         provenance values come off the payload) and written down only where the
+         board would otherwise print a string with no explanation at all. -->
+    <el-card shadow="never" style="margin-bottom:14px" id="tokens">
+      <template #header><span>The words on the screen — every token the board draws</span></template>
+      <p class="aim-dim" style="font-size:12.5px;margin-top:0">
+        Nothing on this dashboard prints a bare enum. Where a raw value is the right thing to say — a
+        column heading, a bug report, an argument to <code class="aim-mono">aim</code> — it is drawn
+        beside the English, never instead of it. These are the values the rest of the board shows.
+      </p>
+
+      <h4 style="margin:14px 0 6px;font-size:12.5px">Work item status — what a card in a column means</h4>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:150px">status</th>
+            <th style="width:170px">what it means</th>
+            <th>what can follow it</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- The statuses are the ones this board holds (`statuses` in the
+               payload, which is `TASK_STATUSES` in `bin/aim`); the moves beside
+               them are the same file's `TASK_FLOW`, cited rather than invented.
+               A status the tool cannot move has to be visible as one, which is
+               why the two empty rows say so instead of being dropped. -->
+          <tr v-for="st in board.statuses" :key="st">
+            <td><el-tag size="small" effect="dark" :type="STATUS_TYPE[st] || 'info'">{{ statusLabel(st) }}</el-tag></td>
+            <td class="aim-mono aim-dim" style="font-size:11px">{{ st }}</td>
+            <td>
+              <template v-if="(TASK_FLOW[st] || []).length">
+                <el-tag v-for="next in TASK_FLOW[st]" :key="next" size="small" effect="plain"
+                        style="margin:0 4px 2px 0">{{ statusLabel(next) }}</el-tag>
+              </template>
+              <span v-else class="aim-dim">nothing — this is where a work item stops</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="aim-dim" style="font-size:12px;margin:6px 0 0">
+        <em>in review</em> going back to <em>in progress</em> is the "changes requested" move, not a
+        mistake: the record shows the item moved twice, which is the point of moving it rather than
+        editing it.
+      </p>
+
+      <h4 style="margin:18px 0 6px;font-size:12.5px">Provenance — where a work item actually lives</h4>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:300px">value in the record</th>
+            <th>what it means for you</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="aim-mono" style="font-size:11.5px">{{ PROVENANCE.storeOnly }}</td>
+            <td>A recorded work item. This is the one the verbs work on: it can be claimed, moved,
+                assigned and commented on, and the store is the authority for it.</td>
+          </tr>
+          <tr>
+            <td class="aim-mono" style="font-size:11.5px">{{ PROVENANCE.seedOnly }}</td>
+            <td>A promise: a line in <code class="aim-mono">plan/plan.json</code> that the store has no
+                record of. It is drawn because the plan says it exists, not because anyone is doing it,
+                and an id in this state cannot be moved — the tool answers <em>no such task</em>.</td>
+          </tr>
+          <tr>
+            <td class="aim-mono" style="font-size:11.5px">{{ PROVENANCE.both }}</td>
+            <td>Both: the plan seeds it and the store holds it, so it behaves like a recorded item and the
+                plan still lists it.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="aim-dim" style="font-size:12px;margin:6px 0 0">
+        Right now: {{ taskSplit.text }} The counts are read from the payload, so this sentence cannot
+        drift from the board it describes.
+      </p>
+
+      <h4 style="margin:18px 0 6px;font-size:12.5px">A refusal, by class</h4>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:150px">class</th>
+            <th style="width:190px">what was refused</th>
+            <th>how to read it</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in REFUSAL_CLASSES" :key="row.class">
+            <td><code class="aim-mono">{{ row.class }}</code></td>
+            <td>{{ row.label }}</td>
+            <td class="aim-dim">{{ row.how }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px" id="inspecting">
+      <template #header><span>How a person acts on a work item — and on a decision</span></template>
+      <p style="font-size:12.5px;margin-top:0">
+        Every control on this dashboard resolves to a command, and the command is quoted in full before you
+        press anything: a button whose action you cannot read is a button you are taking on trust. Where the
+        board already knows who you are it fills the identity in for you
+        (<code class="aim-mono">--as {{ board.writer || board.viewer }}</code>) — so the same sentence works
+        whether you are reading it here or typing it yourself.
+      </p>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:210px">what you want</th>
+            <th>the exact command</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in ACTIONS" :key="row.want">
+            <td>{{ row.want }}<div class="aim-dim" style="font-size:11.5px;margin-top:3px">{{ row.where }}</div></td>
+            <td><code class="aim-mono">{{ row.argv }}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="aim-dim" style="font-size:12px;margin:8px 0 0">
+        Two of these are the leader's and not a participant's: the edges of the phase machine are
+        leader-only (see <em>The state machine</em> above), so a participant asks with
+        <code class="aim-mono">request-advance</code> and the leader's queue is what the Attention pane
+        draws. And if a command is refused, the refusal is not an error page — it is written into the
+        ledger with the phase it happened in, because someone wanting something the barrier withholds is
+        evidence about the barrier.
+        <RouterLink to="/barrier">Audit &amp; barrier</RouterLink> has the ledger and the refusals.
+      </p>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px" id="identifiers">
       <template #header><span>Identifiers — what a bare M3 or R7 means</span></template>
       <p class="aim-dim" style="font-size:12.5px;margin-top:0">
         Single letters are drawn on the board, the plan and the dependency lists. They are a naming
@@ -404,7 +682,7 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
       </table>
     </el-card>
 
-    <el-card shadow="never">
+    <el-card shadow="never" id="glossary">
       <template #header><span>Glossary</span></template>
       <table class="aim-help-table">
         <thead>
@@ -431,3 +709,37 @@ const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
     </el-card>
   </section>
 </template>
+
+<style scoped>
+/* The contents is long enough to need two columns at a desktop width and one on
+   a phone, so it wraps rather than pushing the pane's own scroller sideways. */
+.aim-help-contents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 4px 24px;
+  margin: 0;
+  padding-left: 20px;
+}
+/* A button, reset to look like the link it is: it moves the scroller itself
+   (see `goTo`), which an `<a href="#…">` cannot do in hash mode. */
+.aim-help-toc {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--el-color-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.aim-help-toc:hover { text-decoration: underline; }
+.aim-help-toc:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; border-radius: 4px; }
+.aim-help-pane-group + .aim-help-pane-group { margin-top: 10px; }
+.aim-help-pane-group h4 {
+  margin: 0 0 2px;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--aim-dim);
+}
+</style>

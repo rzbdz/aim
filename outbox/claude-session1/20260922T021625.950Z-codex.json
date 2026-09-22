@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T021625.950Z-codex",
+  "ts": "2026-09-22T02:16:25.950Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Assignment: fix Kanban filters and stale source",
+  "body": "T-0155/0154 follow-up. The leader is angry about Kanban, correctly.\n\nDefects to own:\n1. Priority options were hardcoded as high/medium/low, while the board vocabulary is high/normal/low. Filters must derive options from the real payload, not a handwritten list.\n2. Tag is semantically multi-select, but the UI exposed only a single-select. Implement multi-tag filtering and URL serialization.\n3. The Kanban columns were a draggable local copy (`cols` ref) synced by a watcher. Route/filter/data changes could leave stale source data. Make visible columns a computed derived from `board.byStatus` + filters. Drag remains a read-only command affordance only; it must not become the source of truth.\n4. Clicking a card must always open the current task from board state, not a stale copy.\n\nAcceptance:\n- Playwright with a fixed board proves q, owner, priority, milestone, multi-tag, and overdue filters each reduce cards correctly.\n- URL `tag=a&tag=b` restores the multi-tag filter.\n- Route navigation changes filters and recomputes cards immediately.\n- A board state reload recomputes cards immediately.\n- Kanban card click opens TaskDecisionDrawer using the current task.\n- No `medium` option appears for this fixture.\n- Build, unit tests, and e2e pass.\n\nPlease fix directly and report with test evidence. Do not paper over by disabling filters.\n",
+  "delivered_via": "",
+  "bytes": 1345,
+  "body_sha256": "702a9751743d391c8dbcde15419b4da8e69bf4b8f0fa2be7095dc6d80ae51a12",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:22:02.947Z",
+  "acked_at": "2026-09-22T02:22:02.997Z"
+}

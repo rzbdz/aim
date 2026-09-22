@@ -7,15 +7,21 @@ are the same codebase. This file opens the loop with the one instrument that is
 not ours -- the official `a2a-sdk` Python client -- and records, as assertions
 with their exact messages, where it stops.
 
-Four gates stand between a foreign A2A client and a task in this fabric, and the
-reference client fails all four today:
+Four gates stood between a foreign A2A client and a task in this fabric. Gate 2
+-- the card itself -- is closed by T-0229: the SDK's own protobuf now parses the
+card `aim card` emits, because the aim facts moved into the `params` of a fourth
+extension instead of a top-level `metadata` field `lf.a2a.v1.AgentCard` never
+had. The reference client still fails the other three today:
 
   1. discovery  the SDK fetches `/.well-known/agent-card.json`; `aimboard serve`
                 has no such route and `aim` publishes no URL.
-  2. the card   `aim card` emits a top-level `metadata` field, which is not a
-                field of the SDK's `lf.a2a.v1.AgentCard`. The SDK's own protobuf
-                parse refuses the card by name. This is the fatal one: no card,
-                no client.
+  2. the card   closed. The card's top level is a subset of the SDK's AgentCard
+                fields and `ParseDict` accepts it; the aim facts live under
+                `capabilities.extensions[].params.aim`, the proto's own free-form
+                field. `test_the_published_card_is_a_valid_agent_card` pins
+                this, and every one of its assertions fails against the old
+                shape -- a green run means the card is schema-valid, not that it
+                still carries the field that broke it.
   3. binding    the card declares the custom binding URI `.../aim-files/v1`.
                 The SDK routes only `JSONRPC`, `HTTP+JSON` and `GRPC`, so
                 `ClientFactory.create` raises `ValueError: no compatible
@@ -25,8 +31,8 @@ reference client fails all four today:
                 error: Request URL is missing an 'http://' or 'https://'
                 protocol.`
 
-Only when all four are bypassed by hand -- a hand-built JSONRPC card and an
-in-process transport -- does the SDK reach `aimboard.a2a.handle_rpc`, and there
+Only when the remaining three are bypassed by hand -- a hand-built JSONRPC card
+and an in-process transport -- does the SDK reach `aimboard.a2a.handle_rpc`, and there
 the news is good: `GetTask` and `ListTasks` return real tasks, and the SDK's
 exception types carry *our* messages, so the nine A2A error codes this fabric
 already emits are the ones the reference client raises.
@@ -109,22 +115,67 @@ class ReferenceA2AClientTest(unittest.TestCase):
         from aimboard.fabric import load_fabric
         return load_fabric(self.root, ["plan/*.json"], datetime.now(timezone.utc).date())
 
-    # -- gate 2: the card the reference client cannot even parse -------------
-    def test_the_published_card_is_not_a_valid_agent_card(self):
-        from google.protobuf.json_format import ParseError, ParseDict
+    def _card_facts(self):
+        """The `aim` block, read from where A2A lets it live.
+
+        T-0229 relocated it from the card's top level into the `params` of the
+        card-facts extension, the proto's free-form field, because
+        `lf.a2a.v1.AgentCard` has no top-level `metadata`. Reading it from
+        anywhere else is reading the old shape.
+        """
+        from aimboard.a2a import CARD_FACTS_URI
+
+        extensions = self.card["capabilities"]["extensions"]
+        carriers = [ext for ext in extensions if ext.get("uri") == CARD_FACTS_URI]
+        self.assertEqual(len(carriers), 1,
+                         f"expected exactly one {CARD_FACTS_URI} extension, got {len(carriers)}")
+        return carriers[0]["params"]["aim"]
+
+    # -- gate 2, now closed: the card the reference client can parse ---------
+    def test_the_published_card_is_a_valid_agent_card(self):
+        """The inverse of the T-0229 failure, asserted with the SDK's own parser.
+
+        The first version of this test asserted the card *had* a top-level
+        `metadata` and that `ParseDict` refused it, so a green run meant the card
+        was still unreadable. A green run now means the opposite: the card's top
+        level is a subset of the AgentCard message's fields, `ParseDict` accepts
+        it, and the aim facts survive the parse under `params.aim`.
+        """
+        from google.protobuf.json_format import ParseDict
         from a2a.types.a2a_pb2 import AgentCard
 
-        self.assertIn("metadata", self.card,
-                      "if `aim card` stopped emitting metadata, this test is measuring the old shape")
-        # The SDK's normative data model has no top-level `metadata`; that is not
-        # a version pin, so assert the field is absent from the proto itself.
-        self.assertNotIn("metadata", AgentCard.DESCRIPTOR.fields_by_name)
+        from aimboard.a2a import BINDING_URI, CARD_FACTS_URI
 
-        with self.assertRaises(ParseError) as caught:
-            ParseDict(self.card, AgentCard())
-        message = str(caught.exception)
-        self.assertIn('no field named "metadata"', message)
-        self.assertIn("lf.a2a.v1.AgentCard", message)
+        # `fields_by_name` is snake_case (`default_input_modes`); the JSON the
+        # card emits is camelCase, so compare against the proto's `json_name`.
+        schema = {field.json_name for field in AgentCard.DESCRIPTOR.fields}
+        unknown = sorted(set(self.card) - schema)
+        self.assertEqual(
+            unknown, [],
+            f"top-level fields outside lf.a2a.v1.AgentCard: {unknown}; the reference "
+            f"client refuses the first by name, which makes the whole card unreadable")
+        # `metadata` is still not a field of the card message. That is *why* the
+        # facts moved, and the absence is asserted so a later A2A revision that
+        # adds the field is a visible change rather than a silent re-use of the
+        # shape that broke the client.
+        self.assertNotIn("metadata", schema)
+
+        proto_card = ParseDict(self.card, AgentCard())
+        self.assertEqual(proto_card.name, "alice")
+        self.assertEqual([interface.protocol_binding
+                          for interface in proto_card.supported_interfaces],
+                         [BINDING_URI])
+
+        # The facts must survive the parse, not merely exist in the JSON: `params`
+        # is a google.protobuf.Struct, so the SDK's own protobuf carries them and
+        # a client does not need a second, non-standard parser to read them.
+        carried = [extension for extension in proto_card.capabilities.extensions
+                   if extension.uri == CARD_FACTS_URI]
+        self.assertEqual(len(carried), 1)
+        facts = carried[0].params["aim"]
+        self.assertEqual(facts["agentId"], "alice")
+        self.assertEqual(facts["bindingUri"], BINDING_URI)
+        self.assertEqual(facts["authentication"], "none")
 
     # -- gate 3: the card parses, and the SDK still cannot route it ----------
     def test_the_sdk_cannot_route_the_custom_binding(self):
@@ -135,10 +186,10 @@ class ReferenceA2AClientTest(unittest.TestCase):
 
         from aimboard.a2a import BINDING_URI
 
-        # `metadata` is the only field the proto refuses, so stripping it is the
-        # one edit that lets us show gate 3 independently of gate 2.
-        stripped = {key: value for key, value in self.card.items() if key != "metadata"}
-        proto_card = ParseDict(stripped, AgentCard())
+        # The card the fabric actually publishes, parsed by the SDK's parser:
+        # gate 2 is closed, so gate 3 is shown on the real card rather than on a
+        # copy that had the offending field stripped out by hand.
+        proto_card = ParseDict(self.card, AgentCard())
 
         bindings = [interface.protocol_binding for interface in proto_card.supported_interfaces]
         self.assertEqual(bindings, [BINDING_URI])
@@ -237,9 +288,9 @@ class ReferenceA2AClientTest(unittest.TestCase):
         self.assertRegex(source, r'def canonical_port\(\):[\s\S]{0,2000}?return 8777',
                          "the canonical port must stay 8777 even when the board is not running")
 
-        reachability = self.card["metadata"]["aim"]
-        self.assertEqual(reachability["authentication"], "none")
-        self.assertIn("localhost-only", reachability["reachability"])
+        facts = self._card_facts()
+        self.assertEqual(facts["authentication"], "none")
+        self.assertIn("localhost-only", facts["reachability"])
 
     # -- the seam between this test's shim and the real server ---------------
     def test_the_shim_tracks_the_server(self):
@@ -258,9 +309,12 @@ class ReferenceA2AClientTest(unittest.TestCase):
         self.assertIn('if path == "/rpc":', source)
         # The server serves /rpc while the card says the opposite; that
         # contradiction is asserted so it stays visible rather than ageing into
-        # a lie nobody reads.
+        # a lie nobody reads. The sentence lives in `card_facts` in
+        # `aimboard/a2a.py`, which is outside this lane's write scope: the fix is
+        # reported, not made here. design/16 section 3 already records it as
+        # false -- the contradiction is real and this assertion is the alarm.
         self.assertIn("no network endpoint served yet",
-                      json.dumps(self.card["metadata"]))
+                      json.dumps(self._card_facts()))
 
     # -- fixtures ------------------------------------------------------------
     def _sdk_shaped_card(self, url, binding="JSONRPC"):

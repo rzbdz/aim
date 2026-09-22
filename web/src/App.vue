@@ -1,6 +1,6 @@
 <script setup>
-import { computed, inject, onErrorCaptured, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, inject, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElAside, ElDrawer } from 'element-plus'
 import { useColorMode, useMediaQuery } from '@vueuse/core'
 import { useBoard } from './stores/board'
@@ -66,6 +66,17 @@ const palette = useColorMode({
   initialValue: 'light',
   modes: { dark: 'dark', light: '' },
 })
+/**
+ * The palette is applied in index.html as well as here, and that duplication is
+ * the point. `useColorMode` reads the stored choice when main.js runs, which is
+ * after the bundle has arrived -- one paint too late, so a reload of a dark board
+ * flashed white first. An inline script in index.html reads the same key and puts
+ * the class on <html> before the first paint; this watcher keeps the two in step
+ * from then on, and it is the only writer of the class in the app.
+ */
+watch(palette, (mode) => {
+  document.documentElement.classList.toggle('dark', mode === 'dark')
+}, { immediate: true })
 const dark = computed(() => palette.value === 'dark')
 const togglePalette = () => { palette.value = dark.value ? 'light' : 'dark' }
 
@@ -103,6 +114,48 @@ watch(() => route.path, () => taskDrawer.close())
  */
 watch(() => route.path, () => { navOpen.value = false })
 watch(navNarrow, () => { navOpen.value = false })
+
+/**
+ * A navigation whose chunk is not on the server any more must say so.
+ *
+ * Every pane is a dynamic import, so its file is named after its content. A
+ * rebuild renames every one of them, and a tab that was open across the rebuild
+ * is still holding the old names: the click asks the server for a file that no
+ * longer exists, the import rejects, `vue-router` logs "Failed to fetch
+ * dynamically imported module" and leaves the URL where it was, and the reader
+ * gets a nav that does nothing at all -- measured for T-0179, and the worst
+ * failure this shell can have, because the board looks alive while it is dead.
+ *
+ * The router reports it as a rejected navigation and the browser as an error
+ * event, so both are listened to: a navigation rejected because the reader
+ * clicked something else is not this, and a preload of a pane behind a link
+ * fails without any navigation at all. A navigation that *does* land clears the
+ * message -- once a pane has arrived the URL and the page agree again.
+ *
+ * No poll and no retry: the bundle moves once, and the fix is a reload, which is
+ * the reader's call and not something this page does under their hands.
+ */
+const router = useRouter()
+const stale = ref(false)
+const looksStale = (message) => /dynamically imported module|Importing a module script failed|Unable to preload/i.test(String(message))
+router.onError((error) => { if (looksStale(error?.message || error)) stale.value = true })
+const onChunkError = (event) => {
+  const target = event.target
+  if (target?.tagName === 'SCRIPT' && looksStale(target.src || '')) stale.value = true
+  if (looksStale(event.message || '')) stale.value = true
+}
+onMounted(() => {
+  window.addEventListener('error', onChunkError, true)
+  window.addEventListener('unhandledrejection', onChunkError)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('error', onChunkError, true)
+  window.removeEventListener('unhandledrejection', onChunkError)
+})
+router.afterEach(() => { stale.value = false })
+// A named function rather than `window.location` in the template: a template
+// expression resolves against the render context, and the global is not in it.
+const reload = () => { window.location.reload() }
 
 /**
  * A render error must not be able to brick the page.
@@ -161,6 +214,9 @@ const navGroups = computed(() => {
 
 <template>
   <el-container class="aim-shell">
+    <!-- First in the document, so one Tab reaches the reading pane from anywhere
+         and the reader is not walked through seven nav items to get past them. -->
+    <a class="aim-skip" href="#aim-main">skip to the reading pane</a>
     <!-- One nav, two wrappers: the column when there is room, the drawer when
          there is not. See `navShell` above. -->
     <component :is="navShell.is" v-bind="navShell.props">
@@ -227,7 +283,7 @@ const navGroups = computed(() => {
         </el-button>
       </el-header>
 
-      <el-main :class="['aim-main', { 'aim-main-conversation': current?.key === 'chat' }]">
+      <el-main id="aim-main" tabindex="-1" :class="['aim-main', { 'aim-main-conversation': current?.key === 'chat' }]">
         <!--
           Not a warning. A refresh is not an error, and the board updates itself;
           this line exists only for the case where it deliberately did not, so the
@@ -243,6 +299,15 @@ const navGroups = computed(() => {
         </div>
         <el-alert v-if="board.error" type="error" show-icon :closable="false" style="margin-bottom:14px"
                   :title="`the board could not be read: ${board.error}`" />
+        <!-- Not an error about the record, so it does not look like one: the pane
+             could not be fetched because the build it was named in is gone. It
+             says which route was asked for, because on a 390px drawer the nav
+             closes on click and the address bar is the only other clue. -->
+        <el-alert v-if="stale" type="warning" show-icon :closable="false" style="margin-bottom:14px"
+                  title="this page was built before the board was rebuilt, so the pane you asked for is no longer on the server"
+                  :description="`nothing was loaded for ${route.path}, and the page you can see is the one you had. Reload to pick up the new build.`">
+          <el-button size="small" text type="primary" @click="reload">reload</el-button>
+        </el-alert>
         <div class="aim-page">
           <h2>{{ current?.title }}</h2>
           <span class="aim-sub">{{ current?.hint }}</span>

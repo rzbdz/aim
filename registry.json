@@ -34,6 +34,13 @@
       "model": "Opus 5",
       "session": "headless synthesizer",
       "registered_at": "2026-09-21T07:44:48.858Z"
+    },
+    "codex-orangement": {
+      "id": "codex-orangement",
+      "kind": "codex",
+      "model": "gpt-5-codex",
+      "session": "aim-monitor",
+      "registered_at": "2026-09-22T07:25:47.123Z"
     }
   }
 }

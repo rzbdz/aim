@@ -76,6 +76,48 @@ body {
    set documentElement.scrollWidth to 623 on every route. */
 .aim-shell > .el-container { min-width: 0; }
 
+/* A keyboard reader arrives at the nav first, and the nav is seven items deep on
+   every route. The link is the first focusable thing in the shell and is only in
+   the layout once it has focus, so it costs the mouse reader nothing. */
+.aim-skip { position: absolute; left: -9999px; top: 0; z-index: 30; padding: 8px 12px;
+            background: var(--el-bg-color); color: var(--el-text-color-primary);
+            border: 1px solid var(--aim-line); border-radius: 0 0 8px 0; text-decoration: none; }
+.aim-skip:focus { left: 0; }
+
+/* Element Plus draws no focus ring of its own on a menu item or a text button,
+   and the shell is where every route starts. The ring is the accent, which is a
+   token, so it holds in both palettes; `:focus-visible` keeps it off a click. */
+.aim-shell a:focus-visible,
+.aim-shell button:focus-visible,
+.aim-shell [tabindex]:focus-visible,
+.aim-shell .el-menu-item:focus-visible {
+  outline: 2px solid var(--aim-accent);
+  outline-offset: 2px;
+}
+
+/* Contrast, light palette only.
+   Element Plus ships ink meant for a dark ground: `warning` #e6a23c on white is
+   2.1:1 and `danger` #f56c6c is 2.7:1, both under the 4.5:1 floor for text. The
+   board already has measured inks for those two roles -- #b45309 is 5.0:1 and
+   #b91c1c is 5.9:1 -- so the alert titles, tag text and error copy are pointed
+   at them. Fills are left alone: only ink is moved. */
+:root {
+  --el-color-primary: #0369a1;
+  --el-color-primary-light-3: #3d8bbd;
+  --el-color-primary-light-5: #6ba8ce;
+  --el-color-primary-light-7: #9cc6df;
+  --el-color-primary-light-8: #b5d4e8;
+  --el-color-primary-light-9: #d0e5f1;
+  --el-color-primary-dark-2: #02527a;
+  --el-color-danger: var(--aim-danger);
+  --el-color-warning: var(--aim-warn);
+}
+html.dark {
+  --el-color-primary: var(--aim-accent);
+  --el-color-danger: var(--aim-danger);
+  --el-color-warning: var(--aim-warn);
+}
+
 /* ---------------------------------------------------------------- shell */
 .aim-aside { border-right: 1px solid var(--aim-line); }
 /* The nav is the same markup in the desktop column and in the mobile drawer
@@ -205,7 +247,14 @@ body {
 .aim-dim { color: var(--aim-dim); }
 .aim-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
 .aim-scroll { max-height: 72vh; }
-.aim-late { color: var(--aim-danger); }
+/* Status is never hue alone. `.aim-flag.blocked` and the chips carry an icon or a
+   word already; this is the one place where the board's own markup colours a
+   date and says nothing, so the word is added here rather than in a pane. The
+   weight is a second signal for a reader who cannot separate the red from the
+   rest -- and it is why this rule is not `.aim-late` globally: the Kanban card
+   and the items table print the word themselves and would say it twice. */
+.aim-late { color: var(--aim-danger); font-weight: 600; }
+.aim-attention-row .aim-late::after { content: " late"; font-weight: 400; }
 .aim-stat .el-statistic__number { font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
 .aim-stat .el-statistic__head { font-size: 11px; color: var(--aim-dim); text-transform: uppercase; letter-spacing: .06em; }
 .aim-thread { padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
@@ -272,6 +321,30 @@ body {
 .aim-body.markdown-body blockquote { border-left: 2px solid rgb(var(--aim-accent-rgb) / .5); color: var(--aim-dim); }
 .aim-body.markdown-body hr { border-top: 1px solid var(--aim-line); background: none; }
 .aim-body.markdown-body img { max-width: 100%; }
+/* The dark half of github-markdown-css, scoped instead of imported.
+   The package ships light and dark as two unscoped sheets that both target
+   `.markdown-body`, so importing the second one turns every light reader dark.
+   Its dark values are `color-scheme: dark` and these -- the ink, the secondary
+   ink, the link, an inline code chip, a code block, a table stripe, a table
+   border, a blockquote rule and a horizontal rule -- and they are all that
+   differs, so the override is nine declarations, not a second stylesheet.
+   Everything else the light sheet sets is a token or an inherited colour. */
+html.dark .aim-body.markdown-body { color-scheme: dark; color: #f0f6fc; }
+html.dark .aim-body.markdown-body ::placeholder { color: #9198a1; }
+html.dark .aim-body.markdown-body a { color: #4493f8; }
+html.dark .aim-body.markdown-body kbd { color: #f0f6fc; background-color: #151b23; }
+html.dark .aim-body.markdown-body h6,
+html.dark .aim-body.markdown-body blockquote { color: #9198a1; }
+html.dark .aim-body.markdown-body .absent { color: #f85149; }
+html.dark .aim-body.markdown-body table tr:nth-child(2n) { background-color: #151b23; }
+html.dark .aim-body.markdown-body table th,
+html.dark .aim-body.markdown-body table td { border-color: #3d444d; }
+html.dark .aim-body.markdown-body blockquote { border-left-color: #3d444d; }
+html.dark .aim-body.markdown-body hr { background-color: #3d444d; }
+/* A highlight and a literal are the last two surfaces the light sheet paints
+   itself, and the only ones a report uses that the nine above do not reach. */
+html.dark .aim-body.markdown-body mark { background-color: #bb800926; color: #f0f6fc; }
+html.dark .aim-body.markdown-body tt { background-color: #656c7633; }
 /* The two things you must not lose while reading a 10,000px report: which
    thread you are in, and where to type. Both are sticky, and both are in the
    page rather than in a nested scroller, because a nested scroller inside a
@@ -316,6 +389,10 @@ body {
 .aim-signal-clear { opacity: .55; cursor: default; }
 .aim-blocker-link { padding: 0 5px; height: auto; }
 .aim-drift-card .aim-attention-row { grid-template-columns: 90px 110px 80px minmax(0, 1fr) 80px minmax(0, 1fr); }
+/* An id, a title and a name in the same row, and none of them has a space to wrap
+   at: the columns are as wide as their headings say, but the floor of the row is
+   still the longest unbroken token in it. */
+.aim-drift-card .aim-attention-row > * { min-width: 0; overflow-wrap: anywhere; }
 
 /* ------------------------------------------------------- narrow shell, 900px */
 /* 390x844 is the size this has to work at -- an iPhone 12/13/14 in logical
@@ -334,8 +411,34 @@ body {
      documentElement.scrollWidth to 623 on all nine routes (measured 2026-09-22).
      Wrapped, the floor is the widest single item, which fits. */
   .aim-header { flex-wrap: wrap; row-gap: 6px; padding: 10px 14px; }
+  /* The select is the widest thing in the row and the only one that may shrink,
+     so it takes whatever is left after the buttons and never more than that. */
   .aim-viewer { flex: 1 1 132px; width: auto; min-width: 0; }
+  /* The phase summary is a sentence, and a sentence that cannot wrap sets the
+     row's floor to itself: it gets a line of its own, under the chip that names
+     the phase it is describing, rather than a share of the chip's line. */
+  .aim-header-phase { flex: 1 1 100%; }
   .aim-main { padding: 14px 14px 56px; }
+  /* The brand's two lines are a path and a count, and a path has no spaces to
+     break on. `break-all` is already set for it; the counts line only needs the
+     room to wrap rather than to be measured as one long line. */
+  .aim-brand { padding: 4px 18px 12px; overflow-wrap: anywhere; }
+  .aim-brand .aim-sub { line-height: 1.55; }
+  /* A page title next to its hint: at 390px the two stack instead of the hint
+     holding the title's line open wider than the screen. */
+  .aim-page { flex-wrap: wrap; row-gap: 2px; }
+
+  /* The drift row is six fixed columns, which is 410px of floor before any gap.
+     The narrow variant keeps the two names it is about and stacks the rest. */
+  .aim-drift-card .aim-attention-row { grid-template-columns: 90px minmax(0, 1fr); }
+
+  /* Conversation: 230px of thread list beside the reader is 59% of a 390px
+     screen, so the two stack and the reader gets the room. Both keep their own
+     scrollbars -- the thread list is bounded here, the history is bounded by the
+     reader above it -- so neither grows the page. */
+  .aim-chat { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 38%) minmax(0, 1fr); }
+  .aim-chat-side { max-height: 38vh; }
+  .aim-reader-head { padding: 9px 0; }
 
   /* The drawer holds the same nav; only what Element Plus adds for a padded
      column has to go, since the brand and the menu bring their own spacing. */

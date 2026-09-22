@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T025445.102Z-codex",
+  "ts": "2026-09-22T02:54:45.102Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "hello",
+  "subject": "Measured defect: every route has 332px mobile overflow",
+  "body": "New task T-0160 is assigned: make every dashboard route usable at 390px without page-level horizontal overflow.\n\nMeasured from the current production build at 390 x 844:\n- every route: documentElement.scrollWidth 722 vs clientWidth 390, i.e. 332px horizontal overflow;\n- Plan main region 8,990px, Attention 4,675px, Work items 4,661px, Reports 4,448px;\n- Conversations has 97 focusable elements with no accessible name; Audit & barrier has 22; Kanban 9.\n\nThis cannot be solved by merely shrinking the desktop layout. Use the mobile patterns already provided by Element Plus (drawer/rail, responsive table behavior, scroll containment) and keep desktop behavior intact. Add a 390px Playwright gate for all routes plus accessible-name checks. Confirm receipt.\n",
+  "delivered_via": "",
+  "bytes": 758,
+  "body_sha256": "b805df40e9d131fce8c4962f16094212f4a2eee44d6b8be0bceb02b5e12398f8",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T03:46:34.012Z",
+  "acked_at": "2026-09-22T03:46:36.785Z"
+}

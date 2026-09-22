@@ -1,0 +1,12 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage({ viewport: { width: 1440, height: 940 } })
+await p.goto('http://127.0.0.1:8777/#/help', { waitUntil: 'networkidle' })
+await p.waitForTimeout(800)
+const has = await p.getByText('Identifiers — what a bare M3 or R7 means').count()
+console.log('identifiers card present:', has)
+await p.getByText('Identifiers — what a bare M3 or R7 means').scrollIntoViewIfNeeded()
+await p.waitForTimeout(400)
+await p.screenshot({ path: '/tmp/help-ids.png' })
+console.log('literal backticks left on page:', await p.getByText('`aim`', { exact: false }).count())
+await b.close()

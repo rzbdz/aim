@@ -108,6 +108,64 @@ const driftDrawn = computed(() => (driftExpanded.value
   : driftNeverRecorded.value.slice(0, driftRowBudget)))
 const driftRowsBelowBudget = computed(() =>
   Math.max(0, driftNeverRecorded.value.length - driftDrawn.value.length))
+/**
+ * The third kind of drift row, and the fact that an empty list is a finding.
+ *
+ * `drift()` emits `plan: null` for a recorded id the seed does not carry
+ * (`aimboard/fold.py:249`), which is drift in the other direction: the board is
+ * the seed and the record merged, so a record outside the plan means the plan no
+ * longer describes the board. It is kept apart from the two lists above rather
+ * than folded in, because what empties it is a plan edit and what empties those
+ * is a recording.
+ *
+ * `drift_withheld` is read off the payload because the store hides rows a seat
+ * may not see (`aimboard/api.py:77-85`): a list drawn over that slice is a slice,
+ * and a reader who is not told the withheld count cannot tell a complete list
+ * from a gated one (T-0210: "a drift list that can be emptied" has to be able to
+ * say it is empty).
+ */
+const driftPlanMissing = computed(() => board.drift.filter((row) => row.plan == null))
+const driftWithheld = computed(() => board.doc?.drift_withheld || 0)
+const noDrift = computed(() => !driftNeverRecorded.value.length
+  && !driftDiffering.value.length && !driftPlanMissing.value.length)
+
+/**
+ * The hours a milestone's rows declare, and the rule that keeps the figure
+ * honest (T-0212).
+ *
+ * The sum reads `estimate_hours` and nothing else: the plan's `estimate` is in
+ * points and is deliberately *not* converted here, because the migration is one
+ * stated rule applied by a recorded script (`aimboard/fold.py`'s
+ * `ESTIMATE_MIGRATION`) and a template that multiplied points by an hour would be
+ * a second, silent copy of it. So a row that declares no hours is counted as
+ * unknown and named, never as zero, and every figure leaves this map with its
+ * unit already attached.
+ */
+const milestoneEstimate = computed(() => Object.fromEntries(milestones.value.map((m) => {
+  const mine = board.tasks.filter((t) => t.milestone === m.id)
+  const hours = mine.filter((t) => typeof t.estimate_hours === 'number')
+  return [m.id, { rows: mine.length, estimated: hours.length,
+                  hours: hours.reduce((sum, t) => sum + t.estimate_hours, 0) }]
+})))
+
+/**
+ * The action a decision carries, rendered exactly as the payload states it
+ * (T-0211).
+ *
+ * `design/12` §1.3: a control with no exact argv behind it is a dead end, and the
+ * argv is the server's to publish -- a command rebuilt in a template drifts from
+ * the verb the tool actually accepts, which is the lesson `aimboard/fold.py:164`
+ * records for `claim`. So this pane draws the argv it is given and, where a
+ * decision carries none, says so and draws no control: an action that cannot be
+ * run is stated, not buttoned.
+ */
+const decisionActions = (decision) => decision.actions || []
+
+const argvLine = (action) => {
+  const argv = action.argv || []
+  const parts = action.verb && argv[0] !== action.verb ? [action.verb, ...argv] : argv
+  return `aim ${parts.join(' ')}`
+}
 </script>
 
 <template>
@@ -127,7 +185,11 @@ const driftRowsBelowBudget = computed(() =>
         plan and the store together, that count is 0 — so the store-wins rule has nothing to
         win today.</template>
       Both lists are drawn below, and the same two are on the
-      <RouterLink :to="{ path: '/attention', hash: '#drift' }">attention page</RouterLink>. Of
+      <RouterLink :to="{ path: '/attention', hash: '#drift' }">attention page</RouterLink>.
+      {{ driftPlanMissing.length }} recorded item(s) run the other way — in the store and not in
+      the plan — and {{ noDrift ? 'the three lists together are empty: there is no drift'
+        : 'the three lists below are every drift row this seat can see' }}{{ driftWithheld
+        ? `, with ${driftWithheld} row(s) withheld from this seat` : '' }}. Of
       the {{ undated.length }} item(s) with no due date, {{ undatedPromises }} are plan promises
       waiting on a date and {{ undated.length - undatedPromises }} are recorded items with a date
       nobody set — both are sentences without a verb, but only the first is a hole in this plan.
@@ -142,6 +204,13 @@ const driftRowsBelowBudget = computed(() =>
        dumping 87 rows onto a plan page -- and the two kinds of row are drawn as two
        lists, because "the store has no value" and "the store has a different value"
        are different findings with different actions. -->
+  <!-- Both columns are drawn on every drift row, and they are two provenances
+       rather than two renderings of one value: "value in the plan" and "value in
+       the store". A row where the store holds nothing is a row nothing has been
+       recorded about -- the T-0190 defect was printing the store-wins rule over
+       rows like that, where there was no store value for the store to win with.
+       `not recorded` and `the plan says nothing` are the absences, and they are
+       not the same absence. -->
   <el-card v-if="driftNeverRecorded.length" id="plan-drift" shadow="never" class="aim-drift-card"
            style="margin-bottom:14px">
     <template #header>
@@ -154,17 +223,19 @@ const driftRowsBelowBudget = computed(() =>
       <RouterLink to="/items">the merged list, promises included</RouterLink>
     </template>
     <p class="aim-dim" style="font-size:12px;margin-top:0">
-      <code class="aim-mono">store = not recorded</code> for every row here: the plan names the
-      item and the store has no record of it at all, so there is no store value that could
-      win. Recording one is the action that empties this list — the plan file is the seed, and
-      the record is made in the item, not in the sentence.
+      <code class="aim-mono">value in the store = not recorded</code> for every row here: the plan
+      names the item and the store has no record of it at all, so there is no store value that could
+      win. That is a different finding from the list under “Plan and store differ”, where both sides
+      hold a value. Recording one is the action that empties this list — the plan file is the seed,
+      and the record is made in the item, not in the sentence.
+    </p>
+    <p class="aim-dim" style="font-size:11px;margin:0 0 4px">
+      each row reads: id · field · <b>value in the plan</b> · <b>value in the store</b>
     </p>
     <article v-for="row in driftDrawn" :key="`${row.id}-${row.field}`" class="aim-attention-row">
       <TaskLink :id="row.id" />
       <strong>{{ row.field }}</strong>
-      <span class="aim-dim">plan says</span>
       <span>{{ row.plan ?? 'the plan says nothing' }}</span>
-      <span class="aim-dim">store has</span>
       <span><code class="aim-mono">not recorded</code>
         <PromiseTag title="Nothing recorded: this row is a plan promise the store has never seen." /></span>
     </article>
@@ -186,18 +257,56 @@ const driftRowsBelowBudget = computed(() =>
            style="margin-bottom:14px">
     <template #header><span>Plan and store differ on {{ driftDiffering.length }} field(s)</span></template>
     <p class="aim-dim" style="font-size:12px;margin-top:0">
-      Both sides hold a value here and they are not the same value. The store wins — one of
-      these is what happened — and the list is what the plan still says.
+      Both sides hold a value here and they are not the same value — this is the only list the
+      store-wins rule is about. The store wins: one of these is what happened, and the plan column
+      is what the plan still promises.
+    </p>
+    <p class="aim-dim" style="font-size:11px;margin:0 0 4px">
+      each row reads: id · field · <b>value in the plan</b> · <b>value in the store</b>
     </p>
     <article v-for="row in driftDiffering" :key="`${row.id}-${row.field}`" class="aim-attention-row">
       <TaskLink :id="row.id" />
       <strong>{{ row.field }}</strong>
-      <span class="aim-dim">plan says</span>
       <span>{{ row.plan ?? 'the plan says nothing' }}</span>
-      <span class="aim-dim">store has</span>
+      <span><b>{{ row.store }}</b></span>
+    </article>
+  </el-card>
+
+  <el-card v-if="driftPlanMissing.length" id="plan-drift-unplanned" shadow="never" class="aim-drift-card"
+           style="margin-bottom:14px">
+    <template #header><span>{{ driftPlanMissing.length }} recorded item(s) the plan does not name</span></template>
+    <p class="aim-dim" style="font-size:12px;margin-top:0">
+      The reverse direction: the store holds the row and <code class="aim-mono">plan = not named</code>.
+      These do not empty by recording — they empty by the plan naming them, which is an edit to the
+      seed.
+    </p>
+    <p class="aim-dim" style="font-size:11px;margin:0 0 4px">
+      each row reads: id · field · <b>value in the plan</b> · <b>value in the store</b>
+    </p>
+    <article v-for="row in driftPlanMissing" :key="`${row.id}-${row.field}`" class="aim-attention-row">
+      <TaskLink :id="row.id" />
+      <strong>{{ row.field }}</strong>
+      <span class="aim-dim">the plan says nothing</span>
       <span>{{ row.store ?? 'not recorded' }}</span>
     </article>
   </el-card>
+
+  <!-- An empty drift list is a finding about the two sources, so it is stated
+       rather than left as an absent card: three lists that render nothing look
+       exactly like three lists that were never computed. A gated list is not an
+       empty one either, so the withheld count is published beside the verdict. -->
+  <el-alert v-if="noDrift" type="success" :closable="false" show-icon
+            id="plan-drift-empty" style="margin-bottom:14px">
+    <template #title>
+      no drift: every plan item the store has recorded agrees with the plan field by field
+      ({{ driftWithheld ? driftWithheld + ' row(s) withheld from this seat, so this is the ' +
+        'visible slice and not the whole store' : 'no row withheld, so this is the whole store' }}).
+    </template>
+  </el-alert>
+  <p v-else-if="driftWithheld" class="aim-dim" style="font-size:12px">
+    {{ driftWithheld }} drift row(s) withheld from this seat: the lists above are what this seat may
+    see, not the whole store.
+  </p>
 
   <el-card shadow="never" style="margin-bottom:14px">
     <template #header>
@@ -242,6 +351,20 @@ const driftRowsBelowBudget = computed(() =>
             <span class="aim-chip seed">{{ row.promises }} planned</span></span>
         </template>
       </el-table-column>
+      <!-- The unit rides on the number and a row with no estimate is "not
+           estimated", never 0 h: the plan's `estimate` is in points and is not
+           converted here, because that conversion is one stated rule applied by a
+           recorded script (`ESTIMATE_MIGRATION`), not arithmetic in a template
+           (T-0212). -->
+      <el-table-column label="estimate — declared hours" width="210">
+        <template #default="{ row }">
+          <template v-if="milestoneEstimate[row.id]?.estimated">
+            {{ milestoneEstimate[row.id].hours }} h over
+            {{ milestoneEstimate[row.id].estimated }} of {{ milestoneEstimate[row.id].rows }} row(s)
+          </template>
+          <span v-else class="aim-dim">not estimated ({{ milestoneEstimate[row.id]?.rows || 0 }} row(s))</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="accept" label="acceptance — the sentence that makes it verifiable" min-width="380" />
     </el-table>
   </el-card>
@@ -266,6 +389,20 @@ const driftRowsBelowBudget = computed(() =>
         <el-collapse-item v-for="d in visibleDecisions" :key="d.id" :name="d.id">
           <template #title><b style="margin-right:8px">{{ d.id }}</b> {{ d.decision }}</template>
           <p class="aim-dim">because {{ d.because }}</p>
+          <!-- T-0211: the control and its argv are one object, and the argv is the
+               server's to publish — a verb rebuilt in a template is a second copy of
+               the verb (`aimboard/fold.py:164`). A decision carrying none is stated
+               as carrying none rather than given a button with nothing behind it. -->
+          <ul v-if="decisionActions(d).length" style="list-style:none;padding:0;margin:6px 0 0">
+            <li v-for="(a, i) in decisionActions(d)" :key="i" style="margin-bottom:6px">
+              <strong>{{ a.label || a.key }}</strong>
+              <code class="aim-mono" style="display:block;word-break:break-word">{{ argvLine(a) }}</code>
+              <span v-if="a.detail" class="aim-dim" style="font-size:11.5px">{{ a.detail }}</span>
+            </li>
+          </ul>
+          <p v-else class="aim-dim" style="font-size:11.5px">
+            no actions[] with a runnable argv — nothing here is approximated as a control.
+          </p>
         </el-collapse-item>
       </el-collapse>
       <h4>non-goals</h4>

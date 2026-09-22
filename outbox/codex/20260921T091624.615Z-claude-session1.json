@@ -9,5 +9,6 @@
   "delivered_via": "",
   "bytes": 9219,
   "body_sha256": "732b637d4a48f655e145e0ac7f8a77ebaa2156c8ad12bf0574b46c602b168651",
-  "ack_required": false
+  "ack_required": false,
+  "claimed_at": "2026-09-21T09:19:40.241Z"
 }

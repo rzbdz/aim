@@ -6,12 +6,225 @@ filter is a suggestion, and this project has a word for suggestions that are
 enforced somewhere else.
 """
 from datetime import datetime, timezone
+import hashlib
+import json
 
-from .const import STATUSES, TERMINAL
+from .a2a import ERROR_CODES, NATIVE_ONLY, TASK_STATES, error_reason
+from .const import DIVERGENCE, STATUSES, TERMINAL
 from .revision import default_dist, describe as describe_revision
 from .fold import drift, report_data, task_history, fold_tasks, merge_plan
 from .gate import (conversation_view, gate_channel, may_see_peer_secrets,
-                   visible_tasks)
+                   stuck_tasks, visible_tasks)
+
+
+# Every vocabulary a surface draws. Imported where the code already owns the
+# list, spelled out only where it does not -- a second copy of the vocabulary is
+# the defect T-0214 names, so the rule for adding a row here is "find the
+# constant, do not retype the values".
+#
+# Three of the lists have no constant to import, and that is a finding, not a
+# permission to invent:
+#
+#   * the phase list. `const.DIVERGENCE` is a *subset* (the three sealed
+#     phases) and `a2a.DIVERGENCE_PHASES` is the same subset repeated, so the
+#     registry would be describing three phases of six. `bin/aim`'s `PHASES` is
+#     the whole lifecycle but it is a script, and importing a script to read a
+#     constant is how the module graph acquires a dependency on the CLI. Named
+#     in the round's report: `const.PHASES` is a two-line change in a file this
+#     agent does not own.
+#   * the provenance values. `fold.merge_plan` assigns them inline as
+#     `"store + seed"`, `"seed only (not yet in the store)"` and `"store only"`,
+#     next to the branch that chose them; extracting them is that file's call.
+#   * the cross-examination move kinds. `bin/aim` holds `CROSS_EXAMINE_KINDS`
+#     (the acceptance set) and the channel log records `kind`; the tool's own
+#     `aim say` documents the moves. Same script problem as the phases.
+#
+# The label is the human half and the description says what the token *does to
+# you* -- what it lets you do, or what it refuses. A token the map cannot
+# explain is a token a surface has to guess at, which is the whole card.
+CONCEPTS = (
+    # (token, group, label, description). `group` is the surface family the
+    # token belongs to, so a renderer can pull one vocabulary without the rest.
+    ("SEALED_DIVERGENT", "phase", "Sealed",
+     "Positions are being formed in private: you may not read a peer's reasoning, "
+     "and a request to is refused out loud."),
+    ("COMMIT", "phase", "Committed",
+     "Every position is written down as a claim with a confidence and a falsifier, "
+     "and the barriers are still up."),
+    ("SYNTHESIS", "phase", "Synthesising",
+     "A third party is mapping where the committed positions diverge; the seals are "
+     "still closed."),
+    ("CROSS_EXAMINE", "phase", "Cross-examining",
+     "The seals are open and the positions answer each other, as labelled moves."),
+    ("RESOLVE", "phase", "Resolving",
+     "The disagreement is being decided; the channel accepts no new arguments."),
+    ("CLOSED", "phase", "Closed",
+     "The channel is finished. It is read for its record and takes no new moves."),
+    ("draft", "visibility", "Draft",
+     "Not published: it is withheld from the channel's participants while the seal "
+     "is up, and a stranger may not read it at all."),
+    ("published", "visibility", "Published",
+     "Deliberately released, so the phase no longer gates it."),
+    ("seed only (not yet in the store)", "provenance", "From the plan, not recorded",
+     "The value comes from a plan file and no act in the record has confirmed it. "
+     "It is a statement of intent, not a measurement."),
+    ("store + seed", "provenance", "Recorded, from the plan",
+     "The record has events for this item; the plan file filled the fields no "
+     "event carried."),
+    ("store only", "provenance", "Recorded",
+     "Every value here came from an act in the record."),
+    # Move kinds: what a message in the public channel is *doing*. The register
+    # is the point -- a proposal invites a decision, a claim invites a falsifier,
+    # and an unlabelled remark does neither.
+    ("evidence", "move", "Evidence", "Something a reader can check."),
+    ("objection", "move", "Objection",
+     "Asserts the position is wrong, with a reason the author would have to answer."),
+    ("rebuttal", "move", "Rebuttal", "Answers an objection to a position already made."),
+    ("question", "move", "Question", "Asks for what is missing before deciding."),
+    ("concession", "move", "Concession",
+     "Gives ground explicitly, so the record shows the position moved and why."),
+    ("proposal", "move", "Proposal", "Offers an action for the leader to accept or refuse."),
+    ("note", "move", "Note",
+     "Context with no claim attached: it commits nobody, so it decides nothing."),
+    ("T-", "id", "Work item",
+     "Minted by `aim task new`; every pointer at a work item -- comments, blockers, "
+     "the plan -- names it by this id."),
+    ("M", "id", "Milestone",
+     "A dated group of work items in the plan file; the count on screen comes from "
+     "the record, never from the label."),
+    ("D", "id", "Decision",
+     "A recorded decision, which is what a disagreement leaves behind when it is "
+     "resolved."),
+    ("R", "id", "Revision / return",
+     "An item sent back with a reason, so the change of mind is a recorded move "
+     "rather than a silent edit."),
+    ("barrier", "refusal", "The barrier",
+     "You asked for something the phase withholds. Recorded with the phase it "
+     "happened in, because the temptation is the evidence."),
+    # `form`'s text is a2a's own sentence: whether A2A can express this class is
+    # the binding's claim to make, and a copy here would be a second place for it
+    # to drift. See `a2a.NATIVE_ONLY`.
+    ("form", "refusal", "Malformed request",
+     NATIVE_ONLY["form"]),
+    ("unrecorded", "refusal", "Class not recorded",
+     "The refusing site did not say whether this was the barrier or a malformed "
+     "request. A weaker claim than either, and printed as one."),
+)
+
+
+def concept_group(group):
+    """One group of the registry, generated where the code owns the list.
+
+    The two generated groups are generated on purpose: the A2A task states, the
+    nine error types and the statuses are already tables in `a2a` and `const`
+    with the spec cited above them, and T-0214's rule is that the label source
+    *is* the table the code reads. A hand-written label per error code would be a
+    second copy of a list the binding's own test asserts against (`ERROR_CODES`).
+    """
+    if group == "status":
+        return {token: {
+            "label": token.title(),
+            "description": ("Terminal: no further transition is expected from it."
+                            if token in TERMINAL else
+                            "Not terminal: the card is still expected to move."),
+            "group": "status"} for token in STATUSES}
+    if group == "a2a":
+        out = {}
+        for state in TASK_STATES:
+            out[state] = {
+                "label": state[len("TASK_STATE_"):].replace("_", " ").title(),
+                "description": "An A2A task state. `STATUS_TO_STATE` in aimboard/a2a.py "
+                               "says which of ours reaches it and why the rest cannot.",
+                "group": "a2a"}
+        for name, code in ERROR_CODES.items():
+            out[name] = {
+                "label": error_reason(name).replace("_", " ").title(),
+                "description": f"A2A error type, JSON-RPC code {code}.",
+                "group": "a2a"}
+        return out
+    return {token: {"label": label, "description": description, "group": group}
+            for token, g, label, description in CONCEPTS if g == group}
+
+
+def concepts():
+    """The registry: every token a surface renders, said once, by the server.
+
+    `web/src/concepts.js` is being written against this right now. The payload is
+    a plain token -> `{label, description, group}` map at a stable key, because
+    the front-end is being written against it in parallel and two shapes for one
+    contract is what T-0214 exists to stop; the richer per-token help (`what`,
+    `consequence`, `next`) stays in the front-end, where the anchors
+    `help#concept-<id>` already live.
+    """
+    out = {}
+    for name in ("phase", "status", "visibility", "provenance", "move", "id",
+                 "refusal", "a2a"):
+        out.update(concept_group(name))
+    return out
+
+
+def _canon(value):
+    """One spelling for one value, so two runs of the same bytes hash the same."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      default=str)
+
+
+def scoped_digests(payload, conversation, drift_rows, blocked_rows, stuck_rows):
+    """One digest per view, so a pane can invalidate on what it actually reads.
+
+    The global `digest` is a fingerprint of the *files* (`fabric.fabric_digest`),
+    so it moves for any write anywhere -- an outbox note, another room's
+    message, a registry edit from an unrelated seat -- and the items list
+    refreshes over all of them. A scroll position lost to a write the reader
+    never asked about is the cost.
+
+    So each scope is hashed over the slice of the payload that view renders, from
+    a stable canonicalisation (a payload is a dict; dict order is insertion order
+    and therefore not a property of the data). A pane that sees its own digest
+    unchanged can skip the refetch.
+
+    A scope can *over*-invalidate and that is deliberate: `plan` covers the
+    milestones and the drift rows a plan page draws, `tasks` the task map and the
+    one number that is about the whole set, `reports` the fold, `conversation`
+    the gated conversation view plus the mail and the room log's own counts, and
+    `barrier` the seals, refusals and phase the audit page exists for. The
+    failure to avoid is a pane that does not move when its own data changed; a
+    pane that moves for a neighbour's write is only the cost we already had.
+    """
+    tasks = payload.get("tasks") or {}
+    # `mail` here is the room log *counts* (`fabric.load_fabric` derives them from
+    # `rooms/*.json`); the ranked "who leaks" view is `A2A_SCOPES`' `mail`. Taking
+    # the whole key costs a room write re-hashing both, which is cheap and errs
+    # toward a stale pane never being possible.
+    barrier = [{"id": c.get("id"), "phase": c.get("phase"), "sealed": c.get("sealed"),
+                "refusals": c.get("refusals"), "concessions": c.get("concessions")}
+               for c in payload.get("channels") or []]
+    return {
+        "tasks": hashlib.sha256(_canon([
+            tasks, payload.get("withheld_tasks"), payload.get("unplaced_events"),
+            {"phase": payload.get("phase")},
+            sorted(payload.get("statuses") or []), sorted(payload.get("terminal") or []),
+        ]).encode()).hexdigest(),
+        "conversation": hashlib.sha256(_canon([
+            conversation, payload.get("mail"), payload.get("unacked"),
+        ]).encode()).hexdigest(),
+        "reports": hashlib.sha256(_canon([
+            payload.get("reports"), payload.get("reports_scope"),
+        ]).encode()).hexdigest(),
+        "plan": hashlib.sha256(_canon([
+            payload.get("milestones"), payload.get("as_of"), drift_rows,
+            # The tree itself, not one card's row in it, because the risk half of
+            # a plan page is what a milestone's *set* of items adds up to.
+            [(tid, t.get("milestone"), t.get("due"), t.get("start"),
+              t.get("estimate_hours"), t.get("status"))
+             for tid, t in sorted(tasks.items())],
+        ]).encode()).hexdigest(),
+        "barrier": hashlib.sha256(_canon([
+            barrier, payload.get("root"),
+        ]).encode()).hexdigest(),
+        "stuck": hashlib.sha256(_canon(
+            [stuck_rows, blocked_rows, payload.get("reports_scope")]).encode()).hexdigest(),
+    }
 
 
 def channel_payload(state, ch, viewer):
@@ -55,12 +268,59 @@ def channel_payload(state, ch, viewer):
     }
 
 
-def payload(state, viewer, register, generated_at=None, as_of=None, digest=None, write=None):
+def payload(state, viewer, register, generated_at=None, as_of=None, digest=None, write=None, read=None):
     generated_at = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     channel = gate_channel(state, viewer, {})
     tasks, hidden = visible_tasks(state, viewer, channel)
     as_of_date = as_of or state["as_of"]
-    return {
+    # `visible_tasks` is the one implementation of "may this viewer see this id",
+    # so every other key that names ids is filtered through *its* answer rather
+    # than re-deriving the rule -- two implementations of an access rule is the
+    # bug class `gate.conversation_view` was written to end. `hidden` is the
+    # published count; this is the set behind it.
+    withheld_ids = set(state["tasks"]) - set(tasks)
+    # Every channel keeps its own `tasks_recorded`, and reading `channels[0]`
+    # compared the plan against whichever channel happened to sort first --
+    # `barrier-v0`, which holds 2 of the 71 -- so the drift list was computed
+    # against almost no store at all. `fabric.load` unions the channels for the
+    # board; drift is a statement about the same store, so it unions them here.
+    recorded = {}
+    for ch in state["channels"]:
+        recorded.update(ch["tasks_recorded"])
+    drift_rows, drift_withheld = [], 0
+    for row in drift(state["seed_tasks"], recorded):
+        if row["id"] in withheld_ids:
+            # A drift row names a task id. Emitting one the viewer may not see
+            # would be this payload serving what `visible_tasks` withheld, which
+            # is the route around a refusal this file exists to not be.
+            drift_withheld += 1
+            continue
+        drift_rows.append(row)
+    # The report is a statement about the fabric, so it is folded over the whole
+    # task set: a total that changes with the seat you read it from is not a
+    # total, it is one seat's view (`reviews/05`, S2). Only counts may be
+    # published to everyone, though -- the per-item `blocked` rows carry titles,
+    # so they are filtered through the same rule as everything else below.
+    reports = report_data(state["tasks"], state["milestones"],
+                          datetime.fromisoformat(as_of_date).date())
+    blocked_rows = [row for row in reports["blocked"] if row["id"] not in withheld_ids]
+    reports["blocked_withheld"] = len(reports["blocked"]) - len(blocked_rows)
+    reports["blocked"] = blocked_rows
+    # T-0239. Two facts, two fields, because one field carrying both is how a
+    # reader stops being able to tell which one they are looking at. `blocked`
+    # above says "the status is blocked", and a *dependency* can close it -- which
+    # is why T-0041 left the list the moment T-0040 finished, though nobody had
+    # touched the card. `stuck` says "a human said this is stuck": still blocked,
+    # with no open blocker to wait on. Only a person reopens that one, so the
+    # attention surface is the only place it can clear.
+    stuck_all = stuck_tasks(state, state["tasks"])
+    stuck_rows = [row for row in stuck_all if row["id"] not in withheld_ids]
+    reports["stuck"] = stuck_rows
+    reports["stuck_withheld"] = len(stuck_all) - len(stuck_rows)
+    # Built once: the payload serves it and the `conversation` digest below hashes
+    # the same object, and two calls to a gate is two chances for them to differ.
+    conversation = conversation_view(state, viewer)
+    out = {
         "generated_at": generated_at,
         # the fingerprint the front-end polls, so the page can say "the record
         # moved" without reloading itself under the reader's hands
@@ -78,19 +338,38 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         # composer can name the identity it will write as and disappear when
         # there is none, instead of offering a control that will be refused.
         "write": write or {"enabled": False, "as": ""},
+        # design/06 R2 declares the write posture for the same reason on the read
+        # side: a consumer that forgot `?as=` used to read the leader's seat and
+        # had no way to tell, and one really did -- it reported that seat's
+        # numbers as the project's for an hour. The seat is reported here, and
+        # `borrowed` says whether this server chose it or the caller did.
+        "read": read or {"as": viewer, "borrowed": False},
         "phase": channel.get("phase", "-"),
         "withheld_tasks": hidden,
         "unplaced_events": state.get("unplaced_events", 0),
         "channels": [channel_payload(state, ch, viewer) for ch in state["channels"]],
         "tasks": tasks,
         "milestones": state["milestones"],
-        "reports": report_data(tasks, state["milestones"],
-                               datetime.fromisoformat(as_of_date).date()),
-        "conversation": conversation_view(state, viewer),
+        "reports": reports,
+        # The report is fabric-wide while `tasks` is viewer-scoped, and a
+        # consumer that cannot tell the two apart is how a seat's slice gets
+        # quoted as the project's numbers. Naming the scope is the cheap half of
+        # that fix; folding the report over the full set is the other half.
+        "reports_scope": "fabric",
+        "reports_viewer": viewer,
+        "conversation": conversation,
+        # T-0214: one dictionary for the words the product uses, so no surface
+        # invents a label. The Help pane is written against this key; the shape is
+        # token -> {label, description, group} and it is not a second vocabulary,
+        # it is the one the server reads out of its own constants.
+        "concepts": concepts(),
         "mail": state["mail"],
         "unacked": state["unacked"],
-        "drift": drift(state["seed_tasks"], (state["channels"][0]["tasks_recorded"]
-                                             if state["channels"] else {})),
+        "drift": drift_rows,
+        # Same spirit as `withheld_tasks`: the fact that rows were withheld is
+        # published, the rows are not. A reader who is shown 72 of 87 rows and
+        # no count cannot tell a complete drift list from a gated one.
+        "drift_withheld": drift_withheld,
         # Which program answered: the tree the server runs from, and the
         # revision the served bundle recorded about itself at build time. They
         # can differ, and `stale` is that difference -- `design/12` §1.6.
@@ -99,3 +378,11 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         "agents": {k: {"kind": v.get("kind", ""), "model": v.get("model", "")}
                    for k, v in state["registry"].items()},
     }
+    # T-0215: the global `digest` above stays where it was -- it is the
+    # fingerprint of the *tree*, and `/api/digest` polls it cheaply. What is added
+    # is a digest per view, so a pane compares the scope it draws instead of
+    # invalidating on every write anywhere. Assigned after the literal because a
+    # scope's digest is taken over the payload it names, and a dict cannot hash
+    # itself while it is still being built.
+    out["view_digests"] = scoped_digests(out, conversation, drift_rows, blocked_rows, stuck_rows)
+    return out

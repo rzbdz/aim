@@ -1,0 +1,13 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage({ viewport: { width: 1440, height: 1000 } })
+p.on('pageerror', e => console.log('PAGEERROR', e.message))
+await p.goto('http://127.0.0.1:8777/#/help', { waitUntil: 'networkidle' })
+await p.waitForTimeout(900)
+const card = p.locator('.el-card').filter({ hasText: 'The state machine' }).first()
+await card.scrollIntoViewIfNeeded()
+await p.waitForTimeout(300)
+const t = await card.innerText()
+console.log(t.split('\n').filter(Boolean).slice(0, 45).join('\n'))
+await p.screenshot({ path: '/tmp/sm.png' })
+await b.close()

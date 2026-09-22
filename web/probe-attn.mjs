@@ -1,0 +1,17 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage({ viewport: { width: 1440, height: 1000 } })
+const errs = []
+p.on('pageerror', e => errs.push(String(e.message).slice(0, 160)))
+await p.goto('http://127.0.0.1:8777/#/attention', { waitUntil: 'networkidle' })
+await p.waitForTimeout(1200)
+console.log('== NAV ==')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-menu-item, .el-aside a, aside a')].map(e => e.innerText.trim().replace(/\s+/g,' ')).filter(Boolean))))
+console.log('== MAIN TEXT ==')
+console.log(await p.evaluate(() => (document.querySelector('.el-main')?.innerText || '').replace(/\n{2,}/g, '\n')))
+console.log('== BUTTONS ==')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-main button')].map(e => e.innerText.trim()).filter(Boolean)), null, 1))
+console.log('== LINKISH ==')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-main')].flatMap(m => [...m.querySelectorAll('a,[role=button],.el-tag,[class*=link]')]).map(e => e.tagName + '|' + (e.className||'').toString().slice(0,40) + '|' + e.innerText.trim().replace(/\s+/g,' ').slice(0,60))), null, 1))
+console.log('errs', JSON.stringify(errs))
+await b.close()

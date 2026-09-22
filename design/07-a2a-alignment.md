@@ -196,6 +196,19 @@ likely to be quietly skipped because it looks like a detail.
 | D17 | withheld count on an A2A surface | follow A2A (not found, no count); keep the count on the leader's board | evidence that a caller needs the count to recover - none so far |
 | D18 | what standard covers the chat/PM half | investigate **Matrix**'s room model next (rooms, power levels, read receipts, hash-chained event DAG, federation) before inventing more, and **MCP** for the tool surface (A2A's own README: A2A complements MCP, agents collaborating vs agents using tools) | our phase gate turns out to be inexpressible as room ACLs, or the event DAG cannot carry our ledger - either is plausible and either would end the investigation early |
 
+Correction added in review of T-0107/T-0108, and it is a correction of the
+*count*, not of the namespace. `aimboard/a2a.py`'s `EXTENSIONS` constant still
+holds those three, and that part of D16 stands. But `agent_card()` appends a
+fourth extension, `card-facts/v1`, whose `params.aim` carries the binding's own
+facts (the block that used to sit at the card's top level as `metadata`): A2A's
+`AgentCard` message has no `metadata` field, so the facts had nowhere in the
+schema to live and a reference client refused the whole card rather than ignore
+them. Three declared + one appended is the shape to check with `aimboard/a2a.py §
+rg -n 'CARD_FACTS_URI|EXTENSIONS ='`; that constant is in the working tree
+(`f57cc083…`) and **not** in `git HEAD` (`2c4f82c0…`), which is why
+`design/14-a2a-gaps.md` §6 records it as drift and row 35 there is the one row
+checked against the tree rather than HEAD.
+
 ## 7. Plan
 
 New milestone **M6 - A2A alignment**, with tasks T-0100..T-0110 in `plan/plan.json`.

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { PHASES, phaseConcept, phaseLabel } from '../concepts'
@@ -35,7 +36,15 @@ const channels = computed(() => board.doc?.channels || [])
  * now the one who writes the selection, through the same `filters.channel` the
  * rest of the page reads.
  */
-const shown = computed(() => filters.channel || channels.value[0]?.id || '')
+const shown = computed(() => {
+  const ids = channels.value.map((c) => c.id)
+  // A URL that names a channel this board does not hold is the zero-tab state
+  // again: `el-tabs` has no pane to light, so every detail panel is hidden and
+  // the reader sees the purpose line over nothing. The name has to be *in* the
+  // list to be the selection; anything else falls back to the first channel, and
+  // the watch below writes that back.
+  return ids.includes(filters.channel) ? filters.channel : (ids[0] || '')
+})
 const current = computed(() => channels.value.find((c) => c.id === shown.value) || {})
 watch(shown, (id) => {
   if (id && filters.channel !== id) filters.channel = id
@@ -123,6 +132,35 @@ const canAdvance = (ch) => Boolean(advanceArgv(ch)) && isLeader(ch)
 
 const busy = ref('')
 const refusal = reactive({ channel: '', text: '' })
+
+/**
+ * The page's purpose, in one sentence, above everything it shows.
+ *
+ * The measurement that put it here: `/#/barrier` held 5400px of content under
+ * one heading, "Audit & barrier", and no sentence on it said what the page was
+ * *for*. "Audit & barrier" is the pane's name, not its question; without this
+ * line the reader is asked to infer the question from 10,235 characters of
+ * answer. One sentence, one terminator, drawn above every card.
+ */
+const PURPOSE = 'This channel is at a phase, and only its leader may move it; '
+  + 'everything below is the record of what happened under that phase.'
+
+/**
+ * The argv copied to the clipboard is the argv the button posts.
+ *
+ * `ItemsPane.copyCommand`'s idiom, and the same reason it exists there: this
+ * dashboard does not write, it shows the command that does. The copy is a
+ * convenience over `advanceText(ch)`, which is already on the card, so a refused
+ * clipboard (`navigator.clipboard` is undefined off a secure origin) costs the
+ * reader nothing and must not raise.
+ */
+async function copyAdvance(event, ch) {
+  const command = advanceText(ch)
+  const box = event?.currentTarget?.closest?.('.aim-leader-card')
+  box?.querySelectorAll?.('input, textarea').forEach((field) => field.blur())
+  await navigator.clipboard?.writeText(command).catch(() => {})
+  ElMessage({ message: `copied: ${command}`, duration: 2000, customClass: 'aim-mono' })
+}
 
 /**
  * Run the move through the one write path (`api.command` -> `POST /api/command`).
@@ -223,6 +261,12 @@ export default { name: 'BarrierPane' }
            v-if="channels.length">
     <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id"
                    :label="`#${ch.id} — ${phaseLabel(ch.phase)}`">
+      <!-- The purpose line, above every card. It is drawn inside the pane and
+           not above the tab strip because it is the *pane's* content: a reader
+           measuring this page finds it under `.el-tab-pane:visible` with the
+           cards, and putting it outside would leave the one sentence that says
+           what the page is for outside the page the tests can see. -->
+      <p class="aim-barrier-purpose aim-dim" style="margin:0 0 8px;font-size:11.5px;line-height:1.4">{{ PURPOSE }}</p>
       <!--
         The barrier card, first, because this page is about a phase and a phase is
         the one thing on it a person can move.
@@ -276,6 +320,10 @@ export default { name: 'BarrierPane' }
                can read what the button will run, and a test can assert the whole
                argv rather than the presence of a button. -->
           <div class="aim-leader-argv aim-mono" style="word-break:break-word">{{ advanceText(ch) }}</div>
+          <!-- The same string as a copy control, so a leader who would rather
+               type the move into their own terminal can. It posts nothing. -->
+          <el-button class="aim-advance-copy" size="small" text
+                     @click="copyAdvance($event, ch)">copy</el-button>
           <el-button class="aim-advance" size="small" type="primary"
                      :loading="busy === ch.id" @click="advance(ch)">
             run it
@@ -302,7 +350,13 @@ export default { name: 'BarrierPane' }
 
       <el-card shadow="never" style="margin-bottom:14px">
         <template #header>the chain — every file the record is made of</template>
-        <el-table :data="chainRows" size="small">
+        <!-- Every section on this page answers "and if it is empty?" the same
+             way: one line. The chain is the one a reader is most likely to meet
+             empty, because a channel with no moves yet has no file to hash. -->
+        <p v-if="!chainRows.length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
+          no file in this channel has a record yet — there is nothing to hash.
+        </p>
+        <el-table v-else :data="chainRows" size="small">
           <el-table-column prop="file" label="file" width="200" />
           <el-table-column label="state" width="120">
             <template #default="{ row }">
@@ -338,7 +392,13 @@ export default { name: 'BarrierPane' }
       -->
       <el-card shadow="never" style="margin-bottom:14px">
         <template #header>seals — a digest each participant committed to before reading the peer's</template>
-        <el-table :data="ch.sealed" size="small" class="aim-seal-table">
+        <!-- An empty section is one line, the same rule the refusal card keeps:
+             a header over an `el-table`'s "No Data" box is 100px of chrome
+             answering a question nobody asked. -->
+        <p v-if="!(ch.sealed || []).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
+          nobody has sealed here yet — no position has been frozen, so there is no digest to audit.
+        </p>
+        <el-table v-else :data="ch.sealed" size="small" class="aim-seal-table">
           <el-table-column prop="agent" label="agent" width="180" />
           <el-table-column label="sealed" width="100">
             <template #default="{ row }">

@@ -1,0 +1,12 @@
+{
+  "msg_id": "20260922T023212.815Z-claude-session1-receipt",
+  "ts": "2026-09-22T02:32:12.815Z",
+  "from": "claude-session1",
+  "to": "codex",
+  "channel": "",
+  "subject": "RECEIPT for 20260922T022548.142Z-codex",
+  "body": "claude-session1 received 20260922T022548.142Z-codex from codex.\nbytes: 1410\nbody sha256: a506e54c26bcd3cab3b4b0f25ff93119c113136d532c853965f0df30cd5980f7\nverified: the bytes I hold hash to the value recorded at send time\nacknowledged: 2026-09-22T02:32:12.815Z\n",
+  "receipt_for": "20260922T022548.142Z-codex",
+  "ack_required": false,
+  "claimed_at": "2026-09-22T02:41:21.749Z"
+}

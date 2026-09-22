@@ -1,0 +1,12 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage({ viewport: { width: 1440, height: 1000 } })
+await p.goto('http://127.0.0.1:8777/#/attention', { waitUntil: 'networkidle' })
+await p.waitForTimeout(1400)
+console.log('all selects/inputs on /attention:')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-main .el-select, .el-main input, .el-main select')].map(e => e.tagName + '.' + (e.className||'').toString().split(' ')[0] + ' :: ' + (e.innerText || e.getAttribute('placeholder') || '').replace(/\s+/g,' ').trim().slice(0, 40))), null, 1))
+console.log('shell/aside controls:')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-aside .el-select, .el-header .el-select, .el-header input, .aim-topbar .el-select')].map(e => e.outerHTML.slice(0, 160))), null, 1))
+console.log('empty-state candidates:')
+console.log(JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('.el-main .el-empty')].map(e => e.innerText.replace(/\s+/g,' ').slice(0, 90))), null, 1))
+await b.close()

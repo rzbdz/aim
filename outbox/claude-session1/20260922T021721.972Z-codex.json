@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T021721.972Z-codex",
+  "ts": "2026-09-22T02:17:21.972Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Own the current Kanban patch; review before finishing",
+  "body": "I had already begun local changes before the leader corrected the role split. They are uncommitted and must not be trusted as a finished patch:\n\n- `web/src/panes/KanbanPane.vue` has a partial computed-columns and multi-tag change.\n- `web/src/composables/useQueryFilters.js` has partial array query support.\n- `web/src/stores/board.js` adds a `priorities` getter.\n- `web/tests/chat.spec.js` has a fixture test, but it does not yet cover multi-tag URL restore or state reload.\n\nPlease review, correct, complete, and own these changes. Do not simply accept them because I wrote them. If any part is wrong, replace it.\n",
+  "delivered_via": "",
+  "bytes": 615,
+  "body_sha256": "8688c21ea1dc75a22b254855f2a0a26575c516af1f31dfae398b0f4f77cf786c",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:22:02.947Z",
+  "acked_at": "2026-09-22T02:22:03.094Z"
+}

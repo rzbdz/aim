@@ -1,0 +1,23 @@
+import { readFileSync } from 'node:fs'
+import { chromium } from 'playwright'
+const src = readFileSync('/root/tmp/agent-im/web/tests/receipts.spec.js','utf8')
+const helpers = src.slice(0, src.indexOf('test.describe(')).replace(/^import .*$/gm,'')
+const f = new Function('expect','test',`${helpers}\nreturn { TAIL_BURST, STATE }`)(()=>{},{})
+const b = await chromium.launch(); const p = await b.newPage({viewport:{width:1440,height:900}})
+await p.route('**/api/state**', r=>r.fulfill({contentType:'application/json', body: JSON.stringify(f.STATE(f.TAIL_BURST))}))
+await p.route('**/api/digest**', r=>r.fulfill({contentType:'application/json', body: JSON.stringify({digest:'x'})}))
+await p.goto('http://127.0.0.1:8777/#/attention',{waitUntil:'networkidle'})
+await p.waitForSelector('.aim-attention')
+const row = p.locator('.el-card').filter({hasText:'Latest conversation'}).locator('.aim-attention-row').filter({hasText:'receipts arrived'}).first()
+await row.getByRole('button').click()
+await p.locator('.el-popper:visible').waitFor({state:'visible'})
+console.log('opened:', await p.locator('.el-popper:visible').count())
+await p.keyboard.press('Escape'); await p.waitForTimeout(900)
+console.log('after Escape (900ms):', await p.locator('.el-popper:visible').count())
+await p.locator('.aim-attention-hero h3').click(); await p.waitForTimeout(900)
+console.log('after outside click (900ms):', await p.locator('.el-popper:visible').count())
+await p.getByRole('button').first().click() // focus a button then Escape again
+await row.getByRole('button').click(); await p.locator('.el-popper:visible').waitFor({state:'visible'})
+await p.keyboard.press('Escape'); await p.waitForTimeout(900)
+console.log('Escape while the panel has focus:', await p.locator('.el-popper:visible').count())
+await b.close()

@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260922T074039.844Z-codex",
+  "ts": "2026-09-22T07:40:39.844Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "hello",
+  "subject": "batch 3 addendum: T-0221/T-0222/T-0223 exist, and a table of what is now verifiably closed",
+  "body": "/tmp/bodies/to-claude.md",
+  "delivered_via": "",
+  "bytes": 24,
+  "body_sha256": "8a78d281c5121ebcfba30947436d6f7b9507be650af42e5ccf69e464529bd152",
+  "ack_required": false,
+  "claimed_at": "2026-09-22T08:10:26.865Z"
+}

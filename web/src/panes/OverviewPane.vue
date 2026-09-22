@@ -2,6 +2,16 @@
 import { computed, inject, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { isPromise, useBoard } from '../stores/board'
+/**
+ * The one predicate for "this message is waiting on the reader", taken from the
+ * pane that owns the `needs me` filter rather than written again here.
+ *
+ * T-0162 is what a second derivation costs: this page asked whether the *row*
+ * carried a receipt chip, and the answer was yes for demands the reader had sent
+ * and demands addressed to another agent. A count and the list it lands on have
+ * to be one question asked once.
+ */
+import { messageWaiting } from './ChatPane.vue'
 import { PRIORITY_TYPE, STATUS_TYPE, isOverdue } from '../theme'
 import PhaseApprovalCard from '../components/PhaseApprovalCard.vue'
 import PromiseTag from '../components/PromiseTag.vue'
@@ -34,6 +44,61 @@ const blocked = computed(() => board.recordedByStatus.blocked || [])
 const review = computed(() => board.recordedByStatus.review || [])
 
 /**
+ * Receipts the *reader* still owes, read row by row off the recipient.
+ *
+ * What this replaces: `board.unacked.length`, a server list that is a property of
+ * every inbox under `outbox/` rather than of the reader. Measured live as
+ * `human`: 15, of which 11 were `codex -> claude-session1` -- mail the reader
+ * never received and can never answer. The same list also counted demands the
+ * reader had sent, so the tile said "15 receipts owed" beside a sender's own
+ * outgoing chips, and a row that reads `acked` and `receipt demanded` side by
+ * side is the defect T-0162 names.
+ *
+ * A mail row on the wire carries `from`, `to`, `ack_required` and `state`; the
+ * predicate is Chat's `messageWaiting`, imported rather than restated, so the
+ * number here and the `needs me` filter there are one question asked once. The
+ * room half of T-0162 -- unread state per viewer -- is Chat's, and this tile
+ * does not claim it: rooms have no receipt to owe.
+ *
+ * `board.ackOwed` is where this belongs, beside `unacked`; it is here because
+ * `web/src/stores/board.js` is another agent's file this round. If it moves, the
+ * tile reads the getter and the list under it shrinks to the rows the reader
+ * owes.
+ * The cap is drawing, not counting: a thousand-row page is not a summary, and
+ * the count stays the record's own number.
+ */
+const receiptsOwed = computed(() => board.conversationRows
+  .filter((row) => row.shape === 'direct' && messageWaiting(row, board.viewer)))
+const RECEIPTS_DRAWN = 40
+
+/**
+ * The list the receipts tile lands on: the Chat threads holding a message the
+ * reader owes, newest first.
+ *
+ * Both keys are Chat's own (`needsMe` is its checkbox, `thread` is the key its
+ * watcher selects), because a query the destination does not read is a link that
+ * lands on the whole board and reports a filter. For a direct thread "waiting on
+ * the viewer" and "the reader owes a receipt" are the same fact, so
+ * `needsMe=1&shape=direct` lands on exactly these threads; the one-thread case
+ * names the thread as well, so it opens on the conversation rather than the list.
+ * The tile counts messages and the list shows conversations -- the card between
+ * them is what names the messages.
+ */
+const receiptThreads = computed(() => {
+  const byThread = new Map()
+  for (const row of board.conversationRows) {
+    if (row.shape !== 'direct') continue
+    const key = threadKey(row)
+    const entry = byThread.get(key) || { key, owed: [] }
+    if (messageWaiting(row, board.viewer)) entry.owed.push(row)
+    byThread.set(key, entry)
+  }
+  return [...byThread.values()]
+    .filter((entry) => entry.owed.length)
+    .sort((a, b) => (a.owed.at(-1).ts < b.owed.at(-1).ts ? 1 : -1))
+})
+
+/**
  * A signal is a way in, and a signal with nothing behind it is not.
  *
  * The count and the destination are one thing: `3 overdue` has to land on the
@@ -59,8 +124,13 @@ const signals = computed(() => [
     detail: 'on the record', to: { path: '/items', query: { status: 'review' } } },
   { label: 'Phase requests', value: board.phaseRequests.length, type: 'danger',
     detail: 'on the record', to: { path: '/attention', hash: '#leader-decisions' } },
-  { label: 'Receipts owed', value: board.unacked.length, type: 'warning',
-    detail: 'on the record', to: { path: '/chat', query: { needsMe: '1', shape: 'direct' } } },
+  { label: 'Receipts owed', value: receiptsOwed.value.length, type: 'warning',
+    detail: 'addressed to you', to: {
+      path: '/chat',
+      query: receiptThreads.value.length === 1
+        ? { needsMe: '1', thread: receiptThreads.value[0].key }
+        : { needsMe: '1', shape: 'direct' },
+    } },
   { label: 'Plan disagreements', value: board.drift.length, type: 'warning',
     detail: 'plan vs store', to: { path: '/attention', hash: '#drift' } },
 ])
@@ -236,6 +306,7 @@ const upcomingMilestones = computed(() => Object.values(board.milestones)
 
 const clear = computed(() =>
   signals.value.every((signal) => signal.value === 0)
+  && !receiptsOwed.value.length
   && !attentionTasks.value.length && !board.promiseDecisions.length)
 const preview = (message) => message.subject || message.body || '(nothing yet)'
 const taskRecorded = (task) => !isPromise(task)
@@ -326,10 +397,11 @@ async function rejectPhase(request, reason) {
         <span>
           {{ board.phaseRequests.length }} phase request(s) · {{ overdue.length }} overdue ·
           {{ blocked.length }} blocked · {{ review.length }} review ·
-          {{ board.unacked.length }} receipts owed
+          {{ receiptsOwed.length }} receipts owed
         </span>
         <span class="aim-dim" style="display:block">
-          every count here is work on the record — the plan's promises are counted separately, below
+          every count here is work on the record, and a receipt count is mail addressed to you —
+          the plan's promises are counted separately, below
         </span>
       </div>
       <div>
@@ -369,6 +441,38 @@ async function rejectPhase(request, reason) {
                          @approve="approvePhase" @reject="rejectPhase" />
     </el-card>
 
+    <!-- What the reader still owes, named by the message that is waiting.
+         This card is the receipts tile opened out: same predicate, same rows, so
+         the number at the top and this list cannot disagree. Every row is
+         addressed `to` the viewer and unacked, and the button beside it is the
+         one command that answers it — the same `confirm` the Chat reader runs. -->
+    <el-card v-if="receiptsOwed.length" id="receipts-owed" shadow="never" class="aim-receipts-card">
+      <template #header>
+        <span>{{ receiptsOwed.length }} message(s) addressed to you, unacked</span>
+        <RouterLink :to="signals.find((s) => s.label === 'Receipts owed').to">open in chat</RouterLink>
+      </template>
+      <article v-for="row in receiptsOwed.slice(0, RECEIPTS_DRAWN)"
+               :key="row.msg_id || `${row.scope}:${row.ts}`"
+               class="aim-attention-row aim-clickable"
+               role="button" tabindex="0"
+               :aria-label="`Open the conversation ${row.scope}, which owes you a receipt`"
+               @click="$router.push({ path: '/chat', query: { thread: threadKey(row), msg: row.msg_id } })"
+               @keydown.enter.prevent="$router.push({ path: '/chat', query: { thread: threadKey(row), msg: row.msg_id } })">
+        <span class="aim-mono">{{ (row.ts || '').slice(0, 10) }}</span>
+        <strong>{{ row.subject || '(no subject)' }}</strong>
+        <span>{{ row.from }} → {{ row.to }}</span>
+        <el-tag size="small" type="warning" effect="plain">unacked</el-tag>
+        <el-button size="small" text
+                   :loading="actionBusy === `confirm:${row.msg_id}`"
+                   @click.stop="runAction(`confirm:${row.msg_id}`, ['confirm', '--msg-id', row.msg_id, '--note', 'confirmed from attention page'])">
+          confirm receipt
+        </el-button>
+      </article>
+      <p v-if="receiptsOwed.length > RECEIPTS_DRAWN" class="aim-dim" style="font-size:12px;margin-bottom:0">
+        {{ receiptsOwed.length - RECEIPTS_DRAWN }} more than this card draws. The count above is the record's.
+      </p>
+    </el-card>
+
     <!-- The promises, counted out loud and in their own words.
          They are on this page because the reader is entitled to see what the plan
          claims -- but they are not work, so they are not in a work signal, and
@@ -398,6 +502,36 @@ async function rejectPhase(request, reason) {
         <PromiseTag title="A plan promise, not a recorded item: the plan says its owner is you." />
         <el-tag size="small" type="warning" effect="dark">decision for you</el-tag>
         <el-button size="small" text @click.stop="openTask(task)">open it</el-button>
+      </article>
+    </el-card>
+
+    <!-- What the record says about one message, one fact at a time.
+         `pending receipt` here is the *condition*, true of a demand nobody has
+         answered, and the chain names the rule while the rows under it are the
+         ones the viewer owes — so the page never draws a message that is `acked`
+         beside one that still says `receipt demanded`. The button is drawn from
+         the same predicate the tile counts, not from the row's own chip. -->
+    <el-card v-if="board.unacked.length" id="ack-chain" shadow="never" class="aim-ack-card">
+      <template #header>
+        <span>{{ board.unacked.length }} message(s) in the fabric demand an acknowledgement</span>
+        <RouterLink to="/help">what a receipt is</RouterLink>
+      </template>
+      <p class="aim-dim" style="font-size:12px;margin-top:0">
+        A demand is outstanding until somebody answers it. Whether that somebody is you is the
+        question the receipts tile answers, by recipient; this card is the whole chain, so a
+        message you sent and a message awaiting you are not read as one list.
+      </p>
+      <article v-for="item in board.unacked.slice(0, 8)" :key="item.msg_id" class="aim-attention-row">
+        <span class="aim-mono">pending receipt</span>
+        <strong class="aim-mono">{{ item.msg_id }}</strong>
+        <span>{{ item.from }} → {{ item.to }}</span>
+        <el-tag v-if="item.to === board.viewer" size="small" type="warning" effect="dark">addressed to you</el-tag>
+        <el-tag v-else size="small" effect="plain">another seat</el-tag>
+        <el-button v-if="item.to === board.viewer" size="small" text
+                   :loading="actionBusy === `confirm:${item.msg_id}`"
+                   @click.stop="runAction(`confirm:${item.msg_id}`, ['confirm', '--msg-id', item.msg_id, '--note', 'confirmed from attention page'])">
+          confirm receipt
+        </el-button>
       </article>
     </el-card>
 
@@ -472,11 +606,18 @@ async function rejectPhase(request, reason) {
               {{ message.receiptCount }} receipts arrived in {{ message.scope }},
               newest first. Each line names the message that was receipted.
             </p>
-            <div v-for="receipt in message.receipts" :key="receipt.msg_id || `${receipt.id}:${receipt.ts}`"
-                 style="display:flex;gap:10px;align-items:baseline;border-top:1px solid var(--aim-line-soft);padding:5px 0">
-              <span class="aim-mono">{{ (receipt.ts || '').slice(0, 16).replace('T', ' ') }}</span>
-              <strong>{{ receipt.from }}</strong>
-              <span class="aim-mono">{{ receipt.id }}</span>
+            <!-- The one scroller this page owns, and it is capped on purpose.
+                 `scrolledContainers` snapshots every element the reader has
+                 scrolled, so a group of 53 receipts cannot push the landing page
+                 itself into being a restore target, and a forced update puts the
+                 reader back on the line of the panel they were reading. -->
+            <div style="max-height:240px;overflow-y:auto">
+              <div v-for="receipt in message.receipts" :key="receipt.msg_id || `${receipt.id}:${receipt.ts}`"
+                   style="display:flex;gap:10px;align-items:baseline;border-top:1px solid var(--aim-line-soft);padding:5px 0">
+                <span class="aim-mono">{{ (receipt.ts || '').slice(0, 16).replace('T', ' ') }}</span>
+                <strong>{{ receipt.from }}</strong>
+                <span class="aim-mono">{{ receipt.id }}</span>
+              </div>
             </div>
           </el-popover>
           <RouterLink v-else :to="{ path: '/chat', query: { thread: threadKey(message) } }" class="aim-row-link">

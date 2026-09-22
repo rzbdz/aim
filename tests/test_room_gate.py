@@ -105,10 +105,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check("board serves", url is not None, "".join(said)[-200:])
     try:
         seen = {}
-        for who in ("beta", "leader"):
+        for who in ("alpha", "beta", "leader"):
             with urllib.request.urlopen(f"{url}/api/state?as={who}", timeout=20) as fh:
                 blob = norm(fh.read().decode())
             seen[who] = {k: (v in blob) for k, v in TOKENS.items()}
+        print(f"        alpha(author)={seen['alpha']}\n"
+              f"        beta(peer)   ={seen['beta']}\n"
+              f"        leader       ={seen['leader']}")
 
         check("no visibility field -> the peer cannot read it (the default is draft)",
               seen["beta"]["nofield"] is False)
@@ -118,6 +121,15 @@ with tempfile.TemporaryDirectory() as tmp:
               seen["beta"]["pub"] is True)
         check("the leader reads all three, as the policy says they should",
               all(seen["leader"].values()))
+        # The row design/06 §2 names first, and the one `visible_tasks` already
+        # implements (gate.py:70). Alpha wrote every message in each room here,
+        # which is the only authorship evidence that reaches the gate: `fabric.py`
+        # reads `rooms/<room>.json` but forwards id/topic/visibility/messages/
+        # unread/mentions, so a declared `author` never arrives.
+        check("design/06 §2: the AUTHOR reads their own draft room during divergence",
+              seen["alpha"]["nofield"] and seen["alpha"]["typo"],
+              "visible_rooms() has no author exemption, so alpha cannot read the room "
+              "alpha wrote; walled_off() is true for any participant in a divergence phase")
     finally:
         proc.terminate()
         try:
@@ -126,6 +138,10 @@ with tempfile.TemporaryDirectory() as tmp:
             proc.kill()
 
 print(f"\n{passed}/{passed + failed} checks passed")
-print("The three rows above are the review. A fix must make the fourth row false by")
-print("keying the gate on the channel's phase, and must record a publish in the ledger.")
+print("The three rows above are the review. A fix that names the channel's phase would")
+print("make the fourth row false and would also take `aim task publish` with it -")
+print("gate.py:77 and gate.py:68 are the same two lines, and design/05 §1 and design/06")
+print("§2 both specify a deliberate early publish. See reviews/07-room-gate-decision.md.")
+print("The author row is pinned because it was the omitted half: a fix must not weaken")
+print("the peer row to grant it.")
 sys.exit(1 if failed else 0)

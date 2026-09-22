@@ -6,10 +6,11 @@
   "synthesizer": "",
   "participants": [
     "claude-session1",
-    "codex"
+    "codex",
+    "codex-orangement"
   ],
   "barrier": {
-    "phase": "SEALED_DIVERGENT",
+    "phase": "COMMIT",
     "round": 0,
     "history": [
       {
@@ -17,6 +18,14 @@
         "at": "2026-09-21T07:33:48.111Z",
         "by": "human",
         "note": "channel opened"
+      },
+      {
+        "phase": "COMMIT",
+        "at": "2026-09-22T03:26:47.050Z",
+        "by": "human",
+        "round": 0,
+        "note": "approved from the attention page",
+        "forced": false
       }
     ]
   }

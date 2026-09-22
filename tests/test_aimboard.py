@@ -162,6 +162,149 @@ def render(root, out, *extra):
         capture_output=True, text=True, timeout=120)
 
 
+def blocked_means_unmet_dependency():
+    """C4: `reports.blocked` must mean an UNMET edge, not a drawn one.
+
+    The defect, measured on the live board: the report listed every row that
+    carried a `blocked_by`, so 24 of its 51 rows were `done` and one was
+    `review`. A finished item cannot be blocked, whatever edge it carries, and a
+    dependency whose target is already terminal is met rather than missing.
+
+    Called directly rather than through a render: this is a rule about the fold,
+    and a rule tested only through the HTML is a rule any template change can
+    break.
+    """
+    sys.path.insert(0, str(HERE))
+    from datetime import date
+    from aimboard.fold import report_data
+
+    def task(status, blocked_by):
+        return {"title": f"a {status} item", "status": status, "owner": "x",
+                "blocked_by": blocked_by, "events": []}
+
+    tasks = {
+        "T-A1": task("doing", ["T-A2"]),      # a live blocker -> blocked
+        "T-A2": task("doing", []),            # the live blocker itself
+        "T-A3": task("done", ["T-A2"]),       # terminal row, edge drawn -> not blocked
+        "T-A4": task("doing", ["T-A3"]),      # only blocker is done -> met, not blocked
+        "T-A5": task("dropped", ["T-A2"]),    # terminal row, edge drawn -> not blocked
+    }
+    rows = report_data(tasks, {}, date(2026, 9, 22))["blocked"]
+    ids = {r["id"] for r in rows}
+    check("an unmet dependency is reported as blocked", ids == {"T-A1"}, sorted(ids))
+    check("a terminal row carrying a blocked_by edge is not blocked", "T-A3" not in ids)
+    check("a row whose only blocker is terminal is not blocked", "T-A4" not in ids)
+    check("a dropped row carrying a blocked_by edge is not blocked", "T-A5" not in ids)
+    check("the blocked row keeps its published shape",
+          all(k in (rows[0] if rows else {}) for k in
+              ("id", "title", "status", "owner", "blocked_by")),
+          json.dumps(rows[:1]))
+
+
+def unassigned_rows_hours_and_the_claim():
+    """T-0226/T-0227/T-0212: the fold must publish the unowned state, the hours, the claim.
+
+    Three defects on one row of output:
+
+      * `owner: ""` ("nobody has taken this") and a row that never carried an
+        `owner` field both drew as an empty cell, so a board could not tell a
+        recorded state from a payload that forgot the field;
+      * an unowned row published no claim command, and the exact argv *is* the
+        control T-0227 asks for;
+      * a `created` event carrying `estimate_hours` reached `flow_series`, which
+        folds raw events, but not the board, because `fold_tasks` copies only
+        PLAN_FIELDS -- and the board had no opinion about the declared unit.
+
+    Called against the fold directly rather than through a render: these are
+    rules about the fold's own output, and a rule tested only through a template
+    is a rule the next template change can break.
+    """
+    sys.path.insert(0, str(HERE))
+    try:
+        from aimboard.fold import (claim_command, declared_hours, fold_tasks,
+                                   merge_plan)
+    except ImportError as exc:                       # the state this test exists to end
+        check("the fold publishes the claim helpers", False, str(exc))
+        return
+
+    events = [
+        {"ts": "2026-09-21T00:00:01Z", "event": "created", "task": "T-U1", "actor": "codex",
+         "title": "born unowned", "owner": "", "status": "backlog",
+         "context_id": "hello", "estimate_hours": 4},
+        {"ts": "2026-09-21T00:00:02Z", "event": "created", "task": "T-U2", "actor": "codex",
+         "title": "never named an owner", "status": "backlog", "context_id": "hello"},
+        {"ts": "2026-09-21T00:00:03Z", "event": "created", "task": "T-U3", "actor": "codex",
+         "title": "taken", "owner": "claude-session1", "status": "doing",
+         "context_id": "hello", "estimate_hours": 2},
+        {"ts": "2026-09-21T00:00:04Z", "event": "created", "task": "T-U4", "actor": "codex",
+         "title": "no channel to name", "owner": "", "status": "backlog"},
+        {"ts": "2026-09-21T00:00:05Z", "event": "created", "task": "T-U5", "actor": "codex",
+         "title": "taken then released", "owner": "codex", "status": "doing",
+         "context_id": "hello", "estimate_hours": 1.5},
+        {"ts": "2026-09-21T00:00:06Z", "event": "assigned", "task": "T-U5", "actor": "codex",
+         "owner": ""},
+    ]
+    seeds = {
+        # a plan seed, still in points: the fold must NOT invent the hours
+        "T-U6": {"id": "T-U6", "title": "a seed in points", "owner": "", "status": "backlog",
+                 "estimate": 3, "context_id": "hello"},
+        # a seed with no owner key at all
+        "T-U7": {"id": "T-U7", "title": "a seed with no owner key", "status": "ready"},
+    }
+    recorded, _unknown = fold_tasks(events)
+    for tid in ("T-U1", "T-U2", "T-U3", "T-U5"):
+        # what `fabric.load_fabric` stamps before the merge
+        recorded[tid]["channel"] = "hello"
+    rows = merge_plan(seeds, recorded)
+
+    check("an empty owner is published as an empty string, not None",
+          rows["T-U1"].get("owner") == "" and rows["T-U1"].get("owner") is not None)
+    check("a row that never carried an owner still gets the key, as ''",
+          "owner" in rows["T-U2"] and rows["T-U2"].get("owner") == "")
+    check("'' and a name are two different published states",
+          rows["T-U3"].get("owner") == "claude-session1"
+          and rows["T-U1"].get("owner") != rows["T-U3"].get("owner"))
+    check("a seed with no owner key is normalised the same way",
+          "owner" in rows["T-U7"] and rows["T-U7"].get("owner") == "")
+
+    check("an unowned row publishes the claim it offers: verb, channel, id",
+          rows["T-U1"].get("claim") == {"verb": "aim task claim",
+                                        "channel": "hello", "id": "T-U1"},
+          json.dumps(rows["T-U1"].get("claim")))
+    check("an owned row publishes no claim at all",
+          rows["T-U3"].get("claim", "missing") is None)
+    check("a released row is unowned again and offers the claim again",
+          rows["T-U5"].get("owner") == "" and rows["T-U5"].get("claim") is not None
+          and rows["T-U5"].get("estimate_hours") == 1.5)
+    check("the exact command names the seat the surface holds",
+          claim_command(rows["T-U1"], "claude-session1")
+          == "aim task claim --as claude-session1 --channel hello --id T-U1",
+          claim_command(rows["T-U1"], "claude-session1"))
+    check("no command is drawn with a hole where the seat goes",
+          claim_command(rows["T-U1"], "") == "")
+    check("an owned row yields no command even for a seat",
+          claim_command(rows["T-U3"], "claude-session1") == "")
+    check("a row with no channel offers no control rather than a broken one",
+          rows["T-U4"].get("claim") == {"verb": "aim task claim", "channel": "",
+                                        "id": "T-U4"}
+          and claim_command(rows["T-U4"], "codex") == "")
+
+    check("a recorded estimate reaches the board row in hours",
+          rows["T-U1"].get("estimate_hours") == 4)
+    check("an absent estimate is None on the row, not 0 and not a dropped key",
+          "estimate_hours" in rows["T-U2"] and rows["T-U2"].get("estimate_hours") is None
+          and rows["T-U2"].get("estimate_hours") != 0)
+    check("a plan seed's points are not converted into hours by the fold",
+          rows["T-U6"].get("estimate") == 3
+          and rows["T-U6"].get("estimate_hours") is None,
+          f"estimate={rows['T-U6'].get('estimate')!r} "
+          f"estimate_hours={rows['T-U6'].get('estimate_hours')!r}")
+    check("only a real number is hours: a string or a bool is not",
+          declared_hours(2) == 2 and declared_hours(0) == 0
+          and declared_hours("4") is None and declared_hours(True) is None
+          and declared_hours(None) is None)
+
+
 def main():
     work = Path(tempfile.mkdtemp(prefix="aimboard-test-"))
     try:
@@ -346,6 +489,39 @@ def main():
                       "T-9001" in doc["tasks"] and doc["statuses"])
                 check("the api says what it withheld rather than hiding the count",
                       "withheld_tasks" in doc)
+                # T-0228: /api/agents was advertised by the 404 body (and by
+                # web/src/api.js:54) but the `startswith("/api/")` catch-all was
+                # dispatched before its branch, so the endpoint 404ed while
+                # naming itself. Prove the endpoint answers and, stronger, that
+                # the 404 body's own list cannot disagree with the dispatch:
+                # every endpoint it advertises must answer 200.
+                agents = json.loads(urllib.request.urlopen(url + "/api/agents", timeout=20).read().decode())
+                check("serve answers /api/agents instead of its own 404",
+                      agents.get("agents") == doc.get("agents"), json.dumps(agents)[:200])
+                check("the agents payload names the viewer it answered as",
+                      agents.get("viewer") == doc.get("viewer"), json.dumps(agents)[:200])
+                try:
+                    urllib.request.urlopen(url + "/api/no-such-endpoint", timeout=20)
+                    advertised, bad404 = [], "no 404 for an unknown api path"
+                except urllib.error.HTTPError as e:
+                    bad404 = "" if e.code == 404 else f"got {e.code}"
+                    advertised = json.loads(e.read().decode()).get("endpoints", [])
+                check("an unknown api path 404s and lists the real endpoints",
+                      bad404 == "" and advertised, bad404 or str(advertised))
+                for label in advertised:
+                    ep = label.partition(" ")[0]
+                    if label.endswith("(POST, --allow-write)"):
+                        req = urllib.request.Request(f"{url}{ep}", method="POST", data=b"{}",
+                                                     headers={"Content-Type": "application/json"})
+                    else:
+                        req = f"{url}{ep}"
+                    try:
+                        with urllib.request.urlopen(req, timeout=20) as r:
+                            code = r.status
+                    except urllib.error.HTTPError as e:
+                        code = e.code
+                    check(f"the 404 body advertises {ep} and it answers 200",
+                          code == 200, f"got {code}")
                 legacy = json.loads(urllib.request.urlopen(url + "/board.json", timeout=20).read().decode())
                 check("serve still answers /board.json for a foreign tool",
                       "tasks" in legacy and "phases" in legacy)
@@ -551,6 +727,12 @@ def main():
 
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+    print("== the fold publishes unassigned, hours and the claim (T-0226/7, T-0212) ==")
+    unassigned_rows_hours_and_the_claim()
+
+    print("== reports.blocked means an unmet dependency (C4) ==")
+    blocked_means_unmet_dependency()
 
     failed = [n for n, ok, _ in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

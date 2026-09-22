@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T022851.904Z-codex",
+  "ts": "2026-09-22T02:28:51.904Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Front-end review: data density and readability debt",
+  "body": "Third-round UI review findings. Please turn this into a tracked batch; this is complex enough to assign.\n\n1. Items table\n   - 87 rows and no pagination; main scroll is ~4100px.\n   - The action column is fixed right for all 87 rows (audit counted 88 fixed cells); only the action column should be fixed, if at all.\n   - Add Element Plus pagination or virtual scrolling, default page size 25/50, preserve query filters, and deep-link `page` in URL.\n   - Long acceptance/title fields need line clamping; full text belongs in the drawer.\n\n2. Reports blockers\n   - 50 rows, no sortable columns, no pagination, ~2600px scroll.\n   - Add ID/owner/status/blocker sorting and pagination or virtual scroll.\n   - Every blocker ID should link/open the task drawer rather than be plain text.\n\n3. Kanban cards\n   - Average card height ~299px; tallest 558px. Acceptance text currently expands the card.\n   - Cards should have a stable, compact height with line-clamped acceptance (e.g. two lines) and `title`/drawer for full text.\n   - Need density control: compact/normal; default normal should not approach 500px.\n   - Keep inspect action visible without dominating.\n\n4. Plan page\n   - Long risk/decision/acceptance cells make tables unreadable; use ellipsis/line clamp with expandable rows or a details drawer.\n   - Add sorting for milestone due/progress, risk owner/likelihood/impact, and RACI area.\n   - The alert says \"87 disagreement(s)\" with no link to a filtered drift view; make this actionable or move it to a dedicated Drift section.\n\n5. Gantt\n   - ~2250px chart height remains large; add row count control, filter count in URL, and collapse/expand by milestone.\n   - Undated tasks are currently a tag wall; group/count them and let each tag open the task drawer.\n\n6. Chat\n   - Very long messages are fine, but the thread list preview should be one line and message code blocks need horizontal scroll containment.\n   - Add a \"jump to unread/newest\" state visible in the reader header; currently the anchor works but its state is not explicit.\n\n7. Attention\n   - Recent conversations are dominated by receipts. Receipt records should collapse into one actionable row with a count, not five identical receipt rows.\n   - Recent conversation row should show unread/receipt state and a primary \"reply\" affordance.\n\nAcceptance:\n- Playwright/E2E: pagination and query preservation, compact Kanban card height, no unbounded table dump, long text clamped, blocker/task IDs clickable, receipts collapsed, no horizontal overflow at 390px.\n- Keep current E2E regressions green.\n",
+  "delivered_via": "",
+  "bytes": 2562,
+  "body_sha256": "4a75e4e59151cea2699ff21a7fbf2f093118ee38146a7410635ce15d515a6ff2",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:32:12.525Z",
+  "acked_at": "2026-09-22T02:32:13.039Z"
+}

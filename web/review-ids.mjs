@@ -1,0 +1,10 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage({ viewport: { width: 1440, height: 900 } })
+p.on('pageerror', e => console.log('PAGEERROR', e.message))
+await p.goto('http://127.0.0.1:8777/#/help', { waitUntil: 'networkidle' })
+await p.waitForTimeout(900)
+const card = p.locator('el-card, .el-card').filter({ hasText: 'Identifiers' }).first()
+console.log(await card.innerText())
+await p.screenshot({ path: '/tmp/help.png' })
+await b.close()

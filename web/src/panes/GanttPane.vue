@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { STATUS_TYPE, color, days, isOverdue, today } from '../theme'
@@ -7,8 +7,10 @@ import { STATUS_TYPE, color, days, isOverdue, today } from '../theme'
 const ctx = inject('ctx')
 const board = useBoard()
 const drawer = ctx.service('taskDrawer')
+// `per` is the family's key, shared with Items and Kanban, so a reader who sets a
+// page size on one list finds it on the next (T-0161 clause 1).
 const { filters, activeCount, clear } = useQueryFilters({
-  q: '', owner: '', status: '', milestone: 'all', tag: '', onlyLate: false,
+  q: '', owner: '', status: '', milestone: 'all', tag: '', onlyLate: false, per: '25',
 })
 
 /**
@@ -60,42 +62,62 @@ const CHART_RIGHT_PX = 40
  *  - `TIMELINE_MIN_PX_PER_DAY`: 24, against the measured 4.5. One day is the
  *    smallest interval the horizon holds, so a day has to be longer than the bar
  *    is thick (`barMaxWidth: 16`) or the chart cannot draw what the card counts.
+ *    It is the *aspiration* the pane spends when it has the width; the floor that
+ *    binds is below.
+ *  - `TIMELINE_MIN_PX`: 360, which is the 151 measured at 1024 held to a floor of
+ *    its own. It is spent *before* the gutter, so the two cannot trade; what the
+ *    pane cannot fit is scroll (T-0189), not truncation (T-0161 clause 3).
  *
- * Both were checked against ECharts before they were chosen (probe-gantt-rig.mjs
+ * The rest were checked against ECharts before they were chosen (probe-gantt-rig.mjs
  * applies this same rule to a real canvas at 5 widths); the widest label in the
  * live payload is 854px and no rule that fits it also keeps a timeline, which is
  * why the budget is a character count and the axis truncates to it.
+ *
+ * The one thing the character budget got wrong is that it still spent the *labels*
+ * to buy the timeline: `/api/revision` at 1024 was a 151px timeline against a
+ * 505px gutter at 1440, and 88 labels truncated at both. The timeline is a
+ * quantity with a floor (T-0161 clause 3), so it is no longer a remainder --
+ * `TIMELINE_MIN_PX` is deducted first and the canvas grows past the pane when the
+ * two cannot both fit. The pane owns an `overflow-x: auto` box, so the width the
+ * reader pays for is the width the chart gets, and the label column stops being
+ * the thing that is negotiated: it wraps to a second line instead of losing
+ * characters, and one row is still one item.
  */
 const MAX_GUTTER_FRACTION = 0.4   // the card's own ceiling on the label column
 const MIN_GUTTER_PX = 96          // below this the label column names nothing
-const TIMELINE_MIN_PX_PER_DAY = 24
+const TIMELINE_MIN_PX = 360       // the timeline's own floor, against the measured 151
 const LABEL_TOP = 4              // ECharts' `axisLabel.margin` for a y-axis
 const LABEL_MARGIN = 8           // the gap the label keeps from the bars
-const DESIGN_MIN_CANVAS_PX = 720 // the narrowest canvas the gutter is designed on
+const DESIGN_MIN_CANVAS_PX = 720 // the width the label column is budgeted against
 const TIMELINE_PAD_PX = 6        // ECharts' padding so the first day is not clipped
 const MIN_LABEL_PX = 24
 const LABEL_FONT = '11.5px ui-monospace, monospace'
 
-/** The whole of the width, as one pure function of a measured number. */
+/**
+ * The whole of the width, as one pure function of a measured number.
+ *
+ * Two of the three terms are now independent of `paneWidthPx`: the gutter is a
+ * character budget measured in this pane's font, and the timeline is a floor. The
+ * measured width only decides how much timeline is there to *spend* above the
+ * floor, and `canvasPx` is what those three add up to -- which is the number the
+ * chart is drawn at, and the number the scroller scrolls to.
+ */
 function ganttGeometry(paneWidthPx, dayUnits, charPx) {
   const width = Math.max(1, Math.round(paneWidthPx))
   const labelChars = Math.max(8, Math.floor(
     (DESIGN_MIN_CANVAS_PX * MAX_GUTTER_FRACTION - LABEL_TOP - LABEL_MARGIN) / charPx))
   const labelWanted = labelChars * charPx + LABEL_TOP + LABEL_MARGIN
-  // What the timeline needs before the gutter may take anything: 24px a day for
-  // every day-unit in the horizon. It is capped by what is left of a pane this
-  // narrow, so below ~450px the day shrinks rather than the chart scrolling
-  // sideways -- a gantt that scrolls in two directions is a table.
-  const timelineFloor = Math.min((dayUnits - TIMELINE_PAD_PX / 2) * TIMELINE_MIN_PX_PER_DAY,
-    Math.max(120, width - MIN_GUTTER_PX - CHART_RIGHT_PX))
-  const gutterPx = Math.max(MIN_GUTTER_PX,
-    Math.min(labelWanted, width * MAX_GUTTER_FRACTION, width - CHART_RIGHT_PX - timelineFloor))
-  const timelinePx = width - gutterPx - CHART_RIGHT_PX
+  const gutterPx = Math.max(MIN_GUTTER_PX, labelWanted)
+  // What the horizon wants and what is left of the pane, whichever is larger: a
+  // day-unit stays 24px wide as long as the pane can afford it, and a narrow pane
+  // scrolls rather than compressing the axis below the floor.
+  const timelinePx = Math.max(TIMELINE_MIN_PX, width - gutterPx - CHART_RIGHT_PX)
   return {
     labelChars,
     gutterPx,
     labelWidthPx: Math.max(MIN_LABEL_PX, gutterPx - LABEL_TOP - LABEL_MARGIN),
     timelinePx,
+    canvasPx: Math.ceil(gutterPx + CHART_RIGHT_PX + timelinePx),
     pxPerDay: (timelinePx - TIMELINE_PAD_PX) / Math.max(1, dayUnits),
   }
 }
@@ -178,6 +200,22 @@ const fade = (hex, alpha) => {
   const n = parseInt(hex.slice(1), 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
+/**
+ * A promise is drawn in its own lane, because a mark inside a shared row is a
+ * mark the reader has to have been told about.
+ *
+ * The dashed hollow bar above is right about the *fill* and wrong about the
+ * *row*: a seed and a record for the same period still occupy two adjacent rows
+ * that look like two items of the same kind, and the card's complaint is that 87
+ * plan rows read as work. A lane is the shape that cannot be misread -- a lane is
+ * a section with one kind of thing in it, and the row's own text says which lane
+ * it is in. The chart's own `legend` is the control: it toggles a whole lane.
+ */
+const LANES = [
+  { key: 'promise', label: 'plan promises — plan/*.json, not work' },
+  { key: 'recorded', label: 'recorded work — in the store' },
+]
+const laneOf = (task) => (isPromise(task) ? 'promise' : 'recorded')
 const barStyle = (task) => (isPromise(task)
   ? { color: fade(color(task.status), SEED_FILL_ALPHA), borderColor: color(task.status),
       borderWidth: 1, borderType: [3, 3], borderRadius: 3 }
@@ -244,10 +282,14 @@ const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone
  * the old header read `1 of 107 dated item(s)` with no way to tell whether the one
  * row was a promise. `rows` and `drawn` apply the same predicate to the same list,
  * so a filter cannot move one without the other.
+ *
+ * The row text carries the lane as well (`◌` promise, `●` recorded). The legend
+ * names the lanes and toggles them, but a legend is at the top of a 1600px chart
+ * and the reader is at row 90; the glyph travels with the row.
  */
 const rowOf = (t, first) => ({
   task: t,
-  label: `${first && t.milestone ? `${t.milestone} ▏` : '   '}${t.id} · ${t.title.length > 62 ? t.title.slice(0, 61) + '…' : t.title}`,
+  label: `${isPromise(t) ? '◌' : '●'} ${first && t.milestone ? `${t.milestone} ▏` : '  '}${t.id} · ${t.title.length > 62 ? t.title.slice(0, 61) + '…' : t.title}`,
 })
 const allRows = computed(() => {
   const seen = new Set()
@@ -259,6 +301,64 @@ const allRows = computed(() => {
 })
 const rows = computed(() => allRows.value.filter((r) => matches(r.task)))
 const drawn = computed(() => rows.value.filter((r) => !isPromise(r.task)).length)
+
+/**
+ * The bound on the list, and it is the reader's (T-0161 clause 1).
+ *
+ * `?per=` is the family's key -- Items and Kanban read the same one -- so the page
+ * size is in the URL and survives a filter change. The options are derived from
+ * the payload rather than taken from the query: `?per=99999` pasted by hand would
+ * otherwise unbind the page it exists to bound, and `Number('x')` is NaN with a
+ * NaN slice drawn. Two lanes page independently below, so `per` counts *rows of
+ * the timeline* and each lane gets the same window; a lane is a section, not a
+ * filter.
+ */
+const PAGE_SIZES = [25, 50, 100]
+const perPage = computed(() => {
+  const n = Number(filters.per)
+  return PAGE_SIZES.includes(n) ? n : PAGE_SIZES[0]
+})
+const page = ref(0)
+const shownRows = computed(() => rows.value.slice(page.value * perPage.value, (page.value + 1) * perPage.value))
+watch(() => [filters.q, filters.owner, filters.status, filters.milestone, filters.tag, filters.onlyLate],
+  () => { page.value = 0 })
+watch([rows, perPage], () => {
+  const last = Math.max(0, Math.ceil(rows.value.length / perPage.value) - 1)
+  if (page.value > last) page.value = last
+})
+
+/**
+ * The lanes are windows on the same page, not two different lists.
+ *
+ * A gantt row cannot say which of the two universes it belongs to by its y
+ * position alone, so the lanes are sections of one axis, in the order a plan is
+ * read (promises, then work), and each lane is its own ECharts series so the
+ * chart's own legend can toggle it.
+ */
+const laneRows = computed(() => LANES.map((lane) => ({
+  ...lane,
+  rows: shownRows.value.filter((r) => laneOf(r.task) === lane.key),
+})).filter((lane) => lane.rows.length))
+const lanesHidden = ref({})
+const onLegendToggle = (p) => { lanesHidden.value = { ...lanesHidden.value, [p.name]: !p.selected?.[p.name] } }
+
+/**
+ * One axis category per bar, and one blank category for each lane break.
+ *
+ * Every row keeps its text: the gutter wraps now, so a longer label costs a line
+ * and not the characters after it, and a row with no text is a row the reader
+ * cannot name (which is the half of T-0189 that "truncates 88 labels" is about).
+ * The lane break is the single empty category, and it is one row tall, which is
+ * the gap that makes two lanes read as two lanes.
+ */
+const ticks = computed(() => {
+  const marks = []
+  for (const lane of laneRows.value) {
+    if (marks.length) marks.push('')
+    marks.push(...lane.rows.map((r) => r.label))
+  }
+  return marks
+})
 const span = computed(() => {
   const [lo, hi] = board.horizon
   return { lo, hi, n: Math.max(1, days(lo, hi) + 2) }
@@ -272,12 +372,19 @@ const span = computed(() => {
  * cannot move when the container does. The `if (!geometry.value) return {}` is
  * load-bearing: on the first render the pane has not been measured, and an
  * option built then would be a chart laid out against an assumed width.
+ *
+ * `labelWidths` is no longer consulted for the axis width -- the axis width is
+ * the gutter `ganttGeometry` spent, and `overflow: 'break'` wraps inside it. It
+ * survives because the *height* is what a wrapped label changes, and the pane
+ * still measures the strings to know which rows are two lines.
  */
-const labels = computed(() => rows.value.map((r) => r.label))
-const labelWidths = computed(() => measureLabels(labels.value))
+const labels = computed(() => ticks.value)
+const labelWidths = computed(() => measureLabels(labels.value.filter(Boolean)))
 const geometry = computed(() => (paneWidth.value > 0
   ? ganttGeometry(paneWidth.value, span.value.n, labelCharPx.value || 6.9)
   : null))
+const wrappedRows = computed(() => labelWidths.value.reduce((n, w) => n
+  + Math.max(0, Math.ceil(w / Math.max(MIN_LABEL_PX, (geometry.value?.labelWidthPx || MIN_LABEL_PX))) - 1), 0))
 
 /**
  * The height, bounded by the screen the chart is read on.
@@ -301,7 +408,12 @@ const geometry = computed(() => (paneWidth.value > 0
 const MAX_CHART_PX = 1600
 const MIN_CHART_PX = 320
 const chartWindow = ref(0)
-const contentHeight = computed(() => rows.value.length * ROW_PX + CHART_TOP_PX + CHART_BOTTOM_PX)
+// One row per axis category, plus the extra lines a wrapped label costs: the
+// gutter wraps rather than truncating now, and a row that took two lines is two
+// rows of pixels on the canvas. Measuring the height off `ticks` and not `rows`
+// is what keeps the last row inside the chart instead of under the slider.
+const contentHeight = computed(() => (ticks.value.length + wrappedRows.value) * ROW_PX
+  + CHART_TOP_PX + CHART_BOTTOM_PX)
 const chartHeight = computed(() => Math.round(Math.max(MIN_CHART_PX,
   Math.min(contentHeight.value, MAX_CHART_PX, chartWindow.value || MAX_CHART_PX))))
 
@@ -339,19 +451,49 @@ onBeforeUnmount(() => {
   windowObserver = null
 })
 
+/**
+ * The chart, as two lanes on one axis.
+ *
+ * ECharts has no grouped stack: `stack` is global, so two lanes need their own
+ * band between them -- the lane break below. It is not decoration, it is one row
+ * of height and the only reason a promise's bar and a record's bar are not
+ * adjacent pixels; the height comes from the axis, so the break is a category the
+ * options must give a label and a value to.
+ *
+ * Both series carry an entry per axis category, including the break, because a
+ * bar series draws `data[i]` against category `i`: an array that skipped the
+ * break would draw its lane at the top of the axis while the offsets sat below.
+ * The lane's own legend entry is its bar series and `selected` is the toggle
+ * state, so hiding a lane hides the bars the reader was looking at.
+ */
 const option = computed(() => {
   const { lo, n } = span.value
   const g = geometry.value
-  if (!g || !rows.value.length) return {}
-  const offsets = rows.value.map((r) => {
-    const start = r.task.start || r.task.due
-    return Math.max(0, days(lo, start))
-  })
-  const bars = rows.value.map((r) => {
-    const start = r.task.start || r.task.due
-    const end = r.task.due || r.task.start
-    const dur = Math.max(1, days(start, end) + 1)
-    return { value: dur, itemStyle: barStyle(r.task), task: r.task }
+  if (!g || !laneRows.value.length) return {}
+  const offsets = []
+  const series = []
+  const breakAt = () => {
+    offsets.push({ value: n, itemStyle: { color: 'transparent' }, silent: true })
+  }
+  laneRows.value.forEach((lane) => {
+    if (series.length) breakAt()
+    offsets.push(...lane.rows.map((r) => ({
+      value: Math.max(0, days(lo, r.task.start || r.task.due)),
+      itemStyle: { color: 'transparent' }, silent: true,
+    })))
+    series.push({
+      name: lane.label, type: 'bar', stack: 'gantt', barMaxWidth: 16,
+      data: [
+        // The break's bar is zero-width and it still carries the transparent
+        // style, so it draws nothing at any bar width the axis chooses.
+        ...(series.length ? [{ value: 0, itemStyle: { color: 'transparent' } }] : []),
+        ...lane.rows.map((r) => {
+          const start = r.task.start || r.task.due
+          const end = r.task.due || r.task.start
+          return { value: Math.max(1, days(start, end) + 1), itemStyle: barStyle(r.task), task: r.task }
+        }),
+      ],
+    })
   })
   return {
     backgroundColor: 'transparent',
@@ -359,6 +501,12 @@ const option = computed(() => {
     // width below is the budget, so `left` is the pad between them and the edge.
     grid: { left: 4, right: CHART_RIGHT_PX, top: CHART_TOP_PX, bottom: CHART_BOTTOM_PX, containLabel: true },
     tooltip: { trigger: 'item', formatter: barTooltip },
+    legend: {
+      data: laneRows.value.map((lane) => lane.label),
+      selected: lanesHidden.value,
+      top: 0, right: CHART_RIGHT_PX, itemWidth: 18, itemHeight: 9,
+      textStyle: { fontSize: 11.5 },
+    },
     xAxis: {
       type: 'value', min: 0, max: n, position: 'top',
       axisLabel: {
@@ -374,10 +522,13 @@ const option = computed(() => {
       data: labels.value,
       // The gutter, as a number the container chose: a character budget
       // (`g.labelChars`), measured in this pane's own font, minus what the axis
-      // itself spends on margins.
+      // itself spends on margins. `overflow: 'break'` rather than `truncate` is
+      // T-0161 clause 3: a label that does not fit wraps, and one row that needs
+      // two lines is two lines rather than a row with the id on it and the title
+      // cut off.
       axisLabel: {
-        width: g.labelWidthPx, overflow: 'truncate',
-        fontSize: 11.5, fontFamily: 'ui-monospace, monospace',
+        width: g.labelWidthPx, overflow: 'break',
+        fontSize: 11.5, fontFamily: 'ui-monospace, monospace', lineHeight: 13,
       },
       axisTick: { show: false },
     },
@@ -386,19 +537,11 @@ const option = computed(() => {
       { type: 'slider', xAxisIndex: 0, height: 18, bottom: 8, filterMode: 'weakFilter' },
     ],
     series: [
-      { name: 'offset', type: 'bar', stack: 'gantt', silent: true, itemStyle: { color: 'transparent' }, data: offsets },
-      {
-        // no per-bar label: a one-day bar is twelve pixels wide and the status
-        // text on it was noise. The status is in the colour, the legend and the
-        // tooltip, which is where it can actually be read.
-        name: 'duration', type: 'bar', stack: 'gantt', barMaxWidth: 16, data: bars,
-        markLine: {
-          symbol: 'none', silent: true,
-          data: [{ xAxis: days(lo, today()) }],
-          lineStyle: { color: '#ef4444', type: 'dashed' },
-          label: { formatter: 'today', color: '#ef4444' },
-        },
-      },
+      // The offset series is invisible and carries the row's task, which is what
+      // `onClick` opens and what the tooltip reads; the visible series is the
+      // duration. Both are one stack, so the lane order is the row order.
+      { name: 'offset', type: 'bar', stack: 'gantt', silent: true, itemStyle: { color: 'transparent' }, data: offsetData },
+      ...series,
     ],
   }
 })
@@ -409,6 +552,10 @@ const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due && m
 /** The undated list's own split, so its sentence cannot describe the wrong half. */
 const undatedRecorded = computed(() => undated.value.filter((t) => !isPromise(t)).length)
 const undatedSeeds = computed(() => undated.value.filter((t) => isPromise(t)).length)
+// Closed by default: 57 tags is a wall, and the header already says how many and
+// of which kind. The loader is the button and the header count is the reason to
+// press it.
+const undatedOpen = ref(false)
 </script>
 
 <template>
@@ -441,6 +588,12 @@ const undatedSeeds = computed(() => undated.value.filter((t) => isPromise(t)).le
         <el-select v-model="filters.tag" size="small" placeholder="tag" clearable>
           <el-option v-for="tag in board.tags" :key="tag" :value="tag" :label="tag" />
         </el-select>
+        <!-- The list's bound, and the reader's: the same `per` key Items and Kanban
+             read, so a page size set on one list is set on the next. -->
+        <el-select v-model="filters.per" size="small" placeholder="per page" data-filter="per"
+                   style="width:112px">
+          <el-option v-for="size in PAGE_SIZES" :key="size" :value="String(size)" :label="`${size} rows`" />
+        </el-select>
         <el-checkbox v-model="filters.onlyLate">overdue only</el-checkbox>
         <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
         <span style="flex:1" />
@@ -448,11 +601,14 @@ const undatedSeeds = computed(() => undated.value.filter((t) => isPromise(t)).le
              reader who has not hovered anything has to be able to decode it. It
              is inline-styled and not a class, because the fill it samples is the
              same `barStyle` the series uses and a stylesheet copy of it is the
-             second answer this project keeps finding. -->
+             second answer this project keeps finding. The chart carries the lane
+             legend itself (it toggles the lanes); this chip is the same promise
+             mark next to the filters, so a dashed hollow bar is never an
+             unexplained mark. -->
         <span style="display:flex;align-items:center;gap:4px;font-size:11.5px">
           <span :style="{ width: '18px', height: '9px', borderRadius: '2px', display: 'inline-block',
                           background: 'rgb(148 163 184 / .3)', border: '1px dashed rgb(148 163 184)' }" />
-          <span class="aim-dim">plan seed</span>
+          <span class="aim-dim">◌ plan promise, not work · ● recorded work</span>
         </span>
         <span v-for="st in board.statuses" :key="st" style="display:flex;align-items:center;gap:4px;font-size:11.5px">
           <span :style="{ width: '9px', height: '9px', borderRadius: '2px', background: color(st) }" />
@@ -461,9 +617,23 @@ const undatedSeeds = computed(() => undated.value.filter((t) => isPromise(t)).le
         <span class="aim-dim" style="font-size:12px">drag inside the chart to zoom, or use the slider below</span>
       </div>
     </template>
-    <VChart v-if="rows.length" :option="option" autoresize
-            :style="{ height: chartHeight + 'px' }" @click="onClick" />
+    <!-- The width the chart is drawn at is the chart's own (`geometry.canvasPx`),
+         not the box's, so the timeline keeps its floor and this box scrolls
+         sideways instead of the page body. The y-axis labels scroll with it: the
+         chart is one canvas, and a second sticky copy of the label column is the
+         table this pane is not. -->
+    <div v-if="rows.length" ref="chartEl" class="aim-gantt-scroll">
+      <VChart :option="option" autoresize @click="onClick"
+              :style="{ height: chartHeight + 'px', width: (geometry?.canvasPx || 0) + 'px' }"
+              @legendselectchanged="onLegendToggle" />
+    </div>
     <el-empty v-else description="no dates anywhere: every bar in a gantt is a promise, and this plan has not made one yet" />
+    <!-- The bound, stated rather than implied, like the Items list's. Both lanes
+         are windows on the same page, so this counts rows of the timeline and not
+         rows of one lane. -->
+    <el-pagination v-if="rows.length" :current-page="page + 1" :page-size="perPage" :total="rows.length"
+                   :pager-count="7" layout="total, prev, pager, next, jumper" background
+                   class="aim-pager" @current-change="(p) => { page = p - 1 }" />
   </el-card>
 
   <el-card v-if="undated.length" shadow="never" style="margin-top:14px">
@@ -472,12 +642,31 @@ const undatedSeeds = computed(() => undated.value.filter((t) => isPromise(t)).le
          all promise and no work. Measured on this branch's payload: the undated
          items split 0 seeds / 57 recorded, so the sentence happened to be true of
          100% of its count by luck, and a plan row added without dates would have
-         made it false. Both halves are named here, like the header. -->
+         made it false. Both halves are named here, like the header.
+
+         The tags are behind a count and a link (T-0161 clause 3): 57 tags is a
+         wall, and a wall is not a list. The count and the link are the same
+         number, so the header answers "how many" and the button answers "show me"
+         without either of them lying. -->
     <template #header>{{ undated.length }} item(s) with no dates, so no bar:
       <b>{{ undatedRecorded }}</b> on the record{{ undatedSeeds ? `, ${undatedSeeds} plan seeds (a promise with no date is not work)` : '' }}</template>
-    <el-tag v-for="t in undated" :key="t.id" size="small" effect="plain" style="margin:2px" :type="STATUS_TYPE[t.status] || 'info'">
-      {{ t.id }}
-    </el-tag>
+    <el-button size="small" text @click="undatedOpen = !undatedOpen">
+      {{ undatedOpen ? 'hide the list' : `show all ${undated.length}` }}
+    </el-button>
+    <span v-if="!undatedOpen" class="aim-dim" style="font-size:12px;margin-left:6px">
+      ({{ undatedRecorded }} recorded · {{ undatedSeeds }} promises)
+    </span>
+    <div v-if="undatedOpen">
+      <el-tag v-for="t in undated" :key="t.id" size="small" effect="plain" style="margin:2px" :type="STATUS_TYPE[t.status] || 'info'">
+        {{ isPromise(t) ? '◌' : '●' }} {{ t.id }}
+      </el-tag>
+    </div>
   </el-card>
 
 </template>
+
+<style>
+/* Not scoped: `style.css` is another task's file this round, and a chart whose
+   own width is a scroll is a property of the box, not of the pane's markup. */
+.aim-gantt-scroll { overflow-x: auto; overflow-y: hidden; }
+</style>

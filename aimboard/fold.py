@@ -10,6 +10,54 @@ from .primitives import as_list, day_of
 _SPAN_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
+# One fact, four spellings, and every one of them is live in this tree (T-0204).
+# The store writes `reason` (`bin/aim:1839`, `cmd_task_move`); this fold published
+# it as `move_reason`, `bin/aim`'s own fold as `status_reason` (`bin/aim:1564`),
+# and `PLAN_FIELDS` carries `notes` -- a name no writer emits -- which
+# `TaskDecisionDrawer.vue` draws as
+# `task.notes || task.status_reason || task.move_reason`. A reader that asks for
+# one of the three published names and gets nothing while the record carries the
+# answer is the drift the card is about.
+#
+# The repair is tolerance in the reader, never a rename: the records already on
+# disk carry the names they carry, and a field renamed out from under them is a
+# board that stops folding its own history. So the fold reads every name a writer
+# in this tree produces and publishes every name a reader in it asks for.
+REASON_FIELDS = ("reason", "status_reason", "move_reason", "notes")
+
+# The text of a `commented` event. `body` is what the store froze and what
+# `aim task comment --body-file` takes; `note` is the singular spelling a
+# comment written from the other generation carries. Both fold to `body`.
+COMMENT_BODY_FIELDS = ("body", "note")
+
+
+# The estimate migration, stated once (T-0212). This constant is the *record* of
+# the rule: it is in the module that reads `estimate_hours`, so a reader who finds
+# an hour value on a row can find where the number came from without being told.
+#
+# Why a conversion has to be a migration and not a renderer: `1 pt = 1 h` is a
+# decision, and a renderer that multiplies is a renderer that makes the decision
+# true without anyone recording it. The plan seeds carry `estimate` (1..5, 87
+# items: 33x2, 24x3, 18x1, 6x5, 1x4, 1x4 in dogfood.json) and the store carries
+# `estimate_pts` (`bin/aim:1397`), so `declared_hours` below accepts neither:
+# a row is in hours or it is `None`, and `None` is drawn as "not estimated",
+# never as a number. Applied by one script, over plan/*.json, once -- the script
+# is in the report that carried this constant, and nothing in the render path
+# converts. `bin/aim` writes `estimate_pts` today; the tool half (accept
+# `--estimate-hours`) is T-0212's other clause and belongs to the file's owner.
+ESTIMATE_MIGRATION = {
+    "rule": "1 pt = 1 h",
+    "applies_to": ["plan/*.json tasks[].estimate", "channels/*/tasks.jsonl created.estimate_pts"],
+    "lands_as": "estimate_hours",
+    "unit": "hours",
+    "why": "an LLM's unit of work is tens of minutes: a `d` suffix on a number "
+           "nobody agreed on is an unverifiable unit, and 1-day truncation cannot "
+           "express 'this is 40 minutes'",
+    "not_a_conversion": "declared_hours() refuses `estimate` and `estimate_pts`; the "
+                        "conversion happens once, in the migration, or not at all",
+}
+
+
 def fold_tasks(events):
     """Board state is a fold over the event log. No board file exists."""
     items, unknown = {}, 0
@@ -29,6 +77,22 @@ def fold_tasks(events):
             for field in PLAN_FIELDS:
                 if field in ev:
                     item[field] = ev[field]
+            # `estimate_hours` is the declared unit (T-0212) and is deliberately
+            # not a PLAN_FIELD: PLAN_FIELDS is the seed vocabulary, and the store
+            # writes `estimate_pts`. Without this line a `created` event that
+            # carried the estimate reached `flow_series` -- which reads raw
+            # events -- and not the board, so the two surfaces that must agree
+            # about one number would not have been reading the same record.
+            if "estimate_hours" in ev:
+                item["estimate_hours"] = ev["estimate_hours"]
+            # A creation that recorded its note under the singular name still
+            # reaches the field every surface reads (T-0204). Guarded rather than
+            # assigned: a creation's own note is a declaration, and a later
+            # `moved` reason must not overwrite it.
+            if not item.get("notes"):
+                note = next((ev[f] for f in COMMENT_BODY_FIELDS if ev.get(f)), "")
+                if note:
+                    item["notes"] = note
             item["status"] = item.get("status") or "backlog"
             item["blocked_by"] = as_list(item.get("blocked_by"))
             item["tags"] = as_list(item.get("tags"))
@@ -59,8 +123,13 @@ def fold_tasks(events):
         if kind == "moved":
             item["prev_status"] = item.get("status")
             item["status"] = ev.get("to", item.get("status"))
-            if ev.get("reason"):
-                item["move_reason"] = ev["reason"]
+            # The reason under whichever name the event carried, published under
+            # every name a reader asks for (T-0204): the fold and `bin/aim`'s own
+            # fold must not disagree about where "why this moved" lives.
+            reason = next((ev[f] for f in REASON_FIELDS if ev.get(f)), "")
+            if reason:
+                for field in REASON_FIELDS:
+                    item[field] = reason
         elif kind == "assigned":
             item["owner"] = ev.get("owner", item.get("owner"))
         elif kind == "linked":
@@ -73,9 +142,81 @@ def fold_tasks(events):
         elif kind == "commented":
             item["comments"].append({
                 "author": ev.get("actor", ""), "ts": ev.get("ts", ""),
-                "body": ev.get("body", ""), "visibility": ev.get("visibility", item["visibility"]),
+                "body": next((ev[f] for f in COMMENT_BODY_FIELDS if ev.get(f)), ""),
+                "visibility": ev.get("visibility", item["visibility"]),
             })
     return items, unknown
+
+
+CLAIM_VERB = "aim task claim"
+
+
+def declared_hours(value):
+    """A recorded `estimate_hours`, or `None`.
+
+    One unit, declared (T-0212): a number is hours, an absent or non-numeric
+    value is `None`, and 0 is not the same as unknown. `estimate` and
+    `estimate_pts` are deliberately not accepted here -- converting points inside
+    a renderer would make `1 pt = 1 h` true without any recorded decision, and
+    the migration is a stated rule applied by one script instead.
+    """
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
+def claim_channel(task):
+    """The channel a claim for this row has to name, or `""`.
+
+    An item's own channel is the one `aim task claim --channel` checks membership
+    in, so a command that named another channel would fail the moment a reader
+    ran it. Records written before the loader stamped `channel` still carry
+    `context_id`, which is the same channel by another name; nothing else is
+    guessed, because a guessed channel is a command that breaks on use.
+    """
+    return str((task or {}).get("channel") or (task or {}).get("context_id") or "")
+
+
+def claim_offer(task):
+    """What an unowned row publishes about the claim it offers, or `None`.
+
+    The same shape on every surface: the verb, the channel and the id the command
+    will name, and deliberately no `--as`, because the seat is the surface's to
+    declare (see `claim_command`). Kept as one function so the board row and the
+    report row cannot come to disagree about which rows offer a claim.
+    """
+    task = task or {}
+    if str(task.get("owner") or ""):
+        return None
+    return {"verb": CLAIM_VERB, "channel": claim_channel(task),
+            "id": str(task.get("id") or "")}
+
+
+def claim_command(task, viewer=""):
+    """The exact argv that takes an unowned row, or `""` when no control may be drawn.
+
+    The string lives in the fold, once, for the same reason every other
+    derivation lives here: a command rebuilt in a template drifts from the verb
+    the tool actually accepts, and a control whose argv is wrong is worse than no
+    control (design/12 §1.3). Three refusals are part of the answer:
+
+      * the row is **owned**: there is nothing to claim, and a claim would
+        silently reassign someone's work item;
+      * the row names **no channel**: `--channel ` with nothing after it is a
+        hole, and the leader's rule is that no control is offered rather than a
+        control that cannot run;
+      * there is **no seat**: a read may borrow a view but a write may not borrow
+        a name (design/11 §2), so the fold will not fill `--as` in with a guess.
+        The surface passes the identity it is willing to act as.
+    """
+    task = task or {}
+    if str(task.get("owner") or ""):
+        return ""
+    channel = claim_channel(task)
+    tid = str(task.get("id") or "")
+    if not (channel and tid and viewer):
+        return ""
+    return f"{CLAIM_VERB} --as {viewer} --channel {channel} --id {tid}"
 
 
 def merge_plan(seed, recorded):
@@ -99,6 +240,23 @@ def merge_plan(seed, recorded):
             item = dict(item)
             item["provenance"] = "store only"
             merged[tid] = item
+    for tid, item in merged.items():
+        # T-0226: `owner: ""` is a recorded state -- "nobody has taken this
+        # yet" -- and not the same thing as a payload that forgot the field. A
+        # board cannot tell "unassigned" from "failed to render" while both are
+        # an empty cell, and everything the claim control does hangs off that
+        # distinction, so every row is normalised to the string here.
+        item["owner"] = str(item.get("owner") or "")
+        # One unit, and only where the record carries it (T-0212). A row with no
+        # estimate says `None` rather than 0, and `estimate`/`estimate_pts` are
+        # *not* converted: the migration is a stated rule applied by a recorded
+        # script, and a fold that guesses a number is how `1 pt = 1 h` becomes
+        # true without anyone deciding it.
+        item["estimate_hours"] = declared_hours(item.get("estimate_hours"))
+        # The claim shape is published on every row, and is `None` on a row that
+        # offers nothing: an unowned row names the verb, the channel and the id,
+        # and the seat is supplied by the surface through `claim_command`.
+        item["claim"] = claim_offer(item)
     return merged
 
 
@@ -185,6 +343,12 @@ def report_data(tasks, milestones, as_of, days=14):
 
     blocked = [{"id": tid, "title": h["task"].get("title", ""),
                 "status": h["task"].get("status", ""), "owner": h["task"].get("owner", ""),
+                # This is a per-item row a surface renders, so it carries the same
+                # two facts a board row does: the declared-unit estimate (T-0212;
+                # `None`, never a pts-to-hours conversion) and the claim an
+                # unowned row offers (T-0227).
+                "estimate_hours": declared_hours(h["task"].get("estimate_hours")),
+                "claim": claim_offer({**h["task"], "id": tid}),
                 "blocked_by": h["task"].get("blocked_by") or []}
                for tid, h in hist.items() if unmet_dependency(h["task"])]
     by_milestone = {}
@@ -260,6 +424,21 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
         terminal but is not "done", and a plan seed with `status: done` has no
         event at all: it appears in `sources.done_from_seed` and never in the
         series. That is what "which authority produced the number" means here.
+      * **`import` is a provenance split of both count series, and it is a
+        measurement rather than a flag.** Every `created` in the store carries
+        `created_by`: a *person or session* typed that card in one command, so
+        its rate is a work rate. Cards that entered by bulk (the 13 at 07:10Z
+        tagged `recorded-from-plan`) carry `created_by` equal to the *actor whose
+        queue they were recorded from*, so `created_by != actor` is exactly the
+        signature of a recording session writing on somebody else's behalf. That
+        is what makes the 07:10Z burst separable from the 9 opens over 8 minutes
+        in the real bucket next to it, and why the split is computed from the
+        record rather than offered as a parameter: the endpoint's own `provenance`
+        query refuses anything but `recorded`/`all`, because an event that does
+        not say where it came from cannot be filtered into one.
+        `import` may therefore be *over*-inclusive (a card created for a peer by
+        hand counts as a recording, not as that peer's work) and the contract's
+        `opened_first_ts`/`opened_last_ts` remain the pair that settle it.
       * `unplaced` counts events whose task's `created` was never seen before
         them (fold_tasks' `unknown`), so a store with a broken chain still draws
         a series that says how much of it could not be placed.
@@ -267,10 +446,13 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
         field exists so a later "date the seed from the plan" change cannot slip
         into `opened` without the number moving.
       * `hours_opened`/`hours_done` come from `estimate_hours` and from nothing
-        else; `estimate_pts` is not converted. They are `null` while no record
-        carries the field (`sources.estimate_hours_records == 0` today) and also
-        `null` for a bucket where only some counted tasks carry it, because a
-        partial sum presented as the bucket's hours is a substitute value.
+        else; `estimate_pts` is not converted -- see `ESTIMATE_MIGRATION` for the
+        one stated rule and why it is not applied here. They are `null` while no
+        record carries the field (`sources.estimate_hours_records == 0` today) and
+        also `null` for a bucket where only some counted tasks carry it, because a
+        partial sum presented as the bucket's hours is a substitute value. Each
+        series has its own `*_hours_null_reason`, because "no estimate exists" and
+        "these three of four carry one" are different answers to the same null.
       * The window ends at the exclusive end of the bucket containing `now`, so
         every `series[].start` is a multiple of the width and the current,
         partial bucket is included: a chart that omits the bucket happening now
@@ -294,18 +476,35 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
     rows, index = [], {}
     for k in range(rows_n):
         st = start + k * width
-        row = {"start": _iso(st), "opened": 0, "opened_by": {}, "opened_inferred": 0,
+        row = {"start": _iso(st),
+               # Each series is split by provenance, and published split as well as
+               # total (T-0217). `import` belongs to the recording session that
+               # wrote the card, not to the queue it was recorded from; see the
+               # docstring for why `created_by != actor` is the signature, and
+               # `buckets[].imported` for how many open->done pairs were dropped.
+               "opened": 0, "opened_work": 0, "opened_import": 0, "opened_by": {},
+               "opened_inferred": 0,
                "opened_first_ts": None, "opened_last_ts": None,
-               "done": 0, "done_by": {}, "done_first_ts": None, "done_last_ts": None,
-               "hours_opened": None, "hours_done": None, "unplaced": 0, "retracted": 0}
+               "done": 0, "done_work": 0, "done_import": 0, "done_by": {},
+               "done_first_ts": None, "done_last_ts": None,
+               "hours_opened": None, "hours_done": None,
+               "hours_null_reason": None,
+               "unplaced": 0, "retracted": 0}
         index[st] = row
         rows.append(row)
     # Private per-bucket piles, stripped before the answer is returned: keeping
     # them off the row means the public shape cannot drift by accident.
-    acc = {start + k * width: {"o": [], "d": [], "open_ids": [], "done_ids": []}
+    #
+    # The ids are kept split by provenance for the same reason, and one further
+    # one: `hours_opened` must not be `null` *only* because a recording session
+    # typed in a card nobody estimated. The work half of the series is the number
+    # the chart's question is about, and it is the half a reader can act on.
+    acc = {start + k * width: {"o": [], "d": [], "open_ids": [], "done_ids": [],
+                               "open_work_ids": [], "done_work_ids": []}
            for k in range(rows_n)}
 
     live, retracted_ids, status, done_ids = set(), set(), {}, set()
+    imported_created = set()   # ids whose own `created` was a bulk recording
     est_created, est_seed = {}, {}
     unplaced_all, retracted_all = 0, 0
     data_start = last_ts = None
@@ -323,6 +522,11 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
         kind = _flip(ev.get("event"))
         tid = ev.get("task") or ev.get("id")
         actor = str(ev.get("actor") or "")
+        # A card the actor wrote for somebody else. The store names both ends --
+        # `actor` is the command that ran, `created_by` the queue the card was
+        # recorded from, and `bin/aim:1375` region is where `created` writes them
+        # -- so a bulk recording is visible in the record and needs no new field.
+        imported = _is_import(ev)
 
         if kind == "created":
             live.add(tid)
@@ -340,6 +544,8 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
                 status[tid] = ev.get("to", status.get(tid))
                 if ev.get("to") == "done":
                     done_ids.add(tid)
+                    done_actors[tid] = actor
+                    done_tids.add(tid)
             elif kind == "dropped":
                 status[tid] = "dropped"
         else:
@@ -363,6 +569,13 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
             row["opened_by"][actor] = row["opened_by"].get(actor, 0) + 1
             acc[st]["o"].append((e, ts))
             acc[st]["open_ids"].append(tid)
+            if imported:
+                row["opened_import"] += 1
+            else:
+                row["opened_work"] += 1
+                acc[st]["open_work_ids"].append(tid)
+            if imported:
+                imported_created.add(tid)
         elif kind == "retracted":
             index[st]["retracted"] += 1
         elif kind == "moved" and ev.get("to") == "done":
@@ -371,6 +584,16 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
             row["done_by"][actor] = row["done_by"].get(actor, 0) + 1
             acc[st]["d"].append((e, ts))
             acc[st]["done_ids"].append(tid)
+            # A close inherits the provenance of the card's own creation, because
+            # the work was bulk-recorded even though this event was typed by a
+            # person. The alternative -- judging the close by its own actor --
+            # would count 13 imported cards as 13 hours of work the moment
+            # somebody closed one of them.
+            if tid in imported_created:
+                row["done_import"] += 1
+            else:
+                row["done_work"] += 1
+                acc[st]["done_work_ids"].append(tid)
 
     est = dict(est_created)
     for tid, task in seeds.items():

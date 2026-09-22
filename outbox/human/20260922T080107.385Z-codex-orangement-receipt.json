@@ -1,0 +1,11 @@
+{
+  "msg_id": "20260922T080107.385Z-codex-orangement-receipt",
+  "ts": "2026-09-22T08:01:07.385Z",
+  "from": "codex-orangement",
+  "to": "human",
+  "channel": "",
+  "subject": "RECEIPT for 20260922T075734.114Z-human",
+  "body": "codex-orangement received 20260922T075734.114Z-human from human.\nbytes: 95\nbody sha256: 18c3d214f12b6873192279bc0c16a7ba4b63ea1e927c5a912c09f1c992c70494\nverified: the bytes I hold hash to the value recorded at send time\nacknowledged: 2026-09-22T08:01:07.385Z\n",
+  "receipt_for": "20260922T075734.114Z-human",
+  "ack_required": false
+}

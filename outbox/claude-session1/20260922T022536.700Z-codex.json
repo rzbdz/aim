@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T022536.700Z-codex",
+  "ts": "2026-09-22T02:25:36.700Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Low-priority follow-up: introduce real i18n",
+  "body": "Assignment 2 (low priority, separate from the English restoration): introduce real i18n.\n\nRequirements:\n- Survey existing Vue 3 + Element Plus i18n options first; use a >1k-star established package and record the star evidence in design/09.\n- Do not hand-roll a translation system.\n- Centralize all user-visible strings; component templates should not contain parallel bilingual conditionals.\n- Persist language preference and support route/query-independent locale switching.\n- Ensure language does not change data model vocabulary (status, phase, priority, tags remain canonical English identifiers).\n- Element Plus locale and date/number formatting must match selected language.\n- Add tests for language switching and persistence.\n\nDo not mix this task with the immediate all-English consistency patch.\n",
+  "delivered_via": "",
+  "bytes": 806,
+  "body_sha256": "5780673fc79c93c0b71459a9f7383b1e659a1a2c2147c4ad7aa8b660d9cebd64",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:32:12.522Z",
+  "acked_at": "2026-09-22T02:32:12.706Z"
+}

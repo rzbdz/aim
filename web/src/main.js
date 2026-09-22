@@ -63,29 +63,57 @@ function anchorId(fromRouter) {
 }
 
 /**
- * How long a scroll action may keep asking the renderer for frames, in ms.
+ * How long a scroll action may keep trying, in ms.
  *
- * A count of frames is not a bound. `requestAnimationFrame` is a promise the
- * renderer does not always keep: a busy one calls back late (at 20x CPU throttle
- * a frame here measured ~320ms, so ten frames of "reset the pane" is 3.2s), and
- * a hidden tab does not call back at all, which turns a wait for frames into a
- * wait forever. Wall-clock is the thing that runs out.
+ * A count of frames is not a bound, and this is the card's own finding (T-0225):
+ * `requestAnimationFrame` is a promise the renderer does not always keep. At 20x
+ * CPU throttle a frame on this board measured ~320ms, so ten frames of "reset the
+ * pane" is 3.2 seconds, and the navigation that started it is held open the whole
+ * time. Wall-clock is the thing that runs out.
  */
 const ANCHOR_WAIT_MS = 1500
 const PANE_RESET_WAIT_MS = 200
 
 /**
- * The next frame, or the deadline, whichever arrives first.
+ * How often a background scroll action may look again, in ms.
  *
- * The frame stays the fast path -- it is what keeps a write in the same paint as
- * the mount it is written for -- and the timer is the ceiling that makes the
- * wait bounded rather than frame-shaped.
+ * What the anchor retry is actually waiting for is not a paint -- it is the
+ * route's chunk arriving over the network, and a network arrival is a timer, not
+ * a frame. 60ms is under one frame at 60Hz, so nothing is lost by not being
+ * frame-aligned, and it keeps retrying when the renderer has stopped painting
+ * entirely (a hidden tab), which is the case a frame count turns into a hang.
  */
-function frameOrDeadline(deadline) {
-  return new Promise((next) => {
-    const timer = setTimeout(next, Math.max(0, deadline - performance.now()))
-    requestAnimationFrame(() => { clearTimeout(timer); next() })
-  })
+const RETRY_MS = 60
+
+/**
+ * Run `attempt` until it succeeds, the epoch changes, or the deadline passes.
+ *
+ * Returns a stop function so a caller that supersedes this can cancel it. Nothing
+ * is returned to the router: `vue-router` awaits a promise returned from
+ * `scrollBehavior` before it commits the navigation, so a navigation that waits
+ * on this is a navigation the next click beats -- the mechanism T-0225 measured
+ * at 44 seconds of a reader watching a URL not change.
+ *
+ * The deadline is the ceiling; the `setInterval` is the retry. There is no frame
+ * request anywhere in here on purpose, and any future tidy-up that adds one has
+ * reintroduced the defect this function exists to remove.
+ */
+function retryingUntil(deadline, attempt) {
+  let done = false
+  const stop = () => {
+    if (done) return true
+    done = true
+    clearInterval(timer)
+    return false
+  }
+  const timer = setInterval(() => {
+    if (done) return
+    if (performance.now() >= deadline) return void stop()
+    if (attempt() === false) return
+    stop()
+  }, RETRY_MS)
+  if (attempt() !== false) stop()
+  return stop
 }
 
 /**
@@ -99,15 +127,14 @@ function frameOrDeadline(deadline) {
  * whether the reader clicked a chip or typed the URL.
  *
  * So the anchor is resolved against the app's own scroller. The element is
- * retried across animation frames because a route's component is a lazy import:
- * on the first frame after navigation the row does not exist yet, and an anchor
- * that works only when the chunk is already cached is an anchor that works on
- * the second click.
+ * retried because a route's component is a lazy import: right after navigation
+ * the row does not exist yet, and an anchor that works only when the chunk is
+ * already cached is an anchor that works on the second click.
  *
  * The retry is a *background* action and the router is answered now. Vue Router
  * awaits a promise returned from `scrollBehavior` before it commits the
  * navigation, so a retry that was returned here made every anchor navigation
- * wait on frames -- measured at 20x CPU throttle, a frame on this board took
+ * wait on the action -- measured at 20x CPU throttle, a frame on this board took
  * ~320ms and thirty of them is ten seconds of a reader watching a URL not
  * change. Nothing about landing on a row needs the navigation held open for it.
  */
@@ -125,19 +152,18 @@ function scrollToAnchor(hash, epoch) {
     scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 12), behavior: 'auto' })
     return true
   }
-  const deadline = performance.now() + ANCHOR_WAIT_MS
-  const tick = async () => {
-    for (let frame = 0; frame < 30; frame += 1) {
-      // A newer navigation supersedes this one: an anchor that lands after the
-      // reader has asked for something else is the reader being moved by a page
-      // they left.
-      if (epoch !== scrollEpoch) return
-      if (put()) return
-      if (performance.now() >= deadline) return
-      await frameOrDeadline(deadline)
-    }
-  }
-  tick()
+  // Run the retry only if the row is not already there. A synchronous first try
+  // is the whole difference between an anchor that costs zero timers and one that
+  // costs a tick even when the chunk was cached -- and a cached chunk is the
+  // common case, because the pane the chip points at is usually already open.
+  if (put()) return false
+  startScroll(retryingUntil(performance.now() + ANCHOR_WAIT_MS, () => {
+    // A newer navigation supersedes this one: an anchor that lands after the
+    // reader has asked for something else is the reader being moved by a page
+    // they left.
+    if (epoch !== scrollEpoch) return true
+    return put()
+  }))
   return false
 }
 
@@ -156,38 +182,57 @@ function scrollToAnchor(hash, epoch) {
  * for it -- the same distinction the drawer's lifecycle rule draws, for the same
  * reason.
  *
- * It is written across frames rather than once, because a route is a lazy import:
- * on the first frame the scroller still holds the pane that is leaving, and a
- * single write is undone by the incoming pane's own mount. But a loop that keeps
- * writing is a loop that can fight the reader, and it did: a test that wheeled
- * within 166ms of arriving watched the pane snap back to 0. So the loop stops the
- * instant the reader scrolls. This is the same rule `readingInterrupt` in the
- * store states, for the same reason -- nothing here scrolls under the reader's
- * hands.
+ * It is written more than once rather than once, because a route is a lazy
+ * import: before the incoming pane has mounted the scroller still holds the pane
+ * that is leaving, and a single write can be undone by the incoming pane's own
+ * mount. But a loop that keeps writing is a loop that can fight the reader, and
+ * it did: a test that wheeled within 166ms of arriving watched the pane snap back
+ * to 0. So the loop stops the instant the reader scrolls. This is the same rule
+ * `readingInterrupt` in the store states, for the same reason -- nothing here
+ * scrolls under the reader's hands.
  *
- * Ten frames is also not a length of time: on a renderer slow enough to matter,
- * ten frames outlives the navigation that started it. The wall-clock ceiling ends
- * the writes whatever the renderer is doing.
+ * A count of frames is also not a length of time: on a renderer slow enough to
+ * matter, ten frames outlives the navigation that started it. The wall-clock
+ * ceiling ends the writes whatever the renderer is doing.
  */
 function resetReadingPane(epoch) {
   // Deliberately not awaited by the caller. `vue-router` awaits a promise
   // returned from `scrollBehavior` before it considers the navigation finished,
-  // and a navigation that completes ten frames late is a navigation a pane can
-  // be reset out of -- the exact thing this function exists to prevent. The loop
-  // is started and left to run; the router gets its answer now.
+  // and a navigation that waits for a scroll action is a navigation the next
+  // click beats. The action is started and left to run; the router gets its
+  // answer now.
+  //
+  // Nothing here is frame-bound any more (T-0225). It used to await ten
+  // `requestAnimationFrame` turns, which at 20x CPU throttle measured ~320ms per
+  // frame -- and it retried once, then stopped, so a slow renderer was not merely
+  // slow: the reset gave up before the incoming pane had mounted and the reader
+  // arrived at the previous page's scroll position. A timer retries often and
+  // cheaply by comparison, and keeps retrying when the renderer has stopped
+  // painting at all.
   const reader = watchingForReaderScroll()
   const deadline = performance.now() + PANE_RESET_WAIT_MS
-  const tick = async () => {
-    for (let frame = 0; frame < 10; frame += 1) {
-      if (epoch !== scrollEpoch || reader.moved()) break
-      const scroller = document.querySelector('.aim-main')
-      if (scroller) scroller.scrollTop = 0
-      if (performance.now() >= deadline) break
-      await frameOrDeadline(deadline)
-    }
-    reader.done()
+  const put = () => {
+    if (epoch !== scrollEpoch || reader.moved()) return true
+    const scroller = document.querySelector('.aim-main')
+    if (scroller) scroller.scrollTop = 0
+    return false
   }
-  tick()
+  // The first write is not redundant with the retries. Measured on this app: the
+  // scroller element is the same node across a route change and the incoming pane
+  // mounts inside it, so a write before the new pane exists survives the mount --
+  // and it is already correct in the case where the pane is already at its top.
+  if (put()) { reader.done(); return false }
+  const stop = retryingUntil(deadline, () => {
+    const finished = put()
+    if (finished) reader.done()
+    return finished
+  })
+  // `reader.done()` on this path too: a cancelled action never reaches the
+  // interval's own cleanup, and five window listeners left behind per superseded
+  // navigation is a leak that only shows up as a slower board after a long read.
+  // Removing a listener that was never added is a no-op, so the double call is
+  // free.
+  startScroll(() => { stop(); reader.done() })
   return false
 }
 
@@ -225,6 +270,22 @@ function watchingForReaderScroll() {
  */
 let scrollEpoch = 0
 
+/**
+ * The scroll action still running, if any.
+ *
+ * One at a time, and a new navigation cancels the old one explicitly rather than
+ * relying on the epoch check inside it. The epoch is still what decides whether a
+ * write lands -- an action that is already mid-`put()` cannot be stopped by a
+ * flag -- but cancelling means a superseded retry stops asking, instead of
+ * sitting on a timer until its deadline runs out.
+ */
+let pendingScroll = null
+const startScroll = (action) => {
+  if (pendingScroll) pendingScroll()
+  pendingScroll = action
+  return action
+}
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
@@ -237,6 +298,13 @@ const router = createRouter({
   ],
   scrollBehavior(to, from, savedPosition) {
     const epoch = (scrollEpoch += 1)
+    // Whatever the last navigation started is now superseded, and it is stopped
+    // here rather than left to notice on its own next tick. The epoch check
+    // inside each action is what keeps a *late write* from landing; this is what
+    // keeps a superseded action from holding a timer and five window listeners
+    // open until its deadline. Both are needed: the check is a lock, the cancel
+    // is the release.
+    if (pendingScroll) { pendingScroll(); pendingScroll = null }
     // A hash that names a row is a link to that row, so resolving it is the whole
     // point of the navigation.
     if (to.hash) return scrollToAnchor(to.hash, epoch)

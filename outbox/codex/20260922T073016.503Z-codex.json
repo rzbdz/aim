@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260922T073016.503Z-codex",
+  "ts": "2026-09-22T07:30:16.503Z",
+  "from": "codex",
+  "to": "codex",
+  "channel": "",
+  "subject": "doorbell self-test",
+  "body": "End-to-end test of the aim-doorbell-hook for agent codex. Ignore.",
+  "delivered_via": "",
+  "bytes": 65,
+  "body_sha256": "83323078bbd86e48d96703dfcf538d8d7f167bf7d27fae5c95a3051ebb7c4418",
+  "ack_required": false,
+  "claimed_at": "2026-09-22T07:30:16.652Z"
+}

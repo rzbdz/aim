@@ -1,0 +1,21 @@
+#!/bin/sh
+# aimboard — the board, runnable under the name AGENTS.md and README.md use.
+#
+# `bin/aimboard.py` is the entry point and this is only a way to reach it. It
+# exists because the first command a new session is given is `aimboard serve ...`
+# (AGENTS.md:9) and only `aim` was installed on PATH, so the instruction failed
+# with `command not found` for every new session.
+#
+# The PATH install is a symlink, so `$0` is not the repo path; resolve it through
+# every link first. Then exec, so argv and the exit code belong to the entry
+# point and nothing here can alter them.
+self=$0
+while [ -L "$self" ]; do
+    target=$(readlink "$self")
+    case $target in
+        /*) self=$target ;;
+        *)  self=$(dirname "$self")/$target ;;
+    esac
+done
+here=$(cd "$(dirname "$self")" && pwd) || exit 1
+exec python3 "$here/aimboard.py" "$@"

@@ -42,10 +42,17 @@ const triggerKeys = computed(() => (props.link ? [] : undefined))
 /** A phase this build cannot describe has no section to link to, and must not
  *  be given an anchor that does not exist: a link to nowhere is worse than no
  *  link, because the reader concludes the explanation is missing rather than
- *  that the *phase* is. */
+ *  that the *phase* is.
+ *
+ *  The known case is one string with two hashes -- the route, then the row --
+ *  because that is what `main.js` reads back: in hash mode the route lives in
+ *  the fragment too, so it splits the fragment on the *last* `#` to find the
+ *  anchor. It is also the exact string a reader copies out of the address bar,
+ *  so the link a chip draws and the link a reader types are the same link, and
+ *  `phaseAnchor` names the id HelpPane puts on the row. */
 const destination = computed(() => (concept.value.known
-  ? { path: '/help', hash: `#${phaseAnchor(concept.value.key)}` }
-  : { path: '/help' }))
+  ? `/help#${phaseAnchor(concept.value.key)}`
+  : '/help'))
 </script>
 
 <template>

@@ -10,6 +10,11 @@ time on a real day, and the cost is recorded in `design/12-architecture-review.m
 
 **The board lives at http://127.0.0.1:8777. Do not pick a different port.**
 
+Both names are on PATH as symlinks from `/usr/local/bin` into this checkout's
+`bin/` (`aim` -> `bin/aim`, `aimboard` -> `bin/aimboard`, which execs
+`bin/aimboard.py`); on a checkout where they are missing, that symlink is the
+whole install.
+
 - If 8777 is held by a stale `aimboard serve` for this checkout, `aimboard serve`
   takes it back by itself: it identifies the holder through `/proc`, and replaces
   its own server automatically. You do not need to hunt a PID.
@@ -60,7 +65,20 @@ bundle recorded nothing and you must not treat that as "up to date".
 
 ## Product rules for the dashboard
 
-- **English UI.** i18n is tracked separately; do not add half-translated strings.
+- **Every user-visible word comes from the concept registry, keyed by its raw
+  token.** `bin/aim`, the record and a bug report keep the canonical value
+  (`SEALED_DIVERGENT`, `blocked`); the view resolves it through
+  `aimboard/const.py: LABELS` (`en`/`zh`) or `web/src/concepts.js` (each concept
+  carries its own `key`). Two dictionaries, never a translated identifier, and a
+  concept has to say what it does to you, not what it is called. The older
+  "English UI" rule is superseded by this convention (`T-0202`,
+  `design/17` §4) -- a new string that is not in the registry is the defect now.
+- **Every rendered date names its timezone.** The store's stamps are ISO-8601 UTC
+  and `fold` labels its own bucket grid `"timezone": "UTC"`. The calendar in
+  which a date *means* something is `plan/plan.json`'s `"timezone":
+  "Asia/Shanghai"` -- the single source for due dates, milestone dates and idle
+  thresholds. A date on screen without its zone is a statement the reader cannot
+  audit.
 - **Never click-to-refresh.** The view is current by itself. A control that exists
   only to make the page true is a defect.
 - **No control without an action.** Every primary button resolves to an exact

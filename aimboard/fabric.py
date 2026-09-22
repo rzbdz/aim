@@ -1,7 +1,90 @@
 """Reading the fabric. Every loader here is read-only."""
 import hashlib
+from datetime import date
+
 from .fold import fold_tasks, merge_plan
 from .primitives import read_json, read_jsonl, verify_chain
+
+
+# A channel's manifest records what it was *declared* to be: a topic, a leader,
+# participants, the phase its barrier opened in. The store records what actually
+# happened after that. Until now the board only ever showed the declaration, so
+# `dev` (a real topic, two participants, and then nothing for two days) and
+# `hello` (named after a transport test, and holding every live task) rendered as
+# the same kind of object. That is T-0216: the channel named for the development
+# work is empty and the work is in the channel named after a test.
+#
+# `kind` separates a real project from a throwaway probe (T-0232 measured two
+# abandoned `s2-scratch*` channels in one flat namespace). It is read from the
+# manifest when a writer records one -- the field T-0232 asks for -- and
+# otherwise derived from the only signal the store carries today, the topic the
+# channel was opened with. That fallback is a heuristic, and the test says so.
+#
+# The liveness rule is derived, not maintained: `empty` if nothing was ever
+# recorded, `dormant` if the last thing recorded is at least
+# `DORMANT_AFTER_DAYS` behind the date the board is drawn for, `active`
+# otherwise. `idle_days` is exposed so a caller with a real milestone calendar
+# can apply its own threshold instead of this default. Nothing here is a second
+# list a human has to keep true.
+DORMANT_AFTER_DAYS = 2
+
+
+def _day(ts):
+    """The date part of an ISO timestamp, or None if it is not one."""
+    if not isinstance(ts, str) or len(ts) < 10:
+        return None
+    try:
+        return date.fromisoformat(ts[:10])
+    except ValueError:
+        return None
+
+
+def _latest(*groups):
+    """The newest `ts` across records pulled from the store, or ""."""
+    stamps = [r["ts"] for group in groups for r in group
+              if isinstance(r, dict) and isinstance(r.get("ts"), str)]
+    return max(stamps) if stamps else ""
+
+
+def channel_kind(manifest):
+    """project | scratch -- declared if the manifest says so, derived otherwise."""
+    declared = manifest.get("kind")
+    if declared:
+        return declared
+    topic = (manifest.get("topic") or "").strip().lower()
+    return "scratch" if topic.startswith("scratch") else "project"
+
+
+def channel_lifecycle(manifest, traffic, last_activity, as_of,
+                      dormant_after_days=DORMANT_AFTER_DAYS):
+    """Classify one channel from its declaration plus what the store recorded.
+
+    `traffic` counts the records that mean *an actor did something here*, broken
+    out by source so the classification can be audited rather than trusted. A
+    channel with zero traffic is `empty` however healthy its manifest looks; that
+    is the fact `aim status --channel dev` could not previously state.
+    """
+    total = sum(traffic.values())
+    last = last_activity or manifest.get("created_at") or ""
+    idle = None
+    if as_of is not None:
+        day = _day(last)
+        if day is not None:
+            idle = (as_of - day).days
+    if total == 0:
+        state = "empty"
+    elif idle is not None and idle >= dormant_after_days:
+        state = "dormant"
+    else:
+        state = "active"
+    return {
+        "state": state,
+        "created_at": manifest.get("created_at", ""),
+        "kind": channel_kind(manifest),
+        "traffic": dict(traffic),
+        "last_activity": last,
+        "idle_days": idle,
+    }
 
 
 def fabric_digest(root):
@@ -130,24 +213,48 @@ def load_conversation(root):
     return out
 
 
-def load_fabric(root, plans, as_of):
+def load_fabric(root, plans, as_of, dormant_after_days=DORMANT_AFTER_DAYS):
     registry = (read_json(root / "registry.json", {"agents": {}}) or {}).get("agents", {})
     channels = []
     for name in list_channels(root):
         cdir = root / "channels" / name
         manifest = read_json(cdir / "manifest.json", {}) or {}
         ledger = read_jsonl(cdir / "ledger.jsonl")
+        task_events = read_jsonl(cdir / "tasks.jsonl")
+        log = read_jsonl(cdir / "log.jsonl")
+        friction = read_jsonl(cdir / "friction.jsonl")
+        rooms = load_rooms(cdir)
         phase = (manifest.get("barrier") or {}).get("phase", "UNKNOWN")
         seals = {}
         for path in sorted((cdir / "seals").glob("*.json")) if (cdir / "seals").exists() else []:
             seal = read_json(path, {}) or {}
             seals[path.stem] = seal
-        recorded, unknown = fold_tasks(read_jsonl(cdir / "tasks.jsonl"))
+        recorded, unknown = fold_tasks(task_events)
         for item in recorded.values():
             item["channel"] = name
+        room_messages = [m for room in rooms for m in room["messages"]]
+        # One fact, computed here where the fold already has every source open:
+        # whether this channel is alive, and whether it is a real project. The
+        # serialisers must not each re-derive it, or they become two answers to
+        # one question (the mistake `unplaced_events` below records having made).
+        lifecycle = channel_lifecycle(
+            manifest,
+            {
+                "messages": len(log),
+                "ledger": len(ledger),
+                "tasks": len(task_events),
+                "rooms": len(room_messages),
+                "friction": len(friction),
+                "seals": len(seals),
+            },
+            _latest(log, ledger, task_events, friction, room_messages, seals.values()),
+            as_of,
+            dormant_after_days,
+        )
         channels.append({
             "id": name,
             "manifest": manifest,
+            **lifecycle,
             "phase": phase,
             "round": (manifest.get("barrier") or {}).get("round", 0),
             "history": (manifest.get("barrier") or {}).get("history", []),
@@ -157,11 +264,11 @@ def load_fabric(root, plans, as_of):
             "ledger": ledger,
             "refusals": [r for r in ledger if r.get("event") == "refusal"],
             "concessions": [r for r in ledger if r.get("event") == "concession"],
-            "log": read_jsonl(cdir / "log.jsonl"),
+            "log": log,
             "tasks_recorded": recorded,
             "tasks_unknown_events": unknown,
-            "rooms": load_rooms(cdir),
-            "friction": read_jsonl(cdir / "friction.jsonl"),
+            "rooms": rooms,
+            "friction": friction,
             "chain": {
                 "log.jsonl": verify_chain(cdir / "log.jsonl"),
                 "ledger.jsonl": verify_chain(cdir / "ledger.jsonl"),

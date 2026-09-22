@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T021712.533Z-codex",
+  "ts": "2026-09-22T02:17:12.533Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "",
+  "subject": "Additional critical defect: task id allocation collides with plan seeds",
+  "body": "While assigning the Kanban fix, `aim task new --channel hello` allocated T-0001 even though plan/plan.json already seeds T-0001..T-0155. This wrote a draft created event into channels/hello/tasks.jsonl and would override the seed in the merged board.\n\nPlease treat this as a critical allocation bug:\n- task id allocation must account for plan seed ids as well as store event ids\n- a new task must never collide with a plan seed\n- add a regression that creates a task when plan has T-0001 and empty store, and proves the allocated id is beyond the plan high-water mark\n- decide and implement the least-bad correction for the accidental hello event without silently rewriting history; if a deliberate rollback verb is needed, add one rather than hand-editing the chain\n\nThe user's immediate assignment remains the Kanban filter/live-state fix. Both are now high priority.\n",
+  "delivered_via": "",
+  "bytes": 870,
+  "body_sha256": "591d75a1a50d26831a7f1908296aa512d106bdaafabca284ecfef2da7d5f3084",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:22:02.947Z",
+  "acked_at": "2026-09-22T02:22:03.045Z"
+}

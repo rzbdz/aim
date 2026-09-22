@@ -77,6 +77,19 @@ EXPECTED_TASK_STATES = {
 
 EXPECTED_ROLES = {"ROLE_UNSPECIFIED", "ROLE_USER", "ROLE_AGENT"}
 
+# T-0229: the top-level fields `lf.a2a.v1.AgentCard` actually has, read from
+# a2a-sdk 1.1.5's descriptor (`AgentCard.DESCRIPTOR.fields`). `metadata` is
+# deliberately absent: A2A carries `metadata` on Message/Part/Artifact/Task and
+# never on the card, and the reference client's protobuf refuses a card that has
+# one outright -- `ParseError: Message type "lf.a2a.v1.AgentCard" has no field
+# named "metadata"`. A card whose top level is a subset of this set is a card
+# the reference implementation can parse at all; that is the floor T-0229 sets.
+AGENT_CARD_TOP_LEVEL_FIELDS = {
+    "name", "description", "supportedInterfaces", "provider", "version",
+    "documentationUrl", "capabilities", "securitySchemes", "securityRequirements",
+    "defaultInputModes", "defaultOutputModes", "skills", "signatures", "iconUrl",
+}
+
 ISO_8601_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
@@ -225,6 +238,19 @@ def main():
     check("the card is deterministic: same registry, same bytes",
           card1 == card2,
           "a card that changes between two reads of an unchanged registry cannot be cached")
+
+    # T-0229. The reference client's protobuf parses the card field by field and
+    # rejects the first unknown top-level field by name, so an extra key here is
+    # not a lint: it is the whole card being unreadable to a foreign client.
+    # Asserted here, without importing the SDK, so this contract does not depend
+    # on the throwaway venv; the run that carries the SDK is
+    # tests/test_a2a_reference_client.py.
+    unknown = sorted(set(card) - AGENT_CARD_TOP_LEVEL_FIELDS)
+    check("the card has no top-level field outside the A2A AgentCard schema",
+          not unknown,
+          f"unknown top-level fields {unknown}; the reference client rejects the "
+          f"first one by name ('Message type \"lf.a2a.v1.AgentCard\" has no field "
+          f"named \"{unknown[0] if unknown else '?'}\"') and then no client can read us")
 
     print("== T-0103: the five mandated refusal classes (design/05 §5) ==")
     # The accept line has two halves and both are asserted here from one object:
@@ -803,7 +829,8 @@ def build_refusals():
     # `t` holds one draft owned by alpha (so the board refusal has something to
     # withhold) and one published task (so the workflow refusals have a task both
     # participants may act on, and are not answering "no such task").
-    must("task", "new", "--as", "alpha", "--channel", "t", "--title", "alpha's own line of work")
+    must("task", "new", "--as", "alpha", "--channel", "t", "--title", "alpha's own line of work",
+         "--owner", "alpha")
     must("task", "new", "--as", "alpha", "--channel", "t", "--title", "the shared one")
     must("task", "publish", "--as", "alpha", "--channel", "t", "--id", "T-0002")
 

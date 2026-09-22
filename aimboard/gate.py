@@ -1,5 +1,5 @@
 """Who may see what, and the channel whose phase decides it."""
-from .const import DIVERGENCE
+from .const import DIVERGENCE, TERMINAL
 
 
 def walled_off(state, channel, viewer):
@@ -74,10 +74,68 @@ def visible_tasks(state, viewer, fallback):
     return out, hidden
 
 
+def stuck_tasks(state, tasks):
+    """The cards a human said are stuck, which is not the same fact as `blocked`.
+
+    `reports.blocked` is an *edge* statement: a card is in it because a
+    dependency is unmet, so a card whose only `blocked_by` is done leaves the
+    list the moment the edge closes -- and T-0041 is exactly that card (status
+    blocked, its only blocked_by T-0040 done). It is not waiting on a peer; it is
+    waiting on a person, and before this function it appeared in no list at all.
+    Both facts are published, in two fields, because one field carrying both is
+    how a reader stops being able to tell which one they are looking at.
+
+    Rows are the dependency half of a `blocked` row and nothing else: the
+    estimate and claim columns `fold.report_data` fills in need `declared_hours`
+    and `claim_offer`, which live in that module.
+
+    The rule is one sentence -- status is blocked and no edge is unmet -- and
+    this is the second place it is spelled, which is one too many. The first is
+    the nested `unmet_dependency` inside `fold.report_data` (fold.py:294); the
+    change that retires this copy is named in the round's report.
+    """
+    out = []
+    for tid, task in tasks.items():
+        if task.get("status") != "blocked":
+            continue
+        if any((tasks.get(dep) or {}).get("status") not in TERMINAL
+               for dep in (task.get("blocked_by") or [])):
+            continue
+        out.append({"id": tid, "title": task.get("title", ""),
+                    "status": task.get("status", ""), "owner": task.get("owner", ""),
+                    "blocked_by": task.get("blocked_by") or []})
+    return out
+
+
+def room_authors(room):
+    """Who wrote a room, out of the evidence the room actually carries.
+
+    `design/06` §2 says a draft room's messages are readable "by their author",
+    so the gate needs an author, and a room reaches it in one shape:
+    `fabric.load_rooms` reads `rooms/<room>.json` but forwards only
+    id/topic/visibility/messages/unread/mentions, so an `author` key in that
+    metadata is dropped before this file sees it. What does arrive is `agent` on
+    each message, the same field `conversation_view` prints from.
+
+    The gate is room-level while authorship is per message, so the fail-closed
+    choice is made here: a viewer is the author only if they wrote *every*
+    attributed message. A hand-written room with two authors therefore exempts
+    neither, rather than opening one author's text to the other. A room with no
+    attributed messages falls back to declared metadata, for a loader that
+    forwards it.
+    """
+    attributed = {m.get("agent") for m in room.get("messages") or [] if m.get("agent")}
+    if attributed:
+        return attributed if len(attributed) == 1 else set()
+    return {room.get(k) for k in ("author", "created_by", "owner")} - {None}
+
+
 def visible_rooms(state, channel, viewer):
     out, hidden = [], 0
     for room in channel.get("rooms", []):
-        if room["visibility"] != "published" and walled_off(state, channel, viewer):
+        draft = room["visibility"] != "published"
+        if (draft and walled_off(state, channel, viewer)
+                and viewer not in room_authors(room)):
             hidden += 1
             continue
         out.append(room)

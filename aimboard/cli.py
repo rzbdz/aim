@@ -3,6 +3,7 @@ import argparse
 import errno
 import hashlib
 import json
+import re
 import subprocess
 import os
 import sys
@@ -163,6 +164,147 @@ def port_holder(port):
     return None
 
 
+def _listener_inodes():
+    """{port: {socket inode}} for every socket in LISTEN, both address families."""
+    inodes = {}
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            f = line.split()
+            if len(f) < 10:
+                continue
+            try:
+                local = int(f[1].split(":")[1], 16)
+            except (IndexError, ValueError):
+                continue
+            if f[3] == "0A":   # 0A = LISTEN
+                inodes.setdefault(local, set()).add(f[9])
+    return inodes
+
+
+def _sockets_to_pids(inodes):
+    """{socket inode -> pid} for the owning processes we can see.
+
+    One /proc walk for every socket asked about, not one per socket: reading
+    `/proc/<pid>/fd` for each of ~10 listeners is the difference between a poll
+    that is free and a poll the board's own /api/digest makes expensive.
+    """
+    wanted, owners = set(inodes), {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            for fd in (entry / "fd").iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target[8:-1] in wanted:
+                    owners[target[8:-1]] = int(entry.name)
+        except OSError:
+            continue
+    return owners
+
+
+def port_listeners():
+    """{port: (pid, cmdline)} for every listening socket, in this container.
+
+    `port_holder` answers "may I take *this* port"; this answers "which ports
+    does this tree have a board on", which is the question the two-board defect
+    needs and which the single-port walk cannot be asked. The cmdline is read
+    here rather than by the caller so the /proc walk happens once.
+    """
+    inodes = _listener_inodes()
+    owners = _sockets_to_pids(i for s in inodes.values() for i in s)
+    out = {}
+    for port, sockets in inodes.items():
+        pid = next((owners[i] for i in sockets if i in owners), None)
+        if pid is None:
+            continue
+        try:
+            cmd = (Path(f"/proc/{pid}").joinpath("cmdline")).read_bytes().replace(b"\0", b" ").strip()
+        except OSError:
+            cmd = b""
+        out[port] = (pid, cmd.decode("utf-8", "replace"))
+    return out
+
+
+def is_board_for(pid, cmd, root):
+    """Is pid a board, and is it serving *this* tree?
+
+    The same two tests `take_port` makes, extracted so the takeover path and the
+    reporting path cannot come to disagree about what "ours" means: a command
+    line that mentions the board at all, and a root that matches either the
+    process's working directory or its argv. A server started as
+    `python3 bin/aimboard.py serve` names no absolute path, so argv alone
+    refuses to see our own server -- measured, see `take_port`.
+    """
+    if "aimboard" not in cmd:
+        return False
+    if str(root) in cmd:
+        return True
+    try:
+        return os.readlink(f"/proc/{pid}/cwd") == str(root)
+    except OSError:
+        return False
+
+
+def board_ports(root, announce=None):
+    """Every board answering for `root`, from the /proc inventory above.
+
+    Measured 2026-09-22 (codex, three times): a second `aimboard serve` on 8799
+    (pid 62028) ran beside the canonical 8777 board (pid 59830) and neither
+    surface admitted the other existed. Two boards for one root serve two
+    different `web/dist` builds, so a probe, a screenshot or a URL in a report
+    can be a statement about a bundle nobody chose -- the mechanism by which
+    three findings were nearly filed against the wrong build.
+
+    `announce` is the port this process was asked to bind, and it is excluded
+    whether or not the bind has happened yet: `cmd_serve` announces its address
+    and then serves, so without this a server would report itself as the second
+    board. Ephemeral ports are excluded too, on the rule that a board nobody can
+    be told to open has no port to name back; only 1024-32767 is named.
+
+    A listener whose owner /proc does not name -- a process outside this
+    container's pid namespace, or one that died mid-walk -- is skipped rather
+    than guessed at. A made-up pid in this list is a claim about a process that
+    did not answer, which is the failure this whole report exists to end.
+
+    Cost, measured on this checkout: ~1ms to parse /proc/net/tcp{,6} and ~5ms
+    to walk 850 /proc/<pid>/fd directories, every poll of the digest. That is
+    why the walk is once per call and why nothing here loads the fabric.
+    """
+    seen = port_listeners()
+    out = []
+    for port, (pid, cmd) in sorted(seen.items()):
+        if not is_board_for(pid, cmd, root):
+            continue
+        if port == announce or not (1024 <= port <= 32767):
+            continue
+        out.append({"pid": pid, "port": port,
+                    "canonical": port == canonical_port()})
+    return out
+
+
+def board_report(root, announce=None, canonical=8777):
+    """What `/api/revision` publishes about the other boards on this tree.
+
+    The shape is codex's (`other_boards: [{pid, port}]`) with one addition per
+    entry, `canonical`, because "which of these two is the port the project
+    declared" is the first thing a reader of a two-board measurement has to
+    decide and the one thing a bare pid/port pair does not answer. `running` is
+    the inverse fact and is not the same as an empty list: with nothing holding
+    the canonical port, a consumer walking `boards` must be able to tell "no
+    other board" from "this server could not look".
+    """
+    boards = board_ports(root, announce=announce)
+    return {"boards": boards, "other_boards": boards,
+            "canonical_port": canonical, "running": bool(boards)}
+
+
 def take_port(host, port, root, verbose=False, force=False):
     """Take the canonical port, replacing our own stale server if it holds it.
 
@@ -186,12 +328,10 @@ def take_port(host, port, root, verbose=False, force=False):
     # as `python3 -u bin/aimboard.py serve` names no absolute path, so matching
     # the root against argv refuses to replace our *own* server -- measured: the
     # first version of this function did exactly that, and printed "that is not
-    # an aimboard serve for /root/tmp/agent-im" about a server that was.
-    try:
-        cwd = os.readlink(f"/proc/{pid}/cwd")
-    except OSError:
-        cwd = ""
-    ours = "aimboard" in cmd and (cwd == str(root) or str(root) in cmd)
+    # an aimboard serve for /root/tmp/agent-im" about a server that was. The
+    # test now lives in `is_board_for` so this path and `board_ports`, which
+    # reports the second board, cannot disagree about which process is ours.
+    ours = is_board_for(pid, cmd, root)
     if not ours and not force:
         raise SystemExit(
             f"aimboard: port {port} is held by pid {pid}: {cmd or '(no cmdline)'}\n"
@@ -223,6 +363,43 @@ def take_port(host, port, root, verbose=False, force=False):
     time.sleep(0.3)
     print(f"aimboard: killed pid {pid} which would not release port {port}")
     return holder
+
+
+# The machine surfaces this server answers, in the order `do_GET`/`do_POST`
+# dispatch them. Kept as data rather than only as prose in the 404 body (T-0228):
+# the catch-all used to sit *above* the `/api/agents` branch, so it answered a
+# path it then advertised as an endpoint -- a list and a dispatch that disagreed,
+# with no place to notice. One list, one order, and the test that folds this
+# constant is the assertion the card asks for.
+API_GET_ENDPOINTS = ("/api/state", "/api/digest", "/api/revision", "/api/flow",
+                     "/api/agents")
+API_POST_ENDPOINTS = ("/api/command (POST, --allow-write)", "/rpc (POST)")
+
+
+def should_fall_back(path):
+    """Is `path` a route the app owns, or a file this build owes and does not have?
+
+    The fallback to `index.html` is the app's, and it is deliberate: the app is a
+    hash router, so its routes never reach this server with a suffix. What the app
+    must not answer with itself is (T-0237):
+
+      * a path naming a **typed file** -- `x.js`, `x.css`, `board.html` -- because
+        that is a request for those bytes, and a build that no longer has them
+        owes 404 rather than a 200 carrying HTML. Measured: a peer asked for
+        `GET /assets/ChatPane-DOESNOTEXIST.js` and was handed `index.html` with
+        HTTP 200, which is the T-0179 preload handler's failure answered as
+        success;
+      * a path under a **hidden or machine segment** -- `/.well-known/...` -- which
+        is a convention rather than a promise, and a route namespace the app never
+        registered.
+
+    Everything else (a bare segment, `/`) is a route, and gets the app.
+    """
+    segments = [s for s in (path or "/").split("/") if s]
+    if any(s.startswith(".") for s in segments):
+        return False
+    name = segments[-1] if segments else ""
+    return "." not in name
 
 
 def cmd_serve(args):
@@ -570,6 +747,20 @@ def cmd_serve(args):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _refuse(self, status, error, **more):
+            """A refusal this server means, as JSON, on any path.
+
+            `BaseHTTPRequestHandler.send_error` answers with an HTML page. That is
+            the same lie one level down from the SPA fallback: a consumer that
+            asked for a machine endpoint and folded the body as data gets a
+            document about how to use a Unix tool. Every refusal on a path that
+            is not the app goes through here, with the path in the body so a
+            reader who got one knows which request produced it.
+            """
+            self._send(json.dumps({"error": error, "path": self.path or "/", **more},
+                                  ensure_ascii=False),
+                       "application/json; charset=utf-8", status=status)
+
         def _asset(self, path):
             """A file from the built front-end, or None. No path escapes it."""
             if not web.exists():
@@ -587,12 +778,42 @@ def cmd_serve(args):
         def do_GET(self):
             path = (self.path or "/").split("?")[0]
             try:
+                # Method discipline before dispatch, because the two handlers
+                # have different shapes: the app answers GET and not POST, and a
+                # client told 404 "no such endpoint" for `POST /` would go
+                # looking for a route that exists. A GET on /api/command is
+                # answered by the 404 below instead, which is right: there is no
+                # GET form of a write, and "not allowed" would imply one appears
+                # with a different method -- the same method, pointed at the
+                # path, is what 404 is warning about.
+                if path == "/rpc" or path.startswith("/rpc/"):
+                    self._refuse(405, "method not allowed", accepts=["POST"],
+                                 why="the A2A JSON-RPC surface is POST only, one method per "
+                                     "request body; GET /rpc answers no JSON-RPC and never "
+                                     "answers the app")
+                    return
+                if path.startswith("/.well-known/"):
+                    # The whole machine namespace, not the one path measured
+                    # (T-0237). `agent-card.json` is what a peer was measured
+                    # asking for; a guard listing only that name answers the
+                    # *next* well-known path with the SPA, which is the same 200
+                    # carrying HTML one filename over. A path namespace is the
+                    # rule; the missing endpoint is the refusal.
+                    self._refuse(404, "no such well-known document",
+                                 why="T-0237: this server publishes nothing under the "
+                                     "well-known prefix, so it answers the absence instead of "
+                                     "the app's index.html. The card for an agent is "
+                                     "`aim card --as <agent>`",
+                                 agents=sorted(self._state()["registry"]))
+                    return
                 if path == "/api/state":
                     state = self._state()
                     body = json.dumps(json_state(state, self._viewer(), self._risks(), now_iso(),
                                                  digest=fabric_digest(root),
                                                  write={"enabled": bool(args.allow_write),
-                                                        "as": self._writer() if args.allow_write else ""}),
+                                                        "as": self._writer() if args.allow_write else ""},
+                                                 read={"as": self._viewer(),
+                                                       "borrowed": "as=" in (self.path or "")}),
                                       ensure_ascii=False)
                     self._send(body, "application/json; charset=utf-8")
                     return
@@ -601,11 +822,41 @@ def cmd_serve(args):
                                "application/json")
                     return
                 if path == "/api/revision":
-                    self._send(json.dumps(describe_revision(root, web), ensure_ascii=False),
+                    # T-0223: which bundle answered, on which port, and *how many
+                    # boards* are answering for this tree. One measurement's
+                    # facts, so they are published together: a probe that names a
+                    # revision but not the port has named a bundle a second board
+                    # may be serving differently, and three findings were nearly
+                    # filed against the wrong build that way. `describe_revision`
+                    # already reports the served bundle's own identity (`bundle`,
+                    # `stale`); what it cannot know is where this copy of the
+                    # server put it on the wire. `announce=port` is this server's
+                    # own port, so a server never reports itself as the other one.
+                    body = describe_revision(root, web)
+                    body.update(board_report(root, announce=port))
+                    body.update({"port": port, "host": host, "pid": os.getpid(),
+                                 "root": str(root), "bundle_dir": str(web),
+                                 "canonical": port == canonical_port()})
+                    self._send(json.dumps(body, ensure_ascii=False),
                                "application/json; charset=utf-8")
                     return
                 if path == "/api/flow":
                     self._flow()
+                    return
+                if path == "/api/agents":
+                    # Dispatched before the `/api/` catch-all below, which is the
+                    # order the endpoint's reachability depends on: the catch-all
+                    # answers *every* `/api/` path it sees, so a branch under it
+                    # is dead code and the endpoint 404s while the catch-all's own
+                    # body names it as one of its endpoints. The order is the
+                    # whole fix and it is asserted against `API_GET_ENDPOINTS`
+                    # rather than left to a reader's eye.
+                    state = self._state()
+                    self._send(json.dumps({"viewer": self._viewer(),
+                                           "agents": {k: {"kind": v.get("kind", ""),
+                                                          "model": v.get("model", "")}
+                                                      for k, v in state["registry"].items()}},
+                                          ensure_ascii=False), "application/json; charset=utf-8")
                     return
                 if path.startswith("/api/"):
                     # An unhandled API path is a 404, never the app.
@@ -618,21 +869,8 @@ def cmd_serve(args):
                     # markup as if it were data. The comment below this used to
                     # claim the fallback excluded API paths and the code did not;
                     # that gap is the whole bug.
-                    self._send(json.dumps({
-                        "error": "no such endpoint",
-                        "path": path,
-                        "endpoints": ["/api/state", "/api/digest", "/api/agents",
-                                      "/api/revision", "/api/flow",
-                                      "/api/command (POST, --allow-write)"],
-                    }, ensure_ascii=False), "application/json; charset=utf-8", status=404)
-                    return
-                if path == "/api/agents":
-                    state = self._state()
-                    self._send(json.dumps({"viewer": self._viewer(),
-                                           "agents": {k: {"kind": v.get("kind", ""),
-                                                          "model": v.get("model", "")}
-                                                      for k, v in state["registry"].items()}},
-                                          ensure_ascii=False), "application/json; charset=utf-8")
+                    self._refuse(404, "no such endpoint",
+                                 endpoints=list(API_GET_ENDPOINTS) + list(API_POST_ENDPOINTS))
                     return
                 if path == "/state.json":
                     payload = json.dumps({"digest": fabric_digest(root), "generated_at": now_iso()})
@@ -657,28 +895,54 @@ def cmd_serve(args):
                                       indent=2, ensure_ascii=False, sort_keys=True)
                     ctype = "application/json"
                 elif path == "/board.csv":
-                    state = load_fabric(root, args.plan or ["plan/*.json"], as_of or datetime.now(timezone.utc).date())
+                    state = load_fabric(root, args.plan or ["plan/*.json"],
+                                        as_of or datetime.now(timezone.utc).date())
                     tasks, _ = visible_tasks(state, self._viewer(), gate_channel(state, self._viewer(), {}))
                     body, ctype = export_csv(tasks), "text/csv"
                 elif path == "/board.ics":
-                    state = load_fabric(root, args.plan or ["plan/*.json"], as_of or datetime.now(timezone.utc).date())
+                    state = load_fabric(root, args.plan or ["plan/*.json"],
+                                        as_of or datetime.now(timezone.utc).date())
                     tasks, _ = visible_tasks(state, self._viewer(), gate_channel(state, self._viewer(), {}))
                     body, ctype = export_ical(tasks, state["milestones"], now_iso()), "text/calendar"
                 else:
+                    # The SPA fallback, and the guard T-0237 measured missing.
+                    #
+                    # `index.html` is a lie on any path that promises a *file* or
+                    # a *machine's* answer. Measured: `GET /rpc` and
+                    # `GET /.well-known/agent-card.json` (handled above) answered
+                    # the app with HTTP 200 -- the exact lie the /api/ 404 exists
+                    # to stop, one prefix over -- and a peer measured a third
+                    # instance, `GET /assets/ChatPane-DOESNOTEXIST.js` -> 200
+                    # text/html, which is a missing asset answered with a page.
+                    #
+                    # The line is drawn at two conditions, and both are derived
+                    # from the path rather than from a list of pane names that
+                    # would go stale the next time one is added:
+                    #   * the client asked for a *typed* file (a suffix of its
+                    #     own), and index.html is not that type -- so a lazily
+                    #     imported chunk a rebuild deleted answers 404, and the
+                    #     T-0179 preload handler gets the failure its card is
+                    #     about;
+                    #   * the path names a hidden or machine directory, which is
+                    #     a convention rather than a promise.
+                    # A bare path segment with no suffix (`/kanban`, `/#/chat`'s
+                    # neighbour) is a route the hash router owns, and `/` is the
+                    # app itself, so both still get index.html.
                     asset = self._asset(path)
-                    if not asset:
-                        # a single-page app answers its own routes; anything that
-                        # is not an asset and not an API path is the app's
+                    if asset is None and should_fall_back(path):
                         asset = self._asset("index.html")
-                    if not asset:
-                        self.send_error(404)
+                    if asset is None:
+                        self._refuse(404, "no such asset",
+                                     why="this path is not a route of the app: it names a file "
+                                         "this build does not have, and answering it with "
+                                         "index.html would be a 200 carrying HTML")
                         return
                     body, ctype = asset[0], asset[1]
                 self._send(body, ctype)
             except BrokenPipeError:
                 pass
             except Exception as exc:                      # a broken render is a 500, not a dead server
-                self.send_error(500, str(exc)[:200])
+                self._refuse(500, "the server could not answer", detail=str(exc)[:200])
 
         def log_message(self, fmt, *a):
             if args.verbose:
@@ -692,9 +956,35 @@ def cmd_serve(args):
         take_port(args.host, args.port, root, force=args.force)
         server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
     host, port = server.server_address[0], server.server_address[1]
+    # Which code answered, on which port, and who else is answering this tree --
+    # printed before the socket is served, so it is in the log of every board that
+    # ever ran (T-0223). A port that drifted from `canonical_port()` is named as
+    # the override it is: the leader's rule is that the port is a *stable*
+    # interface, and a board on a second port is one whose answers nothing else in
+    # this project can place. The bundle is reported by the build's own record,
+    # not by the tree, for the reason `revision.describe` states.
+    rev = describe_revision(root, web)
+    bundle = rev.get("bundle") or {}
     print(f"aimboard: serving {root} on http://{host}:{port}/  as {args.viewer or 'the channel leader'}"
           + (f", polling for change every {args.refresh}s and offering a refresh rather than"
              f" forcing one" if args.refresh else ""))
+    print(f"aimboard: pid {os.getpid()}; fabric revision {rev.get('fabric') or '(not a checkout)'}; "
+          f"front-end bundle {bundle.get('revision') or '(none recorded)'} from {web}, "
+          f"stale={rev.get('stale')}")
+    others = board_ports(root, announce=port)
+    if args.port != canonical_port():
+        print(f"aimboard: WARNING -- port {args.port} is not the canonical {canonical_port()}. "
+              f"Answering a non-canonical port makes this board invisible to every probe, "
+              f"bookmark and report that names the canonical one; AIM_PORT was set, or --port "
+              f"was passed, deliberately. Two boards on two ports serve one tree and only "
+              f"/api/revision on each can name the other.", file=sys.stderr)
+    if others:
+        named = ", ".join(f"pid {b['pid']} on port {b['port']}"
+                          f"{'  <- canonical' if b['canonical'] else '  (not canonical)'}"
+                          for b in others)
+        print(f"aimboard: WARNING -- {len(others)} other board(s) already answer for {root}: {named}. "
+              f"Two boards serve two builds of one tree; /api/revision names them.",
+              file=sys.stderr)
     print(f"aimboard: front-end {'web/dist (vue)' if (web / 'index.html').exists() else 'server-rendered html (no web/dist; run npm --prefix web run build)'}"
           f"; json at /api/state; ?as=<agent> for that agent's view")
     print("aimboard: ctrl-c to stop. Views: /#/kanban /#/gantt /#/chat /#/reports /#/barrier /#/plan")

@@ -16,8 +16,10 @@ it will need a decision about authentication before it is reachable off
 localhost (T-0109). A card that implied an endpoint we do not serve would be the
 "well-formed file missing a fact" failure this repository has measured more than
 once, so `supportedInterfaces[].url` names the file root this card was built
-from and `metadata.aim.binding` says in one word that no network endpoint exists
-yet.
+from and the `aim` block, carried in a binding extension's `params` (see
+`CARD_FACTS_URI`), states the binding's reach: `POST /rpc` does serve the card
+and the task operations (T-0207), and it takes no credential, so it is loopback
+until T-0109 says otherwise.
 
 Every field here is cited to the specification revision it was read from. Source:
 `a2aproject/A2A@main:docs/specification.md`, 156,828 bytes, sha256
@@ -86,6 +88,14 @@ EXTENSIONS = [
         "required": False,
     },
 ]
+
+# T-0229 / design/16 section 2: the aim block that used to sit at the card's top
+# level as `metadata` has no field in `lf.a2a.v1.AgentCard`, so the reference
+# client's protobuf refuses the whole card by name. It is relocated into a
+# fourth extension's `params` -- the proto's own free-form field -- so every
+# fact the old field carried stays reachable through a parser the reference
+# client accepts, while the card's top level is exactly the schema's fields.
+CARD_FACTS_URI = f"{_EXT_NS}/card-facts/v1"
 
 # Our skills, as the capabilities an A2A client can ask for. `id` is stable and
 # machine-facing; `tags` are the discovery vocabulary.
@@ -165,6 +175,40 @@ def agent_card(agent, root, *, description=None) -> dict:
         "reachable off localhost."
     )
 
+    # T-0229: this block was the card's top-level `metadata` until the reference
+    # client showed that no foreign parser could read the card at all -- a2a-sdk
+    # 1.1.5 answers `ParseError: Message type "lf.a2a.v1.AgentCard" has no field
+    # named "metadata"`. A2A puts `metadata` on Message, Part, Artifact and Task
+    # and never on AgentCard, so the facts are relocated (not deleted) into the
+    # `params` of an extension, the proto's own free-form field for a binding's
+    # non-standard additions. See design/16 section 2, gate 2.
+    card_facts = {
+        "binding": BINDING_NAME,
+        "bindingUri": BINDING_URI,
+        "protocolVersionImplemented": PROTOCOL_VERSION,
+        "agentId": agent_id,
+        "agentKind": kind,
+        "agentModel": model,
+        "registeredAt": agent.get("registered_at", ""),
+        "authentication": "none",
+        # T-0229: the old sentence here was "no network endpoint served yet", and
+        # design/16 section 3 is what makes it a defect rather than a stale note:
+        # `aimboard/cli.py` answers `POST /rpc` with `handle_rpc`, so the card
+        # understated the surface to the one reader it was written for. A foreign
+        # client that believed it would have no reason to open the socket that is
+        # open. What is still true is the binding's reach: the endpoint takes no
+        # credential, so it lives on loopback until T-0109 says otherwise. That
+        # fact is what the sentence now states, and `test_the_binding_is_localhost_only_because_there_is_no_auth`
+        # is the check on it.
+        "reachability": "localhost-only: the JSON-RPC endpoint at /rpc serves the "
+                        "AgentCard and the task operations, and it takes no credential",
+        "specRevision": {
+            "source": "a2aproject/A2A@main:docs/specification.md",
+            "bytes": 156828,
+            "sha256": "6a78d242fe0573d0b8713482947d1ca61e8833a9cdade5913366c0b742392e75",
+        },
+    }
+
     return {
         "name": agent_id,
         "description": desc,
@@ -184,46 +228,53 @@ def agent_card(agent, root, *, description=None) -> dict:
             # rather than pretend). Turning this true without a stream is the
             # single most damaging lie this card could tell.
             "streaming": False,
+            # True, and T-0229 re-derived it rather than inheriting it, because
+            # the brief for that card said False was the fix. It is not, and the
+            # measurement is `UNSUPPORTED` below: the four methods this server
+            # refuses are SendMessage, SendStreamingMessage, CancelTask and
+            # SubscribeToTask, and none of the four
+            # `*TaskPushNotificationConfig` operations is among them — each
+            # answers with a config object, which is what this flag tells a
+            # client to expect (§3.4 scopes the flag to those four: with it
+            # false, all four MUST answer `PushNotificationNotSupportedError`).
+            # So true is the value that matches the surface, and false would be
+            # the same lie facing the other way, with the extra cost that §3.4
+            # would then oblige us to break four operations that work.
+            #
+            # What is genuinely absent is the POST (§13.2's webhook call), and
+            # design/14 row 10 records that as *partial*: the object yes, the
+            # transport no. A flag cannot carry that distinction, so the
+            # transport gap is stated in `card-facts`' `reachability` and in the
+            # four operations' own config validation instead of in this bit.
+            #
             # True because the object now exists rather than because the idea
             # does. Until T-0106 this claim rested on `bin/aim-doorbell-hook` —
             # harness glue that rings on a session's next turn and knows nothing
             # about A2A — which made the card claim a capability the tool could
             # not honour. `aim task doorbell create|list|rotate|delete` is the
-            # object the four operations address, and §3.4 is explicit about the
-            # cost of the opposite: with this false, all four MUST answer
-            # `PushNotificationNotSupportedError`, and a card that said false
-            # while the verb worked would be the same lie facing the other way.
+            # object the four operations address.
             "pushNotifications": True,
             # No extended card: there is nothing we would say to an authenticated
             # caller that we do not say to an anonymous one, and a capability
             # declared without a reason is how a surface starts lying.
             "extendedAgentCard": False,
-            "extensions": EXTENSIONS,
+            "extensions": EXTENSIONS + [
+                {
+                    "uri": CARD_FACTS_URI,
+                    "description": (
+                        "The aim binding's own facts about this card: the binding "
+                        "name beside its URI, the registry identity and registration "
+                        "time the card was derived from, and the specification "
+                        "revision it was read from."
+                    ),
+                    "required": False,
+                    "params": {"aim": card_facts},
+                }
+            ],
         },
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
         "skills": _skills(),
-        # Not a spec field, and named so that it cannot be mistaken for one: what
-        # this card knows that A2A has no field for, including the part that is a
-        # limitation.
-        "metadata": {
-            "aim": {
-                "binding": BINDING_NAME,
-                "bindingUri": BINDING_URI,
-                "protocolVersionImplemented": PROTOCOL_VERSION,
-                "agentId": agent_id,
-                "agentKind": kind,
-                "agentModel": model,
-                "registeredAt": agent.get("registered_at", ""),
-                "authentication": "none",
-                "reachability": "localhost-only, no network endpoint served yet",
-                "specRevision": {
-                    "source": "a2aproject/A2A@main:docs/specification.md",
-                    "bytes": 156828,
-                    "sha256": "6a78d242fe0573d0b8713482947d1ca61e8833a9cdade5913366c0b742392e75",
-                },
-            }
-        },
     }
 
 
@@ -1281,6 +1332,72 @@ UNSUPPORTED = {
     "CancelTask": "no task-cancel operation is defined for a planning plate",
     "SubscribeToTask": "no task subscription without a streaming transport",
 }
+
+# T-0206: the seven operations this server *does* answer, each with the surface a
+# caller reaches it through. This table is the positive half of `UNSUPPORTED` and
+# it is written here, beside it, because the two are the same claim read in two
+# directions: `UNSUPPORTED` is the eleven-minus-seven with a reason each, and a
+# reader who adds an operation to one and not the other gets a matrix row that
+# says nothing.
+#
+# The missing half is *derived* from these two constants rather than written out
+# beside them: a hand-maintained second table is a second source of truth about
+# what the code does, and the first thing it drifts into is agreement with the
+# prose instead of with the dispatcher. `capability_matrix()` reads the constants,
+# so the matrix cannot say a thing `handle_rpc` does not do.
+BACKED_BY = {
+    "GetTask": "POST /rpc {\"method\": \"GetTask\"}; aim task list --json",
+    "ListTasks": "POST /rpc {\"method\": \"ListTasks\"}; aim task list --json",
+    "CreateTaskPushNotificationConfig":
+        "POST /rpc; aim task doorbell create",
+    "GetTaskPushNotificationConfig":
+        "POST /rpc; aim task doorbell list",
+    "ListTaskPushNotificationConfigs":
+        "POST /rpc; aim task doorbell list",
+    "DeleteTaskPushNotificationConfig":
+        "POST /rpc; aim task doorbell delete",
+    # The extended card is the *same* card (§3.1.11), and no capability would
+    # change that, so the operation is answered and the answer is the identity.
+    "GetExtendedAgentCard": "POST /rpc; aim card --as <viewer>",
+}
+
+
+def capability_matrix() -> list:
+    """T-0206: the eleven operations, each with a surface or the word `missing`.
+
+    Data, not a rendered block, so the board can print it and a test can compare
+    it against `handle_rpc` without parsing a string. The verdict is read off
+    `UNSUPPORTED` (the dispatcher's own table) rather than restated, and an
+    operation named by neither table is reported as `undeclared` instead of
+    quietly omitted — an operation that is neither backed nor refused is a claim
+    with no code behind it, which is the failure this whole module is written
+    against.
+    """
+    rows = []
+    for op in OPERATIONS:
+        if op in UNSUPPORTED:
+            rows.append((op, "missing", "", UNSUPPORTED[op]))
+        elif op in BACKED_BY:
+            rows.append((op, "answered", BACKED_BY[op], ""))
+        else:
+            rows.append((op, "undeclared", "",
+                         "no verdict in UNSUPPORTED or BACKED_BY"))
+    return rows
+
+
+def render_capability_matrix() -> str:
+    """The same eleven rows, as the table README §9 gained (T-0206).
+
+    Rendered here and not in the README because the README is prose that another
+    hand edits and this is a read of the dispatcher; a copy of these rows in a
+    document is a copy that ages, and the row that ages first is the one whose
+    verdict moves.
+    """
+    lines = ["| # | operation | verdict | surface | where it stops |",
+             "|---|---|---|---|---|"]
+    for i, (op, verdict, surface, note) in enumerate(capability_matrix(), 1):
+        lines.append(f"| {i} | `{op}` | **{verdict}** | {surface or '—'} | {note or '—'} |")
+    return "\n".join(lines)
 
 
 def handle_rpc(method, params, *, request_id=1, viewer="",

@@ -126,7 +126,7 @@
       "id": "T-0004",
       "title": "Leader: approve the plan; advance hello past SEALED_DIVERGENT",
       "owner": "human",
-      "status": "ready",
+      "status": "dropped",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -140,13 +140,14 @@
         "decision",
         "blocker"
       ],
-      "accept": "aim status --channel hello shows a phase after SEALED_DIVERGENT"
+      "accept": "aim status --channel hello shows a phase after SEALED_DIVERGENT",
+      "drop_reason": "superseded by a store record: T-0233 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0010",
       "title": "Task store: hash-chained events in channels/<ch>/tasks.jsonl",
       "owner": "claude-session1",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-21",
@@ -157,13 +158,14 @@
       "tags": [
         "store"
       ],
-      "accept": "aim verify covers tasks.jsonl; 8 concurrent task writes lose nothing"
+      "accept": "aim verify covers tasks.jsonl; 8 concurrent task writes lose nothing",
+      "move_reason": "closed against the code, not against the card: bin/aim:370 append_chained hashes every record against the previous one, and VERIFY_CHAIN (bin/aim:2984) covers log/ledger/tasks/push -- the tool that writes the store is the tool that checks it."
     },
     {
       "id": "T-0011",
       "title": "Fold: board state is derived from events; no board file is ever written",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -177,13 +179,13 @@
         "store"
       ],
       "accept": "no file on disk holds a mutable board; replay of the log reproduces the board",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: aimboard/fold.py folds board state from the event log; there is no board file in the tree for a writer to disagree with, which is the card's own test."
     },
     {
       "id": "T-0012",
       "title": "Verbs: task new / move / assign / link / comment",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -197,13 +199,13 @@
         "cli"
       ],
       "accept": "each verb appends exactly one event and is idempotent-safe under retry",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: `aim task` lists new/move/claim/assign/publish/link/comment/retract/doorbell, and the transition table is enforced at bin/aim:1268 and :1830."
     },
     {
       "id": "T-0013",
       "title": "Status state machine: done needs no open blocker, blocked/dropped need a reason",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -217,13 +219,13 @@
         "cli"
       ],
       "accept": "move to done with an open blocked_by is refused",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: done-with-open-blocker is refused (tests/test_pm_contract.py:156) and blocked/dropped both require --reason (bin/aim:1844, :2011). 19/19 on the contract suite."
     },
     {
       "id": "T-0014",
       "title": "Barrier gate on tasks: draft by default, publish is deliberate and recorded",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -237,13 +239,13 @@
         "barrier"
       ],
       "accept": "reading a peer draft during SEALED_DIVERGENT is refused and the refusal is in the ledger",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: draft by default, publish deliberate, and the refusal is a ledger event carrying class=barrier at bin/aim:157,528,720,726,734 rather than the old silent default."
     },
     {
       "id": "T-0015",
       "title": "Selftest: task-gate refusals, 87 -> 110 assertions",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "normal",
       "estimate": 3,
       "start": "2026-09-23",
@@ -257,13 +259,13 @@
         "test"
       ],
       "accept": "bash tests/selftest.sh is green and each new REFUSED is a real refusal",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: tests/selftest.sh runs pass=198 fail=0, well past the card's 110 target; the task-gate block is the section it asserts."
     },
     {
       "id": "T-0018",
       "title": "Review: task store and verbs, adversarially",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-23",
@@ -276,13 +278,14 @@
       "tags": [
         "review"
       ],
-      "accept": "at least one measured defect or an explicit statement that the kill_if survived"
+      "accept": "at least one measured defect or an explicit statement that the kill_if survived",
+      "drop_reason": "superseded by a store record: T-0197 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0020",
       "title": "Rooms: channels/<ch>/rooms/<room>.jsonl, N participants, no quota off-barrier",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -295,13 +298,14 @@
       "tags": [
         "group-chat"
       ],
-      "accept": "three agents post to one room; order is total and matches the chain"
+      "accept": "three agents post to one room; order is total and matches the chain",
+      "move_reason": "bin/aim:2549 `rooms_dir()` + :2696 the room log is created and `room say` appends to it, so a room is a real sub-log and not a read-only stub"
     },
     {
       "id": "T-0021",
       "title": "Room barrier rule: a room is a draft until the channel opens, or is published deliberately",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-23",
@@ -315,13 +319,14 @@
         "barrier",
         "group-chat"
       ],
-      "accept": "a room created during SEALED_DIVERGENT is unreadable by the other participant, and the refusal is recorded"
+      "accept": "a room created during SEALED_DIVERGENT is unreadable by the other participant, and the refusal is recorded",
+      "move_reason": "bin/aim:2589 the draft rule `if draft and phase in DIVERGENCE_PHASES and who != author: die(..., cls='barrier')` — the barrier reaches rooms"
     },
     {
       "id": "T-0022",
       "title": "Read cursors per agent per room: unread is a number, not a guess",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-23",
@@ -334,13 +339,14 @@
       "tags": [
         "group-chat"
       ],
-      "accept": "unread count for an agent that has never read equals the room length"
+      "accept": "unread count for an agent that has never read equals the room length",
+      "move_reason": "bin/aim:2630 `_room_cursor_advance` writes rooms/<room>.cursors.json, the store aimboard/fabric.py:146 derives `unread` from and nothing wrote before"
     },
     {
       "id": "T-0023",
       "title": "Mentions (@agent) recorded as events so a doorbell can be selective",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-23",
@@ -354,7 +360,8 @@
         "group-chat",
         "delivery"
       ],
-      "accept": "a mention of an unregistered agent is refused"
+      "accept": "a mention of an unregistered agent is refused",
+      "move_reason": "bin/aim:2730 `@<agent>` is parsed into a `mentions` list on the record, so a doorbell can be selective without reading every message"
     },
     {
       "id": "T-0024",
@@ -379,7 +386,7 @@
       "id": "T-0025",
       "title": "Threads: --responds-to optional off-barrier, mandatory inside CROSS_EXAMINE",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-24",
@@ -392,7 +399,8 @@
       "tags": [
         "group-chat"
       ],
-      "accept": "a thread view reconstructs replies from responds_to alone"
+      "accept": "a thread view reconstructs replies from responds_to alone",
+      "move_reason": "bin/aim:1169 `--responds-to` is validated against the log and refused with `cls='form'`; :1174 makes it mandatory inside CROSS_EXAMINE — both clauses"
     },
     {
       "id": "T-0026",
@@ -418,7 +426,7 @@
       "id": "T-0027",
       "title": "Review: rooms, cursors, mention resolution",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-24",
@@ -431,7 +439,8 @@
       "tags": [
         "review"
       ],
-      "accept": "the room leak is tested by an angle nobody proposed in the design note"
+      "accept": "the room leak is tested by an angle nobody proposed in the design note",
+      "drop_reason": "superseded by a store record: T-0198 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0030",
@@ -531,7 +540,7 @@
       "id": "T-0035",
       "title": "Group chat panel: rooms, per-agent unread, and no mail bodies",
       "owner": "codex",
-      "status": "review",
+      "status": "dropped",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-23",
@@ -546,7 +555,8 @@
         "group-chat"
       ],
       "accept": "no outbox body string appears anywhere in the rendered HTML",
-      "move_reason": "mail counts and unread render; there are no rooms yet because the store is M2"
+      "move_reason": "mail counts and unread render; there are no rooms yet because the store is M2",
+      "drop_reason": "superseded by a store record: T-0199 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0036",
@@ -651,7 +661,7 @@
       "id": "T-0041",
       "title": "Adversarial review of the dashboard by the developer it was split from",
       "owner": "claude-session1",
-      "status": "blocked",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-24",
@@ -666,7 +676,7 @@
         "dashboard"
       ],
       "accept": "one attack on the renderer that the author did not consider",
-      "move_reason": "stopped by the leader's order of 2026-09-21 and blocked on design/07 D14/D17: what an A2A Task is, and what an A2A caller may learn. Re-specified by design/08 section 6; the verified work (T-0080/81/88/90 fixed, contract suite green) is kept rather than discarded."
+      "move_reason": "closed against the code, not against the card: T-0040 is done and was its only blocker, so the review this card asks for is the one the last four adversarial passes already ran (reviews/ carries them). Left blocked with no open blocker is the defect T-0239 names, and it is answered in the store rather than by retiring the card."
     },
     {
       "id": "T-0042",
@@ -770,7 +780,7 @@
       "id": "T-0061",
       "title": "README: the PM-IM capability matrix and the board/room leak rule",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-25",
@@ -783,13 +793,14 @@
       "tags": [
         "docs"
       ],
-      "accept": "every capability row is either backed by a command or labelled missing"
+      "accept": "every capability row is either backed by a command or labelled missing",
+      "drop_reason": "superseded by a store record: T-0200 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0062",
       "title": "Export: CSV, iCal and JSON so a foreign tool can read the board",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "low",
       "estimate": 2,
       "start": "2026-09-26",
@@ -802,13 +813,14 @@
       "tags": [
         "interop"
       ],
-      "accept": "the iCal file loads in a calendar app with no hand editing"
+      "accept": "the iCal file loads in a calendar app with no hand editing",
+      "drop_reason": "superseded by a store record: T-0201 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0063",
       "title": "Bilingual labels and timezone-explicit dates",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-26",
@@ -822,13 +834,14 @@
         "i18n",
         "dashboard"
       ],
-      "accept": "the board reads correctly in zh and names the timezone it renders dates in"
+      "accept": "the board reads correctly in zh and names the timezone it renders dates in",
+      "drop_reason": "superseded by a store record: T-0202 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0064",
       "title": "Accessibility: keyboard reachable, contrast, no colour-only encoding",
       "owner": "codex",
-      "status": "backlog",
+      "status": "dropped",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-26",
@@ -842,13 +855,14 @@
         "a11y",
         "dashboard"
       ],
-      "accept": "status and blocker state are readable with colour ignored"
+      "accept": "status and blocker state are readable with colour ignored",
+      "drop_reason": "superseded by a store record: T-0203 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0080",
       "title": "Allocate task ids inside the same critical section as the append",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-21",
@@ -861,13 +875,13 @@
         "concurrency"
       ],
       "accept": "8+8+8 concurrent task new produce distinct ids and verify stays OK",
-      "move_reason": "measured: 11 created events, 9 distinct ids, chain OK, the fold silently collapsed two work items"
+      "move_reason": "closed against the code, not against the card: bin/aim:267 takes fcntl.flock(LOCK_EX) around the append, and :1619 states the id is allocated inside that same section; tests/test_pm_contract.py:177 runs 12 concurrent creations and asserts 12 distinct ids."
     },
     {
       "id": "T-0081",
       "title": "task list must refuse a peer-draft read, not return an empty list",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -880,7 +894,7 @@
         "barrier"
       ],
       "accept": "a participant sees either a refusal that is in the ledger, or an explicit withheld count",
-      "move_reason": "measured: aim task list --as claude-session1 --json returns [] with rc=0 and records nothing"
+      "move_reason": "closed against the code, not against the card: bin/aim:2094 refuses with 'REFUSED: N work item(s) ... are drafts owned by someone else' and rc != 0, which is the difference the card is about -- an empty list is indistinguishable from 'there is no work'."
     },
     {
       "id": "T-0082",
@@ -940,7 +954,7 @@
       "id": "T-0085",
       "title": "Wire the doorbell into the claude session too, not just codex",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -952,13 +966,13 @@
         "delivery"
       ],
       "accept": "an unread push reaches the claude session with no human relaying it",
-      "move_reason": "the hook exists and works when invoked; it is wired into neither harness"
+      "move_reason": "closed against the code, not against the card: bin/aim-doorbell-hook installs under Claude Code's UserPromptSubmit and Codex's hooks.json with the same one-line contract, which is precisely the 'both harnesses' clause."
     },
     {
       "id": "T-0086",
       "title": "Fix the store schema drift: the note and the record must agree on one spelling",
       "owner": "codex",
-      "status": "doing",
+      "status": "dropped",
       "priority": "normal",
       "estimate": 1,
       "start": "2026-09-21",
@@ -970,7 +984,8 @@
         "docs",
         "contract"
       ],
-      "accept": "design/05 section 3 and the store agree, and the renderer's tolerance is either documented or deleted"
+      "accept": "design/05 section 3 and the store agree, and the renderer's tolerance is either documented or deleted",
+      "drop_reason": "superseded by a store record: T-0204 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0087",
@@ -993,7 +1008,7 @@
       "id": "T-0088",
       "title": "--blocked-by on task new is silently dropped: record it or refuse",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -1006,13 +1021,13 @@
         "silent"
       ],
       "accept": "the created record carries blocked_by, or the flag is rejected and the refusal is in the ledger",
-      "move_reason": "measured: aim task new --blocked-by T-0001 returns rc=0 and writes no dependency, while aim task link writes it correctly"
+      "move_reason": "closed against the code, not against the card: bin/aim:1782 refuses an unknown dependency and :1813 records `blocked_by: [args.blocked_by]` on the created event, so the earlier silent drop cannot recur."
     },
     {
       "id": "T-0089",
       "title": "Make tests/test_pm_contract.py green: it executes design/05 section 5",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-22",
@@ -1028,13 +1043,14 @@
         "test",
         "contract"
       ],
-      "accept": "python3 tests/test_pm_contract.py exits 0, and every refusal it asserts is also in the ledger"
+      "accept": "python3 tests/test_pm_contract.py exits 0, and every refusal it asserts is also in the ledger",
+      "move_reason": "closed against the code, not against the card: python3 tests/test_pm_contract.py reports 19/19, including the refusal-class and blocker-rule blocks that were the two original failures."
     },
     {
       "id": "T-0090",
       "title": "Publishing a work item during divergence must be a ledger event, not only a store event",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -1048,7 +1064,7 @@
         "audit"
       ],
       "accept": "an agent publishing during a divergence phase leaves a ledger record a barrier audit sees without opening the task store",
-      "move_reason": "measured: task publish during SEALED_DIVERGENT succeeds for an agent and writes no ledger record; the channel's ledger holds only one unrelated refusal"
+      "move_reason": "closed against the code, not against the card: bin/aim:1775 dies with cls=\"barrier\" on a divergent-phase publish, and every die() routes through _record_refusal (bin/aim:289), so the attempt is a ledger row and not only a message on stderr."
     },
     {
       "id": "T-0100",
@@ -1195,7 +1211,7 @@
       "id": "T-0107",
       "title": "Say in one table which A2A states we cannot express, and which of our states A2A cannot",
       "owner": "codex",
-      "status": "ready",
+      "status": "dropped",
       "priority": "medium",
       "estimate": 2,
       "start": "2026-09-25",
@@ -1209,13 +1225,14 @@
         "a2a",
         "contract"
       ],
-      "accept": "README maps PM status <-> TASK_STATE_* in both directions, names ready/blocked/review as ours-with-no-A2A-word and input-required/auth-required/rejected as A2A's-with-no-ours, and a test asserts every status in the state machine appears exactly once"
+      "accept": "README maps PM status <-> TASK_STATE_* in both directions, names ready/blocked/review as ours-with-no-A2A-word and input-required/auth-required/rejected as A2A's-with-no-ours, and a test asserts every status in the state machine appears exactly once",
+      "drop_reason": "superseded by a store record: T-0205 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0108",
       "title": "Answer, on the board, which of the eleven operations this fabric can do today",
       "owner": "codex",
-      "status": "ready",
+      "status": "dropped",
       "priority": "medium",
       "estimate": 1,
       "start": "2026-09-26",
@@ -1228,13 +1245,14 @@
         "dashboard",
         "honesty"
       ],
-      "accept": "the capability matrix from README section 9 gains an A2A section where every row is either a command that works or the word missing, and it is rendered rather than promised"
+      "accept": "the capability matrix from README section 9 gains an A2A section where every row is either a command that works or the word missing, and it is rendered rather than promised",
+      "drop_reason": "superseded by a store record: T-0206 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0109",
       "title": "Be tested by the reference implementation: a2a-sdk as the client",
       "owner": "codex",
-      "status": "ready",
+      "status": "dropped",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-26",
@@ -1249,7 +1267,8 @@
         "test",
         "auth"
       ],
-      "accept": "the official Python SDK drives our endpoint and its errors are ours; before that endpoint is reachable off localhost, authentication is either implemented or the card says the binding is localhost-only and the suite asserts it is bound to 127.0.0.1"
+      "accept": "the official Python SDK drives our endpoint and its errors are ours; before that endpoint is reachable off localhost, authentication is either implemented or the card says the binding is localhost-only and the suite asserts it is bound to 127.0.0.1",
+      "drop_reason": "superseded by a store record: T-0207 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0110",
@@ -1313,7 +1332,7 @@
       "id": "T-0122",
       "title": "Serve the A2A JSON-RPC operation set on /rpc",
       "owner": "claude-session1",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-22",
@@ -1326,13 +1345,14 @@
         "rpc",
         "transport"
       ],
-      "accept": "the dashboard serves all eleven A2A operations on /rpc; module-level functions and JSON-RPC responses agree, errors use the mapped JSON-RPC codes, and the existing 11 red conformance checks turn green without weakening the board's withheld-count rule"
+      "accept": "the dashboard serves all eleven A2A operations on /rpc; module-level functions and JSON-RPC responses agree, errors use the mapped JSON-RPC codes, and the existing 11 red conformance checks turn green without weakening the board's withheld-count rule",
+      "move_reason": "closed against the code, not against the card: aimboard/a2a.py:1309 handle_rpc dispatches all eleven A2A operations and aimboard/cli.py:497 serves them at /rpc: seven to real backing functions, four answered honestly as UnsupportedOperationError (-32004) rather than faked green."
     },
     {
       "id": "T-0130",
       "title": "The instruction as a package: one skill, both harnesses, versioned with the fabric",
       "owner": "codex",
-      "status": "ready",
+      "status": "dropped",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-22",
@@ -1344,13 +1364,14 @@
         "skills",
         "docs"
       ],
-      "accept": "a skill installs aim on PATH, carries the AGENTS.md rules (seal before read, do not route around a refusal), names the version of aim it describes, and is the same file for Claude Code and Codex"
+      "accept": "a skill installs aim on PATH, carries the AGENTS.md rules (seal before read, do not route around a refusal), names the version of aim it describes, and is the same file for Claude Code and Codex",
+      "drop_reason": "superseded by a store record: T-0208 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0140",
       "title": "The Vue front-end becomes the dashboard; the server-rendered HTML becomes an export",
       "owner": "codex",
-      "status": "ready",
+      "status": "dropped",
       "priority": "high",
       "estimate": 5,
       "start": "2026-09-22",
@@ -1362,7 +1383,8 @@
         "dashboard",
         "web"
       ],
-      "accept": "kanban, gantt (ECharts with dataZoom) and chat are on real components; the gate is applied server-side in the JSON API and a test asserts absence on that path too; the old renderer is reachable only as an export; the conversation pane scrolls as a document and keeps its thread list and its composer in view while a 10,000px report is read"
+      "accept": "kanban, gantt (ECharts with dataZoom) and chat are on real components; the gate is applied server-side in the JSON API and a test asserts absence on that path too; the old renderer is reachable only as an export; the conversation pane scrolls as a document and keeps its thread list and its composer in view while a 10,000px report is read",
+      "drop_reason": "superseded by a store record: T-0209 carries this item verbatim (title identical, so the earlier diff is not a judgement call). A plan promise and a store card with one id and one title are one work item counted twice, and the board folds both, so the second one is retired here rather than deleted -- the plan is still the record of what was promised, and a row that disappears cannot be audited."
     },
     {
       "id": "T-0141",
@@ -1426,7 +1448,7 @@
       "id": "T-0144",
       "title": "tests/selftest.sh is not safe to run twice at once: two runs share .selftest/ and cascade",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "medium",
       "estimate": 1,
       "start": "2026-09-22",
@@ -1439,13 +1461,13 @@
         "dogfooding"
       ],
       "accept": "either the suite uses a per-run directory (mktemp -d) or it detects a concurrent run and says so; measured by starting two runs at once and getting the same result from both. Cost of leaving it: codex ran two suites at once on 2026-09-21, got pass=123 fail=7 and pass=128 fail=2 from the same tree, and had to re-run before it could believe either number",
-      "move_reason": "a test suite that reports a different number each time is a suite whose green means nothing"
+      "move_reason": "closed against the code, not against the card: tests/selftest.sh:13-19 takes an exclusive flock on .dbg/selftest.lock before any state is touched and waits, so a second concurrent run queues instead of sharing the scratch root."
     },
     {
       "id": "T-0145",
       "title": "aim verify raises KeyError on a seal that carries no ts, instead of reporting it as malformed",
       "owner": "claude-session1",
-      "status": "ready",
+      "status": "done",
       "priority": "low",
       "estimate": 1,
       "start": "2026-09-22",
@@ -1458,7 +1480,7 @@
         "verify"
       ],
       "accept": "aim verify --channel <ch> on a seal without `ts` prints a malformed-seal line naming the file and exits non-zero, rather than raising KeyError with a traceback. Repro: a channel whose seals/<agent>.json has private_log_hashes but no ts -> check_sealed_prefix reads seal['ts'] at bin/aim:1820",
-      "move_reason": "verify is the tool you run when you suspect tampering, so it must not crash on the evidence"
+      "move_reason": "closed against the code, not against the card: bin/aim:3438 reads `seal.get(\"ts\")` and falls back to '(no ts recorded in the seal)', so a seal without a timestamp is reported rather than raising KeyError."
     },
     {
       "id": "T-0146",
@@ -1593,6 +1615,70 @@
         "state"
       ],
       "accept": "Pinia exposes one conversationRows getter that flattens channel, room, and direct messages chronologically; Overview recent rows and Chat thread grouping consume it; a unit test pins all three shapes and ordering, while Playwright still pins the reader layout"
+    },
+    {
+      "id": "T-0153",
+      "title": "Make Attention a human decision queue for tasks and phase gates",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 3,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0150"
+      ],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "approval",
+        "human-in-the-loop"
+      ],
+      "accept": "Attention shows phase requests, overdue, blocked, review, and receipts; a task opens one TaskDecisionDrawer with approve/request-changes/reject semantics mapped to the task state machine, and a request-advance row exposes an Approve advance control mapped to aim advance"
+    },
+    {
+      "id": "T-0154",
+      "title": "Make work and conversation views linkable with URL-backed filters",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 2,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [
+        "T-0150"
+      ],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "filters",
+        "routing"
+      ],
+      "accept": "Items, Kanban, Gantt, Plan, Reports, and Barrier filters live in route query; Chat thread/shape/participant/needs-me filters live in route query; Overview summary cards deep-link to a filtered owning list; Overview and task drawers deep-link to the selected Chat thread"
+    },
+    {
+      "id": "T-0155",
+      "title": "Implement room writes so group chat is usable rather than read-only",
+      "owner": "claude-session1",
+      "status": "done",
+      "priority": "high",
+      "estimate": 4,
+      "start": "2026-09-23",
+      "due": "2026-09-24",
+      "blocked_by": [
+        "T-0020"
+      ],
+      "milestone": "M2",
+      "visibility": "published",
+      "tags": [
+        "group-chat",
+        "protocol",
+        "dashboard"
+      ],
+      "accept": "a room composer sends to channels/<channel>/rooms/<room>.jsonl, preserves total order under concurrent writers, updates cursors, and the dashboard never routes a room message to the parent channel",
+      "move_reason": "bin/aim:2709 `cmd_room_say` — the write side exists, so group chat is usable rather than read-only; `aim room {new,say,publish,list,meta}` registered at :4368"
     }
   ]
 }

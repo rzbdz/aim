@@ -15,9 +15,9 @@
  *
  *   * a direct message is waiting if `to === viewer` and its `state` is not
  *     `acked`. `state` is on the wire per row already (T-0162's spec), and the
- *     chip next to it is derived from the same row, so the marker and the chip
- *     cannot disagree. The chip stays, because it is the record; it stops being
- *     the predicate.
+ *     row's `receipt` flag is derived from those same two fields, so the marker,
+ *     the anchor and the chip cannot disagree. The chip stays, because it is the
+ *     record; it stops being the predicate.
  *   * a room is waiting for the unread count the server computes per agent.
  *   * a channel is waiting when its newest message is not from the viewer -- the
  *     honest thing that is computable today. A true per-viewer cursor is a fabric
@@ -168,13 +168,19 @@ const threads = computed(() => {
        * it. Rendering them side by side gave a message that reads `acked` and
        * `receipt demanded` on the same line, and spent a chip on `${bytes} bytes`,
        * which is a transport detail at a reader who is reading a conversation.
-       * A demand that has been answered is not a demand, so it is not shown.
+       * So what the message is *still* asking for is a field, true only while the
+       * row it belongs to is unanswered -- the meaning the chip spells out lives
+       * in the data, and every chip below is then a word for a state the row is
+       * actually in.
        */
+      receipt: Boolean(row.shape === 'direct' && row.ack_required && (row.state || '') !== 'acked'),
       chips: row.shape === 'channel'
         ? [row.kind && `kind ${row.kind}`, row.responds_to && `responds-to ${row.responds_to}`].filter(Boolean)
         : row.shape === 'room'
           ? (row.mentions || []).map((mention) => `@${mention}`)
-          : [row.state, row.ack_required && row.state !== 'acked' && 'receipt demanded'].filter(Boolean),
+          : row.state === 'acked'
+            ? ['acked']
+            : row.receipt ? ['receipt demanded'] : row.state ? [row.state] : [],
     })
   }
   const groupOrder = { channel: 0, room: 1, direct: 2 }

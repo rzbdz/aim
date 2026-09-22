@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBoard } from '../stores/board'
@@ -7,15 +7,53 @@ import { useQueryFilters } from '../composables/useQueryFilters'
 import { isOverdue } from '../theme'
 import StatusTag from '../components/StatusTag.vue'
 import OwnerAvatar from '../components/OwnerAvatar.vue'
+import TaskLink from '../components/TaskLink.vue'
 
 const ctx = inject('ctx')
 const board = useBoard()
 // The shell owns the drawer; this pane only says what to open. See useTaskDrawer.
 const drawer = ctx.service('taskDrawer')
-const { filters, activeCount, clear } = useQueryFilters({
+const api = ctx.service('api')
+/** Named, because `clear` and the per-chip reset off the template both have to
+ *  restore the same set: a reset that invents its own empty value is a second
+ *  answer to "what is this filter when it is off". */
+const DEFAULTS = {
   q: '', owner: '', milestone: '', tag: [], priority: '', onlyLate: false, unassigned: false,
-})
+  per: '25',
+}
+const { filters, clear } = useQueryFilters(DEFAULTS)
+
+/**
+ * Whether any *question* is on, so "clear" is drawn only then.
+ *
+ * Not the composable's `activeCount`, which counts `per` as well: a page size
+ * always holds a value, so that count is never zero and the button would be drawn
+ * on an untouched board. A page size is a window, not a filter.
+ */
+const asked = computed(() => Object.keys(DEFAULTS)
+  .filter((key) => key !== 'per')
+  .some((key) => JSON.stringify(filters[key]) !== JSON.stringify(DEFAULTS[key])))
+
+/**
+ * T-0161 clause 3: the card is bounded by default, and the whole acceptance
+ * lives in the drawer.
+ *
+ * Measured on the live board before this (87 cards, acceptances of one to three
+ * sentences): every card drew its whole acceptance, so the column body was a wall
+ * of prose and the reader scrolled past the cards to find the cards. So the bound
+ * is the default -- three lines of acceptance, set in the style block below --
+ * and the drawer, which already holds the whole item, is where the rest is read.
+ *
+ * `compact` is one step further: no acceptance at all. It defaulted to the bound
+ * itself while the bound was opt-in, which made the reader ask for the thing the
+ * card asks for; as "draw less than the bound" it is the reader's choice, and it
+ * starts off.
+ */
 const compact = ref(false)
+
+/** The card whose claim is in flight, so the control can say it is working and
+ *  a second click cannot send the same claim twice. */
+const claimBusy = ref('')
 
 /**
  * The same predicate Items draws, and the same one the filter reads, for the same
@@ -25,26 +63,37 @@ const compact = ref(false)
 const unowned = (t) => (t.owner || '') === ''
 
 /**
- * Whether this dashboard could actually run `aim task claim` for the viewer.
+ * Whether this dashboard could actually run `aim task claim` for this card.
  *
  * `board.canWrite`/`board.writer` are the write path's own declarations
  * (`aimboard/cli.py:503` refuses the POST without `--allow-write`, `:594` is the
- * only place `write.as` is set), and the figure is drawn for one seat only: the
- * seat the server writes as. `design/11` section 2 -- "a read can borrow a view; a
- * write cannot borrow a name" -- so a control naming `board.writer` may only be
- * offered to the viewer whose own kind is that writer's.
+ * only place `write.as` is set), so no writer means no command and no control.
+ * `design/11` section 2 -- "a read can borrow a view; a write cannot borrow a
+ * name" -- is the other half: the command names the seat the server writes as, so
+ * it may be offered only to the viewer *in* that seat.
  *
- * Measured, and it is the seat rather than a role that decides this: the live
- * board is `write {enabled: true, as: "human"}` while it reads as `viewer:
- * "claude-session1"`. A participant is the common case, and the tool would run a
- * claim drawing the participant's own name -- `cmd_task_claim` asks only that the
- * actor be a participant of the channel (`bin/aim:1747`) -- while the record still
- * says the leader took the card. This pane must draw exactly the figure the
- * work-items list and the attention queue draw; two surfaces disagreeing about who
- * may claim is the second implementation this task is about.
+ * The seat is the registry's `kind` for the writer compared with the registry's
+ * `kind` for the viewer, not the literal `'human'` this pane used to test. The
+ * literal asserted a fact about the payload -- that the server's writer happens to
+ * be the leader -- which decides nothing about whether the *action* is the
+ * reader's; the equal-kinds form is the write rule itself. Measured live the two
+ * differ in name but not in kind (`write.as: "human"` while `viewer:
+ * "claude-session1"`, both `kind: 'human'`/absent), which is why the literal
+ * looked right on the live board and wrong on every fixture.
+ *
+ * This pane must draw exactly the figure the work-items list draws; two surfaces
+ * disagreeing about who may claim is the second implementation this task is about.
+ * Both read the item's own command as well (`claimCommand` is `''` for an item
+ * with no channel), so an item that cannot be claimed has no control anywhere.
  */
-const claimable = (t) => board.canWrite && board.writer
-  && (board.doc?.viewer_kind || '') === 'human'
+const sameSeat = () => {
+  const writer = board.writer
+  const kind = (board.doc?.agents || {})[writer]?.kind
+  return Boolean(kind) && kind === board.doc?.viewer_kind
+}
+const claimable = (t) => Boolean(
+  board.canWrite && board.writer && sameSeat() && claimCommand(t),
+)
 
 /** The item's own channel: `aim task claim` checks membership in the one it names. */
 function claimCommand(t) {
@@ -72,11 +121,82 @@ const visible = (t) => {
  * status the board drew and the filter hid, not a column that stopped existing.
  * Deriving the column list from the present tasks instead would make the filter
  * count disagree with the column headers, which is how a board starts lying.
+ *
+ * T-0161 bounds the *page* rather than the column, and it has to be one window
+ * over all of them: bounding each column separately would draw up to
+ * `statuses x per` cards and call that a page. So the cards that pass the filter
+ * are ranked once (the board's status order, and each column's own order from
+ * `byStatus`) and every column draws its slice of that one window.
  */
+const PAGE_SIZES = [25, 50, 100]
+
+/**
+ * Derived from the options and never taken on trust: `?per=99999` pasted by hand
+ * would otherwise unbind the page it is supposed to bound, and `Number('')` is 0,
+ * which would draw nothing at all.
+ */
+const per = computed(() => (PAGE_SIZES.includes(Number(filters.per)) ? Number(filters.per) : PAGE_SIZES[0]))
+
+/**
+ * Ownership as one control, backed by two filters.
+ *
+ * "any owner" is the absence of both, so the three states are mutually exclusive
+ * and the picker cannot draw a combination the filter does not have. `?unassigned=1`
+ * is a documented deep link (T-0227) and reads here as "unowned only" -- which is
+ * the state the board used to render as a blank owner cell nobody could name.
+ *
+ * It has to be a *select* and not a checkbox: a checkbox whose model is derived
+ * discards the click on the next render, so it would flip back under the reader's
+ * cursor. The owner options are the same three the old select drew, plus the one
+ * that answers "nobody has taken this".
+ */
+const OWNER_ANY = '__any__'
+const OWNER_UNOWNED = '__unowned__'
+const ownerScope = computed({
+  get() {
+    // A named owner is shown as itself: answering "has an owner" to a picker that
+    // says `codex` would hide which one the board is filtered to.
+    if (filters.owner) return filters.owner
+    return filters.unassigned ? OWNER_UNOWNED : OWNER_ANY
+  },
+  set(scope) {
+    filters.unassigned = scope === OWNER_UNOWNED
+    filters.owner = scope === OWNER_UNOWNED || scope === OWNER_ANY ? '' : scope
+  },
+})
+
+/** Zero-based element of the URL, because `el-pagination` is the pager and that
+ *  is its own `current-page` contract: one authority for the number. */
+const page = ref(0)
+
+/** What the filters select, before the page bound: the pager's total. */
+const matched = computed(() => board.tasks.filter(visible).length)
+
 const cols = computed(() => {
   const next = {}
-  for (const status of board.statuses) next[status] = (board.byStatus[status] || []).filter(visible)
+  let seen = 0
+  for (const status of board.statuses) {
+    const all = (board.byStatus[status] || []).filter(visible)
+    const from = Math.max(0, page.value * per.value - seen)
+    next[status] = all.slice(from, from + per.value)
+    seen += all.length
+  }
   return next
+})
+
+/**
+ * A filter change starts the reader on the first page of the new result.
+ *
+ * `per` is deliberately not among them: the reader changed the *size* of the
+ * window, not the question, and the clamp below keeps them on the same page of the
+ * same list. Without the clamp a page past the end draws no cards at all, which a
+ * reader cannot tell from "there are none".
+ */
+watch(() => [filters.q, filters.owner, filters.milestone, filters.tag, filters.priority,
+             filters.onlyLate, filters.unassigned], () => { page.value = 0 })
+watch([matched, per], () => {
+  const last = Math.max(0, Math.ceil(matched.value / per.value) - 1)
+  if (page.value > last) page.value = last
 })
 
 /**
@@ -113,21 +233,44 @@ async function onMoved(evt, status) {
 }
 
 /**
- * Copy the claim command, exactly as the card shows it.
+ * Take the work item, from the card, when this dashboard is allowed to act.
  *
- * The board does not claim the item: it hands the reader the one command that
- * does, which is the same discipline the refused drag above keeps. The clipboard
- * is a convenience, so a refusal to write it is swallowed -- the string is on the
- * card either way, and the message is the same whether or not the copy landed.
+ * T-0227's acceptance is the command, and the same one the card copies when the
+ * page cannot write -- so the string on the control is the string that ran, and a
+ * `claim` the tool refuses (the channel membership check in `bin/aim`) comes back
+ * verbatim instead of being softened into "could not". A claim is an append, not
+ * a copy, so unlike the clipboard above a refusal is *not* swallowed here.
+ *
+ * The board is re-read after it lands, because the card that just stopped being
+ * unowned is the evidence the claim happened.
  */
-async function copyClaim(event, task) {
+async function applyClaim(task) {
   const command = claimCommand(task)
-  event?.currentTarget?.blur?.()
-  await navigator.clipboard?.writeText(command).catch(() => {})
-  ElMessage({ message: `copied: ${command}`, duration: 2000, customClass: 'aim-mono' })
+  if (!command || claimBusy.value) return
+  claimBusy.value = task.id
+  const response = await api.command(command.split(' '))
+  const said = (response.stdout || response.stderr || '').trim()
+  if (response.rc === 0) {
+    ElMessage({ message: said || `claimed ${task.id}`, duration: 2500, customClass: 'aim-mono' })
+    await board.load()
+  } else {
+    ElMessage({ message: `REFUSED: ${said || `aim exited ${response.rc}`}`, type: 'error', duration: 6000 })
+  }
+  claimBusy.value = ''
 }
 
-const shipped = computed(() => Object.values(cols.value).flat().length)
+/**
+ * Drop one tag from the array, without `el-select`'s own clear.
+ *
+ * The array is what the URL repeats, and the picker draws two of them as one chip
+ * plus `+ 1`, so the second tag has no control of its own: without this the reader
+ * can only reset *every* tag, which is the wrong answer when they picked one too
+ * many. It is the same `filters.tag` the URL write loop watches, so the removal
+ * round-trips like any other change.
+ */
+function removeTag(tag) {
+  filters.tag = filters.tag.filter((item) => item !== tag)
+}
 
 /** Resolved against the board at click time, so the drawer shows the current
  *  state of the task rather than the copy this column was rendered from. */
@@ -141,10 +284,16 @@ function openTask(task) {
     <el-input v-model="filters.q" size="small" placeholder="search tasks" clearable data-filter="q">
       <template #prefix><el-icon><Search /></el-icon></template>
     </el-input>
-    <el-select v-model="filters.owner" size="small" placeholder="any owner" clearable data-filter="owner">
+    <!-- T-0227: the unowned half of ownership is reachable from the UI, not only
+         from a pasted `?unassigned=1`. -->
+    <el-select v-model="ownerScope" size="small" placeholder="any owner" data-filter="owner"
+               style="width:210px">
+      <el-option :value="OWNER_ANY" label="any owner" />
+      <el-option :value="OWNER_UNOWNED" label="unassigned only" data-filter="unassigned" />
       <el-option v-for="o in board.owners" :key="o" :value="o" :label="o" />
     </el-select>
-    <el-select v-model="filters.milestone" size="small" placeholder="any milestone" clearable data-filter="milestone">
+    <el-select v-model="filters.milestone" size="small" placeholder="any milestone" clearable data-filter="milestone"
+               style="width:186px">
       <el-option v-for="(m, id) in board.milestones" :key="id" :value="id" :label="`${id} ${m.name || ''}`" />
     </el-select>
     <el-select v-model="filters.tag" size="small" placeholder="any tag" multiple collapse-tags clearable data-filter="tag">
@@ -154,13 +303,28 @@ function openTask(task) {
       <el-option v-for="priority in board.priorities" :key="priority" :value="priority" :label="priority" />
     </el-select>
     <el-checkbox v-model="filters.onlyLate" size="small">overdue only</el-checkbox>
-    <el-checkbox v-model="filters.unassigned" size="small" data-filter="unassigned">unassigned only</el-checkbox>
-    <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
-    <span class="aim-filter-count">{{ shipped }} of {{ board.tasks.length }}</span>
-    <el-checkbox v-model="compact" size="small">compact</el-checkbox>
+    <el-button v-if="asked" size="small" text @click="clear()">clear</el-button>
+    <span class="aim-filter-count">{{ matched }} of {{ board.tasks.length }}</span>
+    <!-- T-0161: the bound is a filter like the rest, so a link carries the page
+         size with the query it was taken under. -->
+    <el-select v-model="filters.per" size="small" placeholder="per page" data-filter="per"
+               style="width:118px">
+      <el-option v-for="size in PAGE_SIZES" :key="size" :value="String(size)" :label="`${size} / page`" />
+    </el-select>
+    <el-checkbox v-model="compact" size="small">hide acceptance</el-checkbox>
     <span class="aim-filter-count" style="margin-left:auto">
       {{ board.withheld ? `${board.withheld} withheld · ` : '' }}drag shows the command, it does not write
     </span>
+  </div>
+
+  <!-- T-0166: the selected tags as chips, each removable on its own. The picker
+       collapses two tags into one chip and `+ 1`, so the second tag would have no
+       control anywhere. -->
+  <div v-if="filters.tag.length" class="aim-tagrow">
+    <span class="aim-filter-count">tags (all of):</span>
+    <el-tag v-for="tag in filters.tag" :key="tag" size="small" closable type="info" effect="plain"
+            :data-tag="tag" title="Remove this tag from the filter"
+            @close="removeTag(tag)">{{ tag }}</el-tag>
   </div>
 
   <div class="aim-board">
@@ -177,7 +341,9 @@ function openTask(task) {
                  @keydown.enter.prevent="openTask(t)"
                  @keydown.space.prevent="openTask(t)">
           <div style="display:flex;align-items:baseline;gap:8px">
-            <span class="aim-id">{{ t.id }}</span>
+            <!-- T-0227: an id that is dead text is the failure TaskLink exists to
+                 stop, and the card's own header is where the reader asks for it. -->
+            <TaskLink :id="t.id" class="aim-id" />
             <span style="flex:1" />
             <el-button size="small" text @click.stop="openTask(t)">inspect</el-button>
             <span v-if="t.estimate" class="aim-id">{{ t.estimate }}d</span>
@@ -189,17 +355,33 @@ function openTask(task) {
           <div v-if="unowned(t)" class="aim-unowned">
             <el-tag size="small" type="warning" effect="plain" data-unassigned
                     title="No owner on the record: nobody has taken this work item.">unassigned</el-tag>
+            <!-- The same two halves the work-items row draws, and the same choice
+                 about what the other seat is shown: the mark and a reason, never
+                 the command. `aim task claim --as <writer>` names the seat the
+                 server writes as, so handing it to a viewer in a different seat
+                 is handing over a command that fails; and rendering it dimmed
+                 rather than omitted would still put `data-claim-command` on the
+                 page, which `web/tests/unassigned.spec.js` reads as a control. -->
             <el-button v-if="claimable(t)" size="small" text type="primary" class="aim-claim"
-                       :aria-label="`Copy the command that takes ${t.id}: ${claimCommand(t)}`"
+                       :loading="claimBusy === t.id"
+                       :aria-label="`Claim ${t.id} as ${board.writer}: ${claimCommand(t)}`"
                        :data-claim-command="claimCommand(t)" :data-claim-id="t.id"
                        :data-claim-as="board.writer" :data-claim-channel="t.channel || t.context_id || ''"
-                       @click.stop="copyClaim($event, t)">{{ claimCommand(t) }}</el-button>
+                       :title="`Takes it for ${board.writer} — runs ${claimCommand(t)}`"
+                       @click.stop="applyClaim(t)">{{ claimCommand(t) }}</el-button>
+            <span v-else class="aim-dim" style="font-size:11px"
+                  title="A claim writes as one seat, and this board does not write as this viewer. A read can borrow a view; a write cannot borrow a name.">
+              nobody on this seat can take it
+            </span>
           </div>
-          <template v-if="!compact">
-            <div v-if="t.accept" class="aim-accept">
-              <el-icon style="margin-top:2px"><Aim /></el-icon><span>{{ t.accept }}</span>
-            </div>
-          </template>
+          <!-- T-0161 clause 3: the acceptance is clamped rather than dropped, so
+               the reader can still see *what* the card is and opens the drawer,
+               which holds the whole item, for the rest of it. `compact` is now
+               the reader's own "and not even that", one step inside the bound. -->
+          <div v-if="t.accept" class="aim-accept aim-accept-clamp"
+               :class="{ 'aim-accept-collapsed': compact }">
+            <el-icon style="margin-top:2px"><Aim /></el-icon><span>{{ t.accept }}</span>
+          </div>
           <div class="aim-meta">
             <OwnerAvatar :id="t.owner" :size="18" />
             <span v-if="t.due" :class="{ 'aim-late': isOverdue(t.due, t.status, board.terminal) }">
@@ -224,4 +406,33 @@ function openTask(task) {
       </VueDraggable>
     </section>
   </div>
+
+  <!-- The bound, stated: which page of the filtered cards is drawn, over the total
+       the filters select. Without it a bound is a page that silently dropped work. -->
+  <el-pagination v-model:current-page="page" :page-size="per" :total="matched"
+                 :pager-count="7" layout="total, prev, pager, next, jumper"
+                 background class="aim-pager" />
 </template>
+
+<style>
+/* Scoped styles would not reach these: the classes are written on the card's own
+   children and `style.css` is another task's file this round. The clamp is
+   `-webkit-line-clamp` with an explicit `overflow: hidden`, because the line
+   clamp on its own leaves the third line's leading visible on some engines.
+   Three lines is the bound T-0161 clause 3 asks for: enough of an acceptance to
+   recognize the card, short enough that the column stays a column of cards. */
+.aim-accept.aim-accept-clamp span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+/* The second step of the same bound: the reader asked for the title alone. */
+.aim-accept.aim-accept-collapsed { display: none; }
+.aim-pager { margin-top: 14px; justify-content: flex-end; }
+/* Sits between the filter bar and the board, so a tag the picker collapsed into
+   `+ 1` still has a control of its own. */
+.aim-tagrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+              margin: -4px 0 10px; font-size: 11px; color: var(--aim-dim); }
+</style>

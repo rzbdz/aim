@@ -107,6 +107,43 @@ TASK_EVENTS = ["created", "moved", "assigned", "published", "linked", "commented
 DIVERGENCE_PHASES = ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
 
 
+def _next_opener(capability, after):
+    """The first phase *after* `after`, in PHASES order, whose rule is True.
+
+    `after` is exclusive because a phase trivially "opens" whatever it already
+    has: the question `advance` has to answer is what a *later* transition
+    would open, which is the question the leader asked when they advanced to
+    COMMIT expecting cross-examination and nothing happened (T-0213).
+    """
+    for phase in PHASES[PHASES.index(after) + 1:]:
+        if PHASE_RULES[phase][capability]:
+            return phase
+    return ""
+
+
+# Derived from `PHASE_RULES` rather than written a second time. The sentence
+# `advance` prints about which phase next opens a capability has to be the same
+# fact the gate enforces, or the tool has two opinions about one rule and the
+# printed one is the one nobody gates on -- which is the drift this deriver
+# exists to make impossible.
+PHASE_OPENERS = {phase: {cap: _next_opener(cap, phase) for cap in PHASE_RULES[phase]}
+                 for phase in PHASES}
+
+# The fields `aim task edit` may correct on an existing card, and the reason the
+# list is short and closed. `status` is deliberately absent -- `move` is the verb
+# with the state machine and the evidence rules behind it -- and so is anything
+# a different verb already owns (`owner`: `assign`; `blocked_by`: `link`;
+# `visibility`: `publish`). What is left is the metadata a planner gets wrong.
+#
+# The list was measured from the one case that needs it: T-0235's own card sits
+# in milestone M2, whose accept line is "N agents in one room, ordered, no lost
+# message under 12 concurrent writers", while T-0235 is a `bin/aim` verb about
+# milestones -- so `reports.milestones.M2.total` counts a card that cannot move
+# M2's own sentence, and there was no verb that could correct it.
+TASK_EDIT_FIELDS = ("milestone", "priority", "start", "due", "estimate_pts",
+                    "tags", "title", "accept")
+
+
 
 # --------------------------------------------------------------------------
 # primitives
@@ -230,6 +267,13 @@ def _record_refusal(msg, cls="unrecorded"):
                 "ts": now_iso(),
                 "event": "refusal",
                 "agent": _CTX.get("actor") or "",
+                # Which session was refused (T-0242). The ledger is read as the
+                # answer to "did anyone try", and `agent` alone answers it for
+                # the wrong unit: when two live sessions hold one id, the record
+                # has to name the one that was stopped. One insertion here
+                # covers every refusal, because every refusal passes through
+                # this function.
+                "session": session_of(),
                 "action": _CTX.get("action") or "",
                 "phase": manifest.get("barrier", {}).get("phase", ""),
                 "class": cls,
@@ -703,6 +747,37 @@ def cmd_channel_remove(args):
           f"participant(s) now, and the change is in the ledger")
     if dropped:
         print(f"  its workspace declaration ({dropped}) was dropped with it")
+
+
+# The moment this process started, captured at import. Half of a session token,
+# and the half that survives pid recycling (T-0242).
+_PROCESS_STARTED = now_iso()
+
+
+def session_of():
+    """The *session* behind the current call, as a token stable for its lifetime.
+
+    T-0242: an agent id is not a session. Measured -- the seal for
+    `claude-session1` records `pts/7 claude pid 1697672` while a different
+    session in /root/tmp held the same id, and the outbox delivered to both --
+    so a row carrying only `actor` cannot answer "which of the two moved this
+    card", which is the first question a ledger exists to settle.
+
+    Derived from the process rather than declared, because a declared session is
+    exactly as forgeable as the id it is meant to disambiguate: whatever an
+    agent can type in `--session` it can type as another agent's. The pid is the
+    fact the caller cannot invent, and the start time separates a recycled pid
+    from the session that had it first.
+    """
+    try:
+        tty = os.ttyname(0)
+    except OSError:
+        # No controlling tty: piped, cron, or a harness that gave the child a
+        # pipe. Named rather than left empty, because an empty field reads as
+        # "this build does not record sessions" and the token is the evidence.
+        tty = "notty"
+    host = os.environ.get("HOSTNAME") or "host"
+    return f"{host[:24]}:{tty}:pid{os.getpid()}@{_PROCESS_STARTED}"
 
 
 def resolve_actor(args, manifest=None):
@@ -1312,11 +1387,55 @@ def cmd_advance(args):
     if to == "CROSS_EXAMINE":
         m["barrier"]["round"] += 1
 
+    # The rule diff, computed from the two entries of the same table the gate
+    # consults. T-0213: the leader advanced to COMMIT expecting cross-examination
+    # to open -- only CROSS_EXAMINE sets `read_others`, so the advance moved a
+    # label and changed nothing, and the only thing printed was
+    # `ch: COMMIT -> ... (round 0, by human)`, which reads as progress. So the
+    # three rules are printed with their before and after values, the ones that
+    # moved are named, and an advance that moved none says so in words rather
+    # than by printing an unchanged list and leaving the reader to diff it.
+    #
+    # Three clauses, and each is a separate claim:
+    #   * all three names with their new values, so a reader who never saw the
+    #     old table can still read the current rule set off this line;
+    #   * a transition whose rules did not move is reported as *not progress*,
+    #     with the phase that next opens the thing the caller was waiting for;
+    #   * the same sentence goes on the ledger row, so a reader of the record
+    #     (a barrier audit that never runs the command) gets it too.
+    rule_changes = [(name, PHASE_RULES[cur][name], PHASE_RULES[to][name])
+                    for name in PHASE_RULES[to]
+                    if PHASE_RULES[cur][name] != PHASE_RULES[to][name]]
+    rules_now = " ".join(f"{n}={'open' if v else 'closed'}"
+                         for n, v in PHASE_RULES[to].items())
+    # The capability that stays closed and is reachable again later from here.
+    # `read_others` is the one the card names. A divergence phase has none, so
+    # the sentence is simply omitted rather than printed empty.
+    next_opener = PHASE_OPENERS[to].get("read_others", "")
+    if rule_changes:
+        moved = "; ".join(f"{n}: {'closed' if was else 'open'} -> "
+                          f"{'open' if now else 'closed'}" for n, was, now in rule_changes)
+        verdict = f"rules       {rules_now}  — this advance changed {len(rule_changes)}: {moved}"
+        if not PHASE_RULES[to]["read_others"] and next_opener:
+            verdict += f" (reading stays closed; {next_opener} is the next phase that opens it)"
+    else:
+        verdict = (f"rules       {rules_now}  — no rule changed; this advance moved a "
+                   f"label only, not an access rule")
+        if not PHASE_RULES[to]["read_others"] and next_opener:
+            verdict += f" (reading is still closed; {next_opener} is the next phase that opens it)"
+
     m["barrier"]["phase"] = to
     m["barrier"]["history"].append({
         "phase": to, "at": now_iso(), "by": who,
         "round": m["barrier"]["round"], "note": args.note or "",
         "forced": bool(args.force),
+        # The rule set the phase was entered with, snapshotted at the transition.
+        # `PHASE_RULES` is a table in this file, so a later edit to it would
+        # otherwise silently re-describe every phase already on the record --
+        # and the one question the record has to be able to answer is what the
+        # rules actually were when this advance was taken.
+        "rules": dict(PHASE_RULES[to]),
+        "rules_changed": [n for n, _, _ in rule_changes],
     })
     save_manifest(args.channel, m)
     with Lock(channel_dir(args.channel) / ".ledger.lock"):
@@ -1324,8 +1443,19 @@ def cmd_advance(args):
             "ts": now_iso(), "event": "phase", "agent": who,
             "from_phase": cur, "to_phase": to, "round": m["barrier"]["round"],
             "forced": bool(args.force),
+            "rules_from": dict(PHASE_RULES[cur]), "rules_to": dict(PHASE_RULES[to]),
+            "rules_changed": [n for n, _, _ in rule_changes],
+            "noop": not rule_changes,
+            "verdict": verdict,
         })
     print(f"{args.channel}: {cur} -> {to} (round {m['barrier']['round']}, by {who})")
+    print(verdict)
+    if not rule_changes:
+        # A second line, because the first one is the sentence the barrier pane
+        # and the card's acceptance both quote, and it is long enough that a
+        # reader skimming for "did anything happen" will miss it. This says it
+        # again in the shortest form that is still true.
+        print("            nothing was unlocked by this advance.")
 
 
 def cmd_request_advance(args):
@@ -1627,6 +1757,10 @@ def _append_task_event(ch, ev, seed=None):
     writers take.
     """
     p = tasks_path(ch)
+    # Stamped here rather than in each verb (T-0242): this is the one function
+    # every task event is appended through, so a new verb cannot forget it, and
+    # `setdefault` leaves a caller that already knows its session in charge.
+    ev.setdefault("session", session_of())
     with Lock(channel_dir(ch) / ".lock"):
         if seed is not None and ev.get("task") == seed:
             existing = _next_task_id(ch)
@@ -1655,6 +1789,11 @@ def _append_task_event_guarded(ch, ev, guard):
     second claimant is refused by the state the first one left behind.
     """
     p = tasks_path(ch)
+    # Same stamp as `_append_task_event`: `claim` is the event where two live
+    # sessions of one agent are most likely to be mistaken for each other --
+    # both read "nobody owns this yet" -- so the row that records the winner has
+    # to name which session won (T-0242).
+    ev.setdefault("session", session_of())
     with Lock(channel_dir(ch) / ".lock"):
         ok, why = guard(fold_tasks(ch).get(ev.get("task")))
         if not ok:
@@ -1820,6 +1959,24 @@ def _load_task_or_die(ch, tid, who, kind):
 
 
 def cmd_task_move(args):
+    """Move a card along the state machine, with the two actor rules the board needs.
+
+    T-0243 measured the absence: `doing -> review` accepted any viewer, and
+    `review -> done` accepted the card's own author. Both are the same missing
+    clause -- a move has an *actor rule* and this verb had none -- and each is
+    the shape design/05 §4 says `review` exists for: "the only status in which
+    the reviewer role is visible on the board rather than in prose". A review
+    three that its own author can grant is not a review, and a card a bystander
+    can submit is not submitted by anyone whose submission means something.
+
+    Which actor the rules are about is read off the *card*, not off the channel:
+    `owner` (T-0226: empty means unowned, and an unowned card has nobody to
+    reserve either half for). The leader is exempt for the same reason the
+    leader is exempt from the read rule -- the leader is the audience, and
+    `aim task move` is the one verb that can unstick a card whose owner has
+    gone; without the exemption the escape would be `--force`, which records a
+    breach.
+    """
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
     if t["status"] == "dropped":
@@ -1831,15 +1988,59 @@ def cmd_task_move(args):
             f"(allowed: {', '.join(TASK_FLOW.get(t['status'], [])) or 'nothing — terminal'})",
             cls="form",
         )
+    # ---- the actor rules (T-0243) ----------------------------------------
+    # Applied before the blocker rule below, because "you may not make this
+    # move at all" is a fact about the caller and the blocker is a fact about
+    # the card; a refusal that named the blocker first would send the caller to
+    # `--force` for a move they were never entitled to make.
+    owner = t.get("owner") or ""
+    actor_exempt = kind == "human"
+    overridden = []            # rules `--force` was spent on, for the record
+    if args.to == "review" and owner and who != owner and not actor_exempt:
+        # The submission. Its whole value is that the author asserts the work is
+        # ready to be looked at, so it is the author's to make.
+        if not args.force:
+            die(
+                f"REFUSED: {args.id} is owned by '{owner}' and you are not its owner.\n"
+                f"Sending a card to review is its owner's assertion that the work is "
+                f"ready to be looked at; a bystander moving it says no such thing. "
+                f"This is `aim task claim`/`aim task assign` territory, not `move`.\n"
+                f"(--force records the override, with the owner it overrode.)",
+                cls="barrier",
+            )
+        overridden.append(f"owner:{owner}")
+    if args.to == "done" and who == owner and not actor_exempt:
+        # The approval. `owner` is read off the card and not off the `from`
+        # event, so a card whose owner was released and re-claimed cannot be
+        # self-approved by the session that held it before -- the rule follows
+        # the card, which is the same discipline the fold uses.
+        if not args.force:
+            die(
+                f"REFUSED: {args.id} is owned by '{who}', so '{who}' cannot approve it.\n"
+                "`review -> done` is the reviewer's act; an author who closes their own "
+                "review has replaced the reviewer with themselves. Ask a peer, or the "
+                f"leader, to approve it -- or state the reason with --force, which is "
+                f"recorded as an override.",
+                cls="barrier",
+            )
+        overridden.append(f"self-approval:{who}")
     if args.to == "done":
         open_blockers = [b for b in t["blocked_by"] if board.get(b, {}).get("status") != "done"]
         if open_blockers and not args.force:
+            # T-0221's third clause. This refusal used to carry a second sentence:
+            # `"Done" is the one status that has to be decided by something other
+            # than the person asserting it.` There is no such check in this verb
+            # and there never was -- the real reason is the open blocker named
+            # above -- and a refusal that describes a rule the tool does not have
+            # is worse than a terse one, because it sends the reader looking for
+            # the check instead of at the blocker.
             die(
                 f"REFUSED: {args.id} is blocked by {', '.join(open_blockers)}, which are not done.\n"
-                "\"Done\" is the one status that has to be decided by something other than "
-                "the person asserting it.",
+                "A dependency that is open is an unmet edge: finish the blocker, drop the "
+                "edge, or state the reason with --force, and the override is recorded.",
                 cls="form",
             )
+        overridden += [f"blocker:{b}" for b in open_blockers]
     if args.to in ("blocked", "dropped") and not (args.reason or "").strip():
         die(f"REFUSED: moving to '{args.to}' requires --reason. "
             f"A blocker without a stated cause is a stall nobody can clear.", cls="form")
@@ -1848,9 +2049,30 @@ def cmd_task_move(args):
         "actor": who, "channel": args.channel, "context_id": args.channel,
         "task": args.id,
         "from": t["status"], "to": args.to, "reason": args.reason or "",
+        # T-0243: "submitted by its author" has to be answerable from the event
+        # alone, so every move carries the owner as it stood *before* the move.
+        # Without it a reader holding two `moved` rows and no fold cannot tell a
+        # submission from an approval -- and the fold is the thing a
+        # disagreement about the card's history would be argued from.
+        "owner": owner,
+        "actor_kind": kind,
     }
+    # T-0221's second clause: the one flag that overrides a rule is the one act
+    # the store did not record, so a forced move and an ordinary move were
+    # byte-identical rows apart from their hashes. `forced` is present only when
+    # `--force` was actually spent on something -- a `--force` on a move that no
+    # rule would have stopped is not an override, and marking it as one would
+    # make the flag mean "the caller was nervous".
+    if args.force and overridden:
+        ev["forced"] = True
+        ev["overrode"] = overridden
+    elif args.force:
+        ev["force_unused"] = True
     _append_task_event(args.channel, ev)
     print(f"{args.id}: {t['status']} -> {args.to}")
+    if ev.get("forced"):
+        print(f"  FORCED: overrode {', '.join(overridden)} — the reason and the "
+              f"overridden rule are on the event, not only in this line")
 
 
 def cmd_task_assign(args):
@@ -1901,6 +2123,112 @@ def cmd_task_assign(args):
     print(f"{args.id}: owner {t['owner'] or '(unowned)'} -> {owner}")
 
 
+def cmd_task_edit(args):
+    """Correct the metadata on an existing card. T-0235.
+
+    A card's `milestone` was written once, by `task new`, and no verb could ever
+    change it -- so a card filed under the wrong milestone was there for good,
+    and the milestone's denominator absorbed unrelated work. The case that made
+    this concrete is T-0235's own card: it sits in M2, whose accept line is
+    "N agents in one room, ordered, no lost message under 12 concurrent
+    writers", while the card is about a `bin/aim` verb. `reports.milestones`
+    (`aimboard/fold.py:293`) counts every card whose `milestone` equals the id,
+    so M2's `total` was one card larger than M2's sentence has anything to do
+    with, and the only remedy was to hand-edit a hash-chained store.
+
+    Scope is the closed list in `TASK_EDIT_FIELDS`, and the omissions are the
+    point: `status` belongs to `move` (which owns the state machine and the
+    evidence rules), `owner` to `assign`, `blocked_by` to `link`, `visibility`
+    to `publish`. A general "edit anything" verb would be a second path around
+    every gate those verbs enforce, which is the failure this fabric has
+    measured often enough to have a name for it.
+
+    An edit that changes nothing appends nothing. A row that records no change
+    is not evidence of anything, and the store's value is that every record in
+    it means something happened.
+    """
+    who, kind = resolve_actor(args)
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if t["status"] == "dropped":
+        die(f"REFUSED: {args.id} is dropped; a dropped task is a record, not a workspace",
+            cls="form")
+    # Only the card's owner, its creator, or the leader. Not the read rule --
+    # `_load_task_or_die` has already let this caller see the card -- but a write
+    # rule: a milestone is an appointment about who owes what by when, and a peer
+    # that can re-file another agent's card can move work into a milestone it does
+    # not own the acceptance of.
+    if kind != "human" and who not in (t.get("owner"), t.get("created_by")):
+        if not args.force:
+            die(
+                f"REFUSED: {args.id} is owned by '{t.get('owner') or '(unowned)'}' and was "
+                f"created by '{t.get('created_by') or '?'}'; '{who}' is neither.\n"
+                f"A milestone is an appointment about who owes what by when, so re-filing "
+                f"another agent's card is a change to their commitment, not a correction "
+                f"of it. `aim task claim` or `aim task assign` first, or ask the leader.",
+                cls="barrier",
+            )
+        # T-0235, reported as measured (T-0241): the verb shipped with no
+        # override, which made it unusable for the case that asked for it -- the
+        # card whose owner had gone. The override is the same `--force` every
+        # other barrier refusal here takes, and it is recorded with the owner
+        # whose appointment is being overridden, because an unrecorded override
+        # of somebody's commitment is the act this record cannot afford to lose.
+        overrode_owner = t.get("owner") or ""
+    else:
+        overrode_owner = ""
+    changes = []
+    for field in TASK_EDIT_FIELDS:
+        new = getattr(args, field, None)
+        if new is None:
+            continue
+        if field == "tags":
+            new = list(new)
+        elif field == "estimate_pts":
+            new = int(new)
+        if t.get(field) == new:
+            continue
+        changes.append((field, t.get(field, ""), new))
+    if not changes:
+        # Not a refusal: the caller asked for a state that is already true, and
+        # `channel add` already set the precedent that the no-op is reported
+        # rather than performed. What must not happen is an event that records a
+        # change which did not occur.
+        print(f"{args.id}: nothing to change — "
+              + ", ".join(f"{f}={getattr(args, f)}" for f in TASK_EDIT_FIELDS
+                          if getattr(args, f, None) is not None))
+        return
+    ev = {
+        "ts": now_iso(), "event": "edited", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
+        "task": args.id,
+        # Every change carries its before and after. A `set` alone would leave a
+        # reader unable to answer "was this card always in M2", which is the
+        # question that made the verb necessary.
+        "changes": [{"field": f, "from": old, "to": new} for f, old, new in changes],
+        "reason": args.reason or "",
+    }
+    if overrode_owner:
+        # Only when `--force` was actually spent on the owner rule: a `--force`
+        # on an edit the caller was entitled to make is not an override, and
+        # marking it as one would make the flag mean "the caller was nervous"
+        # (the reading `task move` uses for the same field).
+        ev["forced"] = True
+        ev["overrode"] = [f"owner:{overrode_owner}"]
+    _append_task_event(args.channel, ev)
+    print(f"{args.id}: " + ", ".join(
+        f"{f} {old or '(unset)'} -> {new or '(unset)'}" for f, old, new in changes))
+    if any(f == "milestone" for f, _, _ in changes):
+        # The denominator this verb exists to correct, stated at the moment it
+        # moves, so the reader does not have to go and compute it. This is the
+        # measurement T-0235 was written from: `reports.milestones.<M>.total` is
+        # a count of cards whose `milestone` equals M, so exactly one card moves
+        # between two denominators here.
+        was = next(old for f, old, _ in changes if f == "milestone")
+        now = next(new for f, _, new in changes if f == "milestone")
+        print(f"  milestones: {args.id} moves from {was or '(none)'} to {now or '(none)'} "
+              f"— one card leaves one denominator and joins another")
+
+
 def cmd_task_publish(args):
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
@@ -1939,19 +2267,93 @@ def cmd_task_publish(args):
           f"{args.channel}, and the act is on the record")
 
 
+def _dependency_reaches(board, start, target):
+    """The chain of ids from `start` to `target` through `blocked_by`, or None.
+
+    A path, not a boolean, because the refusal has to name both ends *and* the
+    route between them: T-0221 measured two cards that each refused to close
+    while no row on the board said they blocked each other, so "these two block
+    each other" is the sentence the caller needs, and it is only derivable while
+    the cycle is being refused.
+
+    Walked over the fold's live `blocked_by` lists, so it sees the same graph
+    the `done` gate reads. The visited set is what terminates it on a graph that
+    already contains a cycle -- one written by hand, or by a build older than
+    this check -- because a cycle check that itself hangs on a cycle is a tool
+    that cannot report the fault it exists to find.
+    """
+    stack = [(start, [start])]
+    seen = set()
+    while stack:
+        node, path = stack.pop()
+        if node == target:
+            return path
+        if node in seen:
+            continue
+        seen.add(node)
+        for dep in board.get(node, {}).get("blocked_by") or []:
+            stack.append((dep, path + [dep]))
+    return None
+
+
 def cmd_task_link(args):
+    """Record a dependency edge, and refuse one that would close a cycle.
+
+    T-0221: `link a --blocked-by b` was accepted when `b` was already blocked by
+    `a`, and the result was two cards that each refuse `done` while every row on
+    the board shows one blocker id -- so the deadlock was invisible and the only
+    escape was `--force`, whose use the store did not record. A cycle is not a
+    dependency with a strange shape; it is a statement that neither card can
+    ever be finished, which is why it is refused at the edge rather than
+    diagnosed at the `done` gate.
+    """
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
     if args.blocked_by not in board:
         die(f"REFUSED: no such task to depend on: {args.blocked_by}", cls="form")
     if args.blocked_by == args.id:
+        # The length-one cycle, kept as its own refusal because the message for
+        # a two-card cycle reads oddly for one card.
         die("REFUSED: a task cannot block itself", cls="form")
-    _append_task_event(args.channel, {
+    # Would the *dependency* already reach back to the card? `T-0001 blocked_by
+    # T-0002` closes a cycle exactly when T-0002 can already reach T-0001.
+    path = _dependency_reaches(board, args.blocked_by, args.id)
+    route = " -> ".join([args.id] + path) if path else ""
+    if path and not args.force:
+        die(
+            f"REFUSED: {args.id} blocked_by {args.blocked_by} would close a cycle "
+            f"({route}).\n"
+            f"Each card would block the other, so neither could ever reach done, and "
+            f"nothing on the board would say so: every row names one blocker. Record "
+            f"the real dependency, drop the edge that is wrong, or mean it: --force "
+            f"writes the edge *and* the cycle onto the event.",
+            cls="form",
+        )
+    ev = {
         "ts": now_iso(), "event": "linked", "actor": who, "channel": args.channel,
         "context_id": args.channel,
         "task": args.id, "blocked_by": args.blocked_by,
-    })
+        # The verdict travels with the event, so a reader of the store alone can
+        # tell an edge that was checked from one written by a build that did not
+        # check -- which is the whole difference between the defect and the fix.
+        # A third value rather than a boolean, so the rows already written keep
+        # the meaning they were written with.
+        "cycle_check": "forced" if path else "clean",
+    }
+    if path:
+        # T-0221's second clause, spent on the edge rather than on the move. The
+        # cycle is what makes both cards unclosable, and it is derivable only
+        # from a route no board row carries: each row names one blocker, so the
+        # deadlock is invisible unless the route is written down at the moment
+        # somebody asserts it. `_dependency_reaches` returns the path for
+        # exactly this, and this is where it is spent.
+        ev["forced"] = True
+        ev["cycle"] = route
+    _append_task_event(args.channel, ev)
     print(f"{args.id} blocked_by {args.blocked_by}")
+    if path:
+        print(f"  FORCED: this edge closes a cycle ({route}); neither card can now "
+              f"reach done, and the cycle is on the `linked` event, not only here")
 
 
 def cmd_task_comment(args):
@@ -2122,6 +2524,350 @@ def cmd_task_list(args):
         # lies about the size of the project.
         print(f"\n({withheld} more work item(s) exist in this channel and are not visible "
               f"to you in {phase})")
+
+
+# --------------------------------------------------------------------------
+# rooms: the write side `aimboard` has been reading a hand-written file for
+# --------------------------------------------------------------------------
+# design/06 §1 defines a room as `channels/<ch>/rooms/<room>.jsonl`, "same
+# chaining, same flock, no quota, never a barrier", and §2 says a room created
+# while the parent channel is in a divergence phase is a draft room whose
+# messages are readable "by their author and by the leader, and by nobody else",
+# opened early by `aim room publish` -- "deliberate, recorded, and visible on
+# the board as an event".
+#
+# Until now there was no writer at all. Measured by T-0219: `aim --help` had no
+# `room` verb, `rooms/` did not exist in any live channel, and the only way to
+# set a room's `visibility` field was to write the JSON by hand -- which is
+# neither recorded nor on the board. The gate in `aimboard/gate.py` then read
+# that hand-written string, so the deliberate act and the accident were the same
+# bytes on disk.
+#
+# The rule that replaces it is provenance, and it is the rule `task publish`
+# already follows (design/05 §1): a `visibility` value with no recorded event
+# behind it is inert. See `_room_published` for the reader half.
+def rooms_dir(ch):
+    return channel_dir(ch) / "rooms"
+
+
+def room_events(ch, rid):
+    """Every message in a room, in order. An absent room is an empty list."""
+    return read_jsonl(rooms_dir(ch) / f"{rid}.jsonl")
+
+
+def _load_room_or_die(ch, rid, who, kind):
+    """The room and its metadata, with the barrier applied to the *record*.
+
+    Reads the message log first and the metadata second, and derives authorship
+    from the messages rather than from a declared field. That is not a
+    preference: `aimboard/fabric.py:146` builds a room out of the log alone, so a
+    metadata `author` never reaches the gate, and a draft room the author cannot
+    read is the defect T-0219 measured (`visible_rooms` has no author
+    exemption while `visible_tasks` does). Deriving it from `agent` on the
+    messages is the same evidence the renderer has, so the two agree by
+    construction instead of by a second implementation of one rule.
+    """
+    m = load_manifest(ch)
+    if who not in m["participants"] and kind != "human":
+        die(f"'{who}' is not a participant in {ch}", cls="barrier")
+    msgs = room_events(ch, rid)
+    meta_path = rooms_dir(ch) / f"{rid}.json"
+    meta = read_json(meta_path, None)
+    if meta is None and not msgs:
+        die(f"no such room: {rid}", cls="form")
+    meta = meta or {"id": rid}
+    authors = {x.get("agent") for x in msgs if x.get("agent")}
+    if not authors:
+        authors = {meta.get(k) for k in ("author", "created_by", "owner")} - {None}
+    # One author is the room's author, for the same fail-closed reason
+    # `aimboard/gate.py:94` gives: the gate is room-level while authorship is
+    # per message, and a room with two attributed voices exempts neither rather
+    # than opening one author's text to the other.
+    author = next(iter(authors)) if len(authors) == 1 else ""
+    published = _room_published(ch, rid)
+    draft = not published
+    if draft and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
+        if who != author:
+            die(
+                f"REFUSED: room '{rid}' in {ch} is a draft, the channel is in "
+                f"{m['barrier']['phase']}, and you are not its author.\n"
+                f"A room is where two participants in a divergence phase would go to "
+                f"agree on what they think, which is the leak design/06 §2 exists to "
+                f"close. Read your own rooms, or ask the author to open it with "
+                f"`aim room publish --id {rid}`.",
+                cls="barrier",
+            )
+    return m, meta, msgs, published, author
+
+
+def _record_room_event(ch, rid, ev):
+    """Append a room event to the channel ledger, under the ledger lock.
+
+    The ledger and not a file beside the room, because design/06 §2 asks for a
+    publish that is "visible on the board as an event" and README §3 says the
+    ledger is the artifact a barrier audit reads without opening anything else.
+    It is also what makes the hand-written field inert: the publish fact lives
+    somewhere a hand cannot reach without forging a hash-chained row.
+    """
+    with Lock(channel_dir(ch) / ".ledger.lock"):
+        append_chained(channel_dir(ch) / "ledger.jsonl", ev)
+
+
+def _room_published(ch, rid):
+    """Was this room opened by a *recorded* act? The provenance rule.
+
+    Returns the ledger row that published it, or None. Two facts are needed and
+    neither alone is enough: the room's own `visibility: "published"` (what the
+    renderer reads, and what a hand-edit can forge) and a `room_published` row
+    naming this room (what only `aim room publish` writes).
+    """
+    for rec in read_jsonl(channel_dir(ch) / "ledger.jsonl"):
+        if rec.get("event") == "room_published" and rec.get("room") == rid:
+            return rec
+    return None
+
+
+def _room_cursor_advance(ch, rid, who, rec):
+    """Move this reader's cursor to the message they just wrote.
+
+    T-0219 clause 6: `aimboard/fabric.py:146` derives every room's `unread` from
+    `rooms/<room>.cursors.json` and nothing wrote that file, so T-0181's "land on
+    the first unread message" depended on a store with no writer. `say` is the
+    writer, and it advances the cursor to the message the session just appended
+    -- the only read position this fabric can honestly attest to. A cursor that
+    tracked what the transport *pushed* would need a second channel back from the
+    renderer, and a field claiming a session read a message it never received is
+    the well-formed-empty-file failure this project keeps finding.
+
+    Keyed by `last_hash` rather than an index, because that is the shape the
+    reader parses and because a hash identifies a message in a log two writers
+    appended to concurrently, where an ordinal identifies whatever is at position
+    n now.
+    """
+    def _bump(cursors):
+        cursors[who] = {"last_hash": rec["hash"], "at": rec["ts"]}
+        return cursors
+    update_json(rooms_dir(ch) / f"{rid}.cursors.json", _bump, {})
+
+
+def cmd_room_new(args):
+    """Create a named sub-log. Recorded, so it is on the board and in the ledger.
+
+    The room is born a *draft* during a divergence phase, which is the whole of
+    design/06 §2: "a room created while the parent channel is in a divergence
+    phase is a draft room". The event is written to the ledger rather than the
+    room directory because the room's existence is a fact about the channel, of
+    the same kind as a membership change -- and `aim verify` covers the ledger
+    already, so the new object inherits tamper-evidence instead of needing a
+    mechanism of its own.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in m["participants"] and kind != "human":
+        die(
+            f"REFUSED: '{who}' is not a participant in '{args.channel}' and cannot "
+            "open a room in it.\n"
+            "A room inherits the channel's participants (design/06 §5.1: a room with "
+            "its own membership is a channel with a worse barrier), so opening one is "
+            "an act *in* the channel.",
+            cls="barrier",
+        )
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", args.id):
+        # The id becomes a path component, so this is a form rule and a safety
+        # rule at once: `../../etc/passwd` is not a room name.
+        die(f"REFUSED: '{args.id}' is not a usable room id (letters, digits, . _ -; "
+            f"64 chars max)", cls="form")
+    if (rooms_dir(args.channel) / f"{args.id}.jsonl").exists() or \
+            (rooms_dir(args.channel) / f"{args.id}.json").exists():
+        die(f"REFUSED: room '{args.id}' already exists in {args.channel}", cls="form")
+    phase = m["barrier"]["phase"]
+    ts = now_iso()
+    write_json(rooms_dir(args.channel) / f"{args.id}.json", {
+        "id": args.id, "topic": args.topic, "author": who, "created_by": who,
+        "created_at": ts, "channel": args.channel,
+        "phase_at_creation": phase,
+        # Written, and deliberately not load-bearing: the gate asks whether a
+        # *recorded* publish exists, so this field states what the room is and
+        # never what it may be read as. A hand-edit that flips it changes
+        # nothing, which is the difference between this rule and the one
+        # T-0219 measured.
+        "visibility": "draft",
+    })
+    (rooms_dir(args.channel) / f"{args.id}.jsonl").touch()
+    _record_room_event(args.channel, args.id, {
+        "ts": ts, "event": "room_created", "agent": who, "action": "room new",
+        "phase": phase, "class": "barrier", "room": args.id,
+        "topic": args.topic,
+        "draft": phase in DIVERGENCE_PHASES,
+    })
+    print(f"room '{args.id}' created in {args.channel} ({phase}) — "
+          + ("a draft room: readable by you and the leader until "
+             f"`aim room publish --as {who} --channel {args.channel} --id {args.id}`"
+             if phase in DIVERGENCE_PHASES else "readable by the channel's participants"))
+
+
+def cmd_room_say(args):
+    """Append to a room, with the same flock and hash chain as a channel log.
+
+    design/06 §1: "same chaining, same flock, no quota, never a barrier". So the
+    message is appended under the channel's `.lock` with `append_chained` -- the
+    one writer every other record in this fabric uses -- which is what makes
+    `aim verify --channel` cover it. A room log written by a second mechanism
+    would be a second chain with a second set of rules, and the whole point of
+    putting rooms in `channels/<ch>/rooms/` was that they inherit the first one.
+
+    Mentions are computed here rather than stored decoratively: `@<agent-id>` in
+    the body produces the `mentions` list, which turns design/06 §1's "mentions
+    instead" from a field three readers consulted and no writer produced into a
+    fact about the message.
+    """
+    who, kind = resolve_actor(args)
+    body = free_text_body(args)
+    if not body.strip():
+        die("need --body or --body-file", cls="form")
+    _m, _meta, _msgs, _published, _author = _load_room_or_die(
+        args.channel, args.id, who, kind)
+    mentioned = sorted({x for x in re.findall(r"@([A-Za-z0-9._-]+)", body)
+                        if agent_kind(x) is not None})
+    rec = {
+        "ts": now_iso(), "agent": who, "kind": args.kind or "note",
+        "body": body, "mentions": mentioned,
+    }
+    if args.responds_to:
+        rec["responds_to"] = args.responds_to
+    with Lock(channel_dir(args.channel) / ".lock"):
+        # Re-read under the lock and take the sequence number from it, exactly as
+        # `cmd_say` does: the id has to be allocated inside the same critical
+        # section as the append, or two writers both compute `len+1` and the
+        # second one's message is the one that never happened.
+        seq = len(read_jsonl(rooms_dir(args.channel) / f"{args.id}.jsonl")) + 1
+        rec["id"] = f"r{seq:04d}"
+        append_chained(rooms_dir(args.channel) / f"{args.id}.jsonl", rec)
+    _room_cursor_advance(args.channel, args.id, who, rec)
+    tail = f" (mentions {', '.join(mentioned)})" if mentioned else ""
+    print(f"[{args.channel}/{args.id}] {rec['id']} {who} -> {rec['kind']}{tail}")
+
+
+def cmd_room_publish(args):
+    """Open a room to the channel's participants, deliberately and on the record.
+
+    design/06 §2: "A participant may open it early with `aim room publish`, which
+    is deliberate, recorded, and visible on the board as an event. Default
+    closed, deliberately opened." The identical rule already exists for tasks
+    (design/05 §1), so this verb is the room-shaped spelling of `task publish`
+    rather than a new policy -- and it records in the same ledger, next to the
+    phase rows a barrier audit already reads.
+
+    Author-only, plus the leader. A room opened by a bystander would mean any
+    participant could expose another participant's half-formed thinking, which is
+    the accident design/06 §2 says the default exists to prevent.
+    """
+    who, kind = resolve_actor(args)
+    m, meta, msgs, published, author = _load_room_or_die(
+        args.channel, args.id, who, kind)
+    if published:
+        print(f"room '{args.id}' is already published "
+              f"(by {published.get('agent')} at {published.get('ts')})")
+        return
+    if kind != "human" and author and who != author:
+        die(
+            f"REFUSED: room '{args.id}' was written by '{author}'; '{who}' may not "
+            f"open it.\n"
+            f"Publishing a room exposes its messages to every participant. The author "
+            f"of the messages is the one whose decision that is.",
+            cls="barrier",
+        )
+    phase = m["barrier"]["phase"]
+    ts = now_iso()
+    # The metadata field and the ledger row are written together, field first:
+    # the field is what `aimboard` draws the room's badge from, and the ledger row
+    # is what makes the field count. If the second write were lost the room would
+    # revert to a draft, which is the fail-closed direction.
+    meta = dict(meta, visibility="published", published_by=who, published_at=ts)
+    write_json(rooms_dir(args.channel) / f"{args.id}.json", meta)
+    _record_room_event(args.channel, args.id, {
+        "ts": ts, "event": "room_published", "agent": who, "action": "room publish",
+        "phase": phase, "class": "barrier", "room": args.id,
+        "messages": len(msgs), "reason": args.reason or "",
+        # `task publish` writes a distinct class when it happens in a divergence
+        # phase (`task_published_during_divergence`), and the same distinction is
+        # worth having here: a room opened while the barrier is shut is the
+        # deliberate breach T-0219's clause 2 is about, and a reader auditing the
+        # ledger must be able to count those without knowing the phase table.
+        "barrier_open": phase not in DIVERGENCE_PHASES,
+    })
+    if phase in DIVERGENCE_PHASES:
+        print(f"room '{args.id}' published DURING {phase} — its {len(msgs)} message(s) "
+              f"are now readable by every participant in {args.channel}, and this is "
+              f"recorded in the ledger as a barrier event")
+        return
+    print(f"room '{args.id}' published — it is now readable by every participant in "
+          f"{args.channel}, and the act is on the record")
+
+
+def cmd_room_list(args):
+    """Which rooms exist, what the gate would show this viewer, and why."""
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in m["participants"] and kind != "human":
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
+    phase = m["barrier"]["phase"]
+    rows = []
+    for path in sorted(rooms_dir(args.channel).glob("*.jsonl")):
+        rid = path.stem
+        meta = read_json(rooms_dir(args.channel) / f"{rid}.json") or {}
+        msgs = read_jsonl(path)
+        authors = {x.get("agent") for x in msgs if x.get("agent")}
+        author = next(iter(authors)) if len(authors) == 1 else ""
+        pub = _room_published(args.channel, rid)
+        draft = not pub
+        # Named, not implied: a reader who cannot see a room must be able to tell
+        # "it does not exist" from "it exists and the gate is holding it", which
+        # is the same distinction `task list --count-hidden` exists for.
+        withheld = draft and phase in DIVERGENCE_PHASES and kind != "human" and who != author
+        rows.append((rid, meta.get("topic", ""), len(msgs), draft, pub, author, withheld))
+    if args.json:
+        print(json.dumps([{"id": r[0], "topic": r[1], "messages": r[2],
+                           "draft": r[3], "published_by": (r[4] or {}).get("agent", ""),
+                           "author": r[5], "withheld": r[6]} for r in rows],
+                         indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        print(f"aim: no rooms in '{args.channel}'")
+        return
+    for rid, topic, n, draft, pub, author, withheld in rows:
+        state = ("published by " + pub["agent"] if pub else "draft")
+        mark = "  [withheld from you]" if withheld else ""
+        print(f"{rid:<16} {n:>4} msg(s)  {state:<24} by {author or '(unknown)'}  "
+              f"{topic[:40]}{mark}")
+
+
+def cmd_room_meta(args):
+    """A room's own metadata, and the gate's verdict on the caller.
+
+    `unread` here is honestly named `undrained`: this fabric keeps no read
+    cursor for rooms (there is no `rooms/<room>.cursors.json` writer, T-0219
+    clause 6), so there is nothing to derive "how many are unread" from. The
+    count that *is* derivable is how many messages this viewer has not
+    acknowledged in any way at all, and this verb does not pretend it is the
+    other number -- a fabricated unread count is exactly the kind of
+    well-formed-empty-file failure this project keeps finding.
+    """
+    who, kind = resolve_actor(args)
+    m, meta, msgs, published, author = _load_room_or_die(
+        args.channel, args.id, who, kind)
+    out = dict(meta)
+    out["messages"] = len(msgs)
+    out["author"] = author
+    out["published"] = bool(published)
+    out["published_by"] = (published or {}).get("agent", "")
+    out["phase"] = m["barrier"]["phase"]
+    out["cursors"] = read_json(rooms_dir(args.channel) / f"{args.id}.cursors.json", {}) or {}
+    for x in msgs:
+        out.setdefault("mentions", {})
+        for target in x.get("mentions") or []:
+            out["mentions"][target] = out["mentions"].get(target, 0) + 1
+    print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 def _push_configs_path(ch=None):
@@ -2409,6 +3155,12 @@ def cmd_push(args):
         "bytes": len(body_bytes),
         "body_sha256": sha256_hex(body_bytes),
         "ack_required": bool(args.require_ack),
+        # T-0242: the record names the *session* that sent it, because one agent
+        # id can be held by two live sessions at once — measured: an id whose
+        # registry entry reads `pts/7 claude pid 1697672` while another session
+        # in the same workspace answered to it, and a message addressed to the id
+        # reached both. `from` says who; this says which one.
+        "from_session": session_of(),
     }
     write_json(d / f"{msg_id}.json", rec)
     (d / f"{msg_id}.md").write_text(
@@ -2561,6 +3313,10 @@ def cmd_confirm(args):
     }
     write_json(outbox_dir(rec["from"]) / f"{rid}.json", receipt)
     rec["acked_at"] = ts
+    # A receipt is an act by a session, and the id it is filed under may be held
+    # by more than one (T-0242): the sender reading `acked_at` is asking "who
+    # vouched for this", which is not the same question as "which id".
+    rec["acked_by_session"] = session_of()
     write_json(path, rec)
     print(f"receipt -> {rec['from']}: {args.msg_id} acknowledged at {ts}")
 
@@ -2661,6 +3417,11 @@ def cmd_pull(args):
         for p, rec in show:
             if not rec.get("claimed_at"):
                 rec["claimed_at"] = now_iso()
+                # Which session read it (T-0242). `claimed_at` alone cannot say,
+                # and a shared id is exactly the case where two sessions would
+                # each believe the claim was theirs; the reader that finds one
+                # claim row needs to know which session made it.
+                rec["claimed_by_session"] = session_of()
                 write_json(p, rec)
                 claimed += 1
     if not delivered and unread:
@@ -2882,6 +3643,15 @@ def cmd_status(args):
     print(f"phase     {b['phase']}   round {b['round']}")
     print(f"leader    {m['leader']}   synthesizer {m.get('synthesizer') or '(unset)'}")
     print(f"rules     {PHASE_RULES[b['phase']]}")
+    # The clause of T-0213 that is about a reader who is *not* running
+    # `advance`: a closed capability is a fact about this phase, and the line
+    # that says when it opens again is what makes the closure legible instead of
+    # looking like the current state of the world. Omitted when nothing is shut.
+    shut = [f"{n} opens at {opener}" for n, opener
+            in sorted(PHASE_OPENERS[b["phase"]].items())
+            if not PHASE_RULES[b["phase"]][n] and opener]
+    if shut:
+        print(f"next      {b['phase']}: " + "; ".join(shut))
     print("participants:")
     for p in m["participants"]:
         seal = read_json(channel_dir(args.channel) / "seals" / f"{p}.json")
@@ -3104,12 +3874,82 @@ def cmd_verify(args):
                 print(f"TAMPER {rel}:{i} broken chain (prev={r.get('prev', '')[:12]}… expected {prev[:12]}…)")
                 ok = False
             prev = h
-    for p in sorted((channel_dir(args.channel) / "seals").glob("*.json")):
-        s = read_json(p)
-        d = sha256_hex(canonical({k: v for k, v in s.items() if k != "digest"}))
-        if d != s["digest"]:
-            print(f"TAMPER seal {p.name}: digest mismatch")
+    # Room logs are covered by the same walk, and for the same reason T-0219
+    # clause 4 gives: `aim room say` appends with `append_chained` and the
+    # channel's `.lock`, so a room chain that nothing verifies would be
+    # tamper-evidence in a file no verb audits -- a decoration. Sorted, so the
+    # output is deterministic and a diff of two verifies is meaningful.
+    #
+    # Forward only, in the sense that matters here: nothing below rewrites a
+    # room log. A hand-written room with no chain at all (there are such files in
+    # this repo's history, from before the write side existed) is reported as
+    # unchained rather than repaired, because repairing it would mean writing to
+    # a record somebody else made by hand -- and the point of the report is that
+    # the hand-made one is now visible.
+    for p in sorted((channel_dir(args.channel) / "rooms").glob("*.jsonl")):
+        try:
+            recs = read_jsonl(p)
+        except MalformedLog as exc:
+            print(f"TAMPER rooms/{p.name}:{exc.lineno} is not valid JSON ({exc.detail})")
             ok = False
+            continue
+        prev = "genesis"
+        for i, r in enumerate(recs, 1):
+            if not r.get("hash"):
+                # A room message written before the write side existed carries no
+                # chain fields. It is reported, not counted as TAMPER: there is
+                # nothing tampered with, there is a record that was never chained.
+                print(f"UNCHAINED rooms/{p.name}:{i} carries no hash — written by "
+                      f"hand, before `aim room say` existed")
+                ok = False
+                continue
+            body = {k: v for k, v in r.items() if k != "hash"}
+            if sha256_hex(canonical(body)) != r["hash"]:
+                print(f"TAMPER rooms/{p.name}:{i} content does not match its hash")
+                ok = False
+            if r.get("prev") != prev:
+                print(f"TAMPER rooms/{p.name}:{i} broken chain "
+                      f"(prev={str(r.get('prev'))[:12]}… expected {prev[:12]}…)")
+                ok = False
+            prev = r["hash"]
+    for p in sorted((channel_dir(args.channel) / "seals").glob("*.json")):
+        try:
+            s = read_json(p)
+        except json.JSONDecodeError as exc:
+            # The seal equivalent of the truncated append `read_jsonl` already
+            # refuses to guess about: a seal file cut mid-write is damage this
+            # verb exists to report, and it used to raise instead.
+            print(f"TAMPER seal {p.name}: is not valid JSON ({exc}) — a writer was "
+                  f"interrupted, or the file was cut")
+            ok = False
+            continue
+        if not isinstance(s, dict):
+            print(f"TAMPER seal {p.name}: is not a seal object at all")
+            ok = False
+            continue
+        # T-0145's second half, measured live by lane I3: the digest is
+        # recomputed over every field *except* `digest`, so the comparison
+        # itself indexed a key a malformed seal does not have, and `verify` on a
+        # seal carrying `private_log_hashes` but no `digest` died with
+        # `KeyError: 'digest'`, rc=1, no TAMPER line. T-0145's accept line
+        # forbids exactly that -- a missing field is damage to *report* -- and
+        # the `ts` half was fixed in `check_sealed_prefix` while this half was
+        # left. Same treatment for `agent`: every line below names the file it is
+        # about, and a seal that names no agent has no private log to name.
+        if not s.get("agent"):
+            print(f"TAMPER seal {p.name}: carries no agent, so the private log it "
+                  f"seals cannot be named")
+            ok = False
+            continue
+        if not s.get("digest"):
+            print(f"TAMPER seal {p.name}: carries no digest, so the seal's own "
+                  f"contents cannot be checked against it")
+            ok = False
+        else:
+            d = sha256_hex(canonical({k: v for k, v in s.items() if k != "digest"}))
+            if d != s["digest"]:
+                print(f"TAMPER seal {p.name}: digest mismatch")
+                ok = False
         # The seal covers the private log as a frozen PREFIX: the bytes and record
         # hashes that existed at sealing time. Appending after sealing is
         # legitimate — you keep reasoning — and is reported as a note, not a
@@ -3383,6 +4223,9 @@ def main():
     q = tadd("link", cmd_task_link)
     q.add_argument("--id", required=True)
     q.add_argument("--blocked-by", dest="blocked_by", required=True)
+    q.add_argument("--force", action="store_true",
+                   help="record the edge anyway; the cycle it closes is written on "
+                        "the event, so a forced deadlock is auditable (§ T-0221)")
 
     q = tadd("comment", cmd_task_comment)
     q.add_argument("--id", required=True)
@@ -3390,6 +4233,29 @@ def main():
     q.add_argument("--body-file")
     q.add_argument("--body-literal", dest="body_literal",
                    help="send this text literally, even if it names an existing file (T-0224)")
+
+    # T-0235. Every flag is optional and the verb does nothing when none is
+    # given, so the command cannot be run "by accident" into an empty edit; the
+    # fields it accepts are the closed list in `TASK_EDIT_FIELDS`, and the ones it
+    # refuses are the ones another verb already owns.
+    q = tadd("edit", cmd_task_edit)
+    q.add_argument("--id", required=True)
+    q.add_argument("--milestone", default=None,
+                   help='the milestone this card counts under, or "" to take it out '
+                        "of every milestone (§ T-0235)")
+    q.add_argument("--priority", default=None, choices=TASK_PRIORITIES)
+    q.add_argument("--start", default=None)
+    q.add_argument("--due", default=None)
+    q.add_argument("--estimate", dest="estimate_pts", type=int, default=None,
+                   help="the estimate in points (recorded as estimate_pts)")
+    q.add_argument("--tag", dest="tags", action="append", default=None,
+                   help="repeatable; replaces the whole tag list, not one tag")
+    q.add_argument("--title", default=None)
+    q.add_argument("--accept", default=None)
+    q.add_argument("--reason", default="", help="why the card is being corrected")
+    q.add_argument("--force", action="store_true",
+                   help="correct a card you neither own nor created; the overridden "
+                        "owner is recorded on the event (§ T-0235)")
 
     # The one repair verb, and it is an append rather than an edit. It exists
     # because an accidental `created` landed in a hash-chained store and this
@@ -3494,6 +4360,55 @@ def main():
     p.add_argument("--channel", required=True)
     p.add_argument("--peer", required=True)
 
+    # ---- rooms (design/06 §1-§2) ------------------------------------------
+    # The write side `aimboard` has been reading a hand-written file for. A room
+    # is a named sub-log of a channel: same chaining, same flock, no quota,
+    # never a barrier -- and, during a divergence phase, a draft until a
+    # *recorded* publish opens it.
+    rp = sub.add_parser("room", help="named sub-logs of a channel: group chat that inherits the barrier")
+    rsub = rp.add_subparsers(dest="room_cmd", required=True)
+
+    def radd(name, fn):
+        r = rsub.add_parser(name)
+        r.set_defaults(func=fn)
+        r.add_argument("--as", dest="actor", required=True)
+        r.add_argument("--channel", required=True)
+        return r
+
+    r = radd("new", cmd_room_new)
+    r.add_argument("--id", required=True, help="the room's name inside the channel")
+    r.add_argument("--topic", default="")
+
+    r = radd("say", cmd_room_say)
+    r.add_argument("--id", required=True)
+    r.add_argument("--kind", default="", help="a note by default; no quota, no kinds required")
+    r.add_argument("--body", default="")
+    r.add_argument("--body-file")
+    r.add_argument("--body-literal", dest="body_literal",
+                   help="send this text literally, even if it names an existing file (T-0224)")
+    r.add_argument("--responds-to", dest="responds_to", default="")
+
+    r = radd("publish", cmd_room_publish)
+    r.add_argument("--id", required=True)
+    r.add_argument("--reason", default="")
+
+    r = radd("list", cmd_room_list)
+    r.add_argument("--json", action="store_true")
+
+    r = radd("meta", cmd_room_meta)
+    r.add_argument("--id", required=True)
+
+    # No git verb is registered here, and T-0238 is why one must not be added
+    # casually. The hazard is measured, not hypothetical: two live sessions share
+    # one `.git/index`, so a session that stages stages whatever its peer left in
+    # the tree, and the commit that follows carries a card's file under a message
+    # that never mentions it (`1edf47c` carried a peer's spec; `944ce90` carried
+    # an `unmet_dependency` rewrite). A verb added here that commits has to hold
+    # one exclusive lock across the whole stage-then-commit pair --
+    # `Lock(ROOT / ".git" / "aim-commit.lock")`, the same flock every writer in
+    # this file takes -- and stage the paths it was named rather than the tree;
+    # a lock around `commit` alone leaves open the window that produced both
+    # commits above. Nothing here commits today, so there is nothing to fix yet.
     p = add("tension", cmd_tension)
     p.add_argument("--as", dest="actor", required=True)
     p.add_argument("--channel", required=True)
@@ -3555,6 +4470,13 @@ def main():
             action = f"task doorbell {getattr(args, 'doorbell_cmd', '?')}"
     elif args.cmd == "channel":
         action = f"channel {getattr(args, 'channel_cmd', '?')}"
+    elif args.cmd == "room":
+        # Same reason as `task doorbell`: five verbs a user names separately
+        # (`room new/say/publish/list/meta`) would collapse to one `action` in the
+        # ledger, and `action` is the field a barrier audit groups by -- so
+        # `room publish`, the deliberate breach, would be indistinguishable from
+        # `room list`.
+        action = f"room {getattr(args, 'room_cmd', '?')}"
     note_context(channel=getattr(args, "channel", None), action=action)
     try:
         code = args.func(args)

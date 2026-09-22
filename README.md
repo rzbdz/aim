@@ -391,6 +391,55 @@ recorded".
 | export to a foreign tool (CSV, iCal) | `aimboard export --format csv\|ical\|json` (`export` in `aimboard/cli.py`) | **present** (M5) |
 | notifications beyond the next turn | — | **missing**: a hook fires on a turn, and an idle session has no turn |
 
+### The org, the project, and the date
+
+`design/17-org-and-project.md` states the model for the three questions that sit
+*above* a task — who is in the team, who may dispatch to whom, who reports to
+whom — and for which project a session is on. The shape in one paragraph: the
+org **is** `registry.json` (`id`, `kind`, `model`), dispatch is a channel's
+`participants` list, reporting is that channel's `leader` — the human, always —
+and a session's project is the channel whose participant list names it, derived
+from the store rather than kept in a field. A channel is `project` or `scratch`
+by declaration and `empty`/`dormant`/`active` by derivation
+(`channel_kind`/`channel_lifecycle` in `aimboard/fabric.py`).
+
+Every row is a command that exists or the word **missing**; the rows that are
+**missing** are the ones whose acceptance needs a verb nobody has written, and
+they are listed rather than promised.
+
+| question | command | status |
+|---|---|---|
+| the team, and what one member is | `aim card --as <agent>`; `aim card --as <anyone> --all` | **present** (a read of the registry, one card at a time or all at once) |
+| who may dispatch to whom | `aim status --channel <ch>` prints `participants`; `aim channel add/remove` changes it | **present**, per channel; no command answers it for a named agent across all channels |
+| who reports to whom | `aim status --channel <ch>` prints `leader` and `synthesizer` | **present**, per channel; there is no agent-level reporting line |
+| all three for one named agent | — | **missing**: `aim org --as <agent>` is the verb `T-0231` asks for and it does not exist |
+| which project a session is on | `aim status --channel <ch>` (given the channel); `gate.gate_channel` picks it from the store | **present** by derivation; no `aim` verb takes a session id and names its channel |
+| a channel says it is scratch | `channel_kind` in `aimboard/fabric.py` (declared `kind`, else derived from the topic) | **partial**: the model is there and the board reads it; `aim status` prints neither `kind` nor `state`, so hiding scratch at the CLI is **missing** |
+| a milestone above a task | `plan/plan.json` `milestones`; `aimboard/views/timeline.py`, `plan.py` | **present** as diamonds and counts. There is no milestone pane: `web/src/views/` has ten views and milestones are a block inside the Plan pane |
+| an epic, or a cycle above a task | — | **missing**, and stated as a decision rather than a plan: the log is the only clock (`fold.report_data` derives `median_cycle` from recorded events), and a cycle box would be hand-maintained on a board whose rule is that nothing above a task is. §5 of `design/17` |
+| a user-visible word | `aimboard/const.py` `LABELS` (`en`/`zh`), `web/src/concepts.js` | **present** as a convention: labels are keyed by the raw token, which stays canonical, and a concept says what it does to you |
+| a date that names its timezone | `plan/plan.json` `"timezone": "Asia/Shanghai"` is the single source; the store's stamps are ISO-8601 UTC | **present as the rule** (`design/17` §4); the sweep is incomplete — some panes render a date without its zone |
+
+### Only the human moves the phase
+
+`require_leader` is called at the top of `cmd_advance` for **every** edge, so an
+agent cannot move a channel from `SEALED_DIVERGENT` to `COMMIT` — it can only
+`aim request-advance`, and the refusal it would get is `class: barrier` in
+`ledger.jsonl`. The ruling (`design/17` §6, `T-0178`): the reading `design/05`
+supports is that this stays true, and that the inert edges are named as inert.
+`SEALED_DIVERGENT`, `COMMIT` and `SYNTHESIS` carry identical rules
+(`read_others=False`, `channel_say=False`, `private_say=True`), so the leader's
+approval of `SEALED_DIVERGENT -> COMMIT` or `COMMIT -> SYNTHESIS` unlocks nothing
+and buys only the record of *when* the team stopped forming positions. The one
+edge that ends independence is `SYNTHESIS -> CROSS_EXAMINE`. Option B — letting
+a participant cross an edge that changes no rule, keeping the leader for the edge
+that does — would change the contract rather than read it, and would cost the one
+auditable sentence this system has: **only the human moves the phase.** The
+Help page owes the same sentence with the inert edges marked; it does not say it
+yet.
+
+
+
 **What the board's headline counts.** The `done` column is a fold over the
 *merged* board — the recorded store plus the plan seeds (`plan/*.json`) — not over
 the record (`by_status` in `aimboard/views/overview.py`; the same merge is

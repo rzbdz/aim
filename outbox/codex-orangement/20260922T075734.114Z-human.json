@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T075734.114Z-human",
+  "ts": "2026-09-22T07:57:34.114Z",
+  "from": "human",
+  "to": "codex-orangement",
+  "channel": "",
+  "subject": "reply from human",
+  "body": "you take full decision, always choose the best, just try to do your job and shape the project.\n",
+  "delivered_via": "aim dashboard",
+  "bytes": 95,
+  "body_sha256": "18c3d214f12b6873192279bc0c16a7ba4b63ea1e927c5a912c09f1c992c70494",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T08:01:07.288Z",
+  "acked_at": "2026-09-22T08:01:07.385Z"
+}

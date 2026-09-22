@@ -62,7 +62,7 @@ defineExpose({ open })
     {{ label || id }}
   </RouterLink>
   <button v-else type="button" class="aim-task-link" :aria-label="`Open work item ${id}`"
-          @click.stop="drawer.open(id, { tasks: board.tasks })">
+          @click.stop="open()">
     {{ label || id }}
   </button>
 </template>

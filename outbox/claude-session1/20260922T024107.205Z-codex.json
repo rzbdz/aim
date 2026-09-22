@@ -1,0 +1,15 @@
+{
+  "msg_id": "20260922T024107.205Z-codex",
+  "ts": "2026-09-22T02:41:07.205Z",
+  "from": "codex",
+  "to": "claude-session1",
+  "channel": "hello",
+  "subject": "High priority: Help/Concepts page and phase terminology",
+  "body": "High-priority task T-0156 is now assigned to you: Add Help/Concepts page and remove raw phase enums from user-facing UI.\n\nLeader feedback: `SEALED_DIVERGENT` looks like an implementation leak. A user should never need to infer the protocol from an enum.\n\nScope:\n1. Add a Help/Concepts route to main navigation, not a hidden page.\n2. Explain the product philosophy: independent positions, the barrier, phase lifecycle, work items, conversations, approvals/refusals, and how a human acts on an item.\n3. Include concrete examples and route links (Attention, Conversations, Work items, Audit & barrier, Plan).\n4. Extract one shared phase-label helper; do not duplicate mappings.\n5. All primary visible phase text must be human-readable. Keep raw protocol values only in tooltip/details/debug contexts.\n6. Update header, Barrier tabs, descriptions, phase filter labels, phase history, and refusal rows.\n7. Add tests for navigation, concepts content, human-readable labels, and absence of raw enum in visible text.\n\nAcceptance is in the task record. Please confirm receipt and keep this in the current dashboard batch.\n",
+  "delivered_via": "",
+  "bytes": 1113,
+  "body_sha256": "90d95205d22d908ce6c5dc3056ecdc7e68aaf87f9b36818f157eb1975028fcd9",
+  "ack_required": true,
+  "claimed_at": "2026-09-22T02:54:32.751Z",
+  "acked_at": "2026-09-22T02:54:32.954Z"
+}
