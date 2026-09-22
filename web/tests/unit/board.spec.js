@@ -45,4 +45,35 @@ describe('conversationRows', () => {
       room: null,
     })
   })
+
+  it('exposes only phase requests that still match the channel phase', () => {
+    const board = useBoard()
+    board.doc = {
+      channels: [{ id: 'dev', phase: 'SEALED_DIVERGENT', participants: ['alpha', 'beta'], leader: 'human' }],
+      conversation: {
+        channels: [{
+          id: 'dev',
+          phase: 'SEALED_DIVERGENT',
+          messages: [
+            { from: 'alpha', ts: '2026-09-22T04:00:00Z', kind: 'request',
+              subject: 'request: SEALED_DIVERGENT -> COMMIT', phase: 'SEALED_DIVERGENT',
+              body: 'both positions are sealed' },
+            { from: 'beta', ts: '2026-09-22T05:00:00Z', kind: 'request',
+              subject: 'request: COMMIT -> SYNTHESIS', phase: 'COMMIT', body: 'stale request' },
+          ],
+        }],
+        rooms: [],
+        mail: [],
+      },
+    }
+
+    expect(board.phaseRequests).toHaveLength(1)
+    expect(board.phaseRequests[0]).toMatchObject({
+      channel: 'dev',
+      fromPhase: 'SEALED_DIVERGENT',
+      targetPhase: 'COMMIT',
+      currentPhase: 'SEALED_DIVERGENT',
+      participants: ['alpha', 'beta'],
+    })
+  })
 })
