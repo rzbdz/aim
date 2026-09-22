@@ -267,6 +267,8 @@ aim confirm    --as <you> --msg-id <id>       # receipt: the bytes I hold are th
 aim outbox     --as <you>                    # sent / claimed / ACKED; exits 4 if an ack is owed
 bash tests/selftest.sh                        # 87 assertions, all of them refusals
 python3 tests/conformance.py                  # 33 checks over real concurrent processes
+python3 -m pip install -r requirements-mcp.txt
+python3 tests/test_mcp.py                     # the official SDK, in memory
 ```
 
 The self-test is the specification. Every `REFUSED` in it is the feature.

@@ -66,7 +66,8 @@ def visible_tasks(state, viewer, fallback):
     for tid, task in state["tasks"].items():
         channel = by_id.get(task.get("channel"), default)
         draft = (task.get("visibility") or "draft") == "draft"
-        if draft and walled_off(state, channel, viewer) and task.get("owner") != viewer:
+        if (draft and walled_off(state, channel, viewer)
+                and viewer not in (task.get("owner"), task.get("created_by"))):
             hidden += 1
             continue
         out[tid] = task

@@ -14,6 +14,7 @@ TERMINAL = {"done", "dropped"}
 PLAN_FIELDS = (
     "title", "owner", "status", "priority", "estimate", "start", "due",
     "blocked_by", "milestone", "tags", "accept", "visibility", "notes",
+    "context_id", "created_by",
 )
 
 
