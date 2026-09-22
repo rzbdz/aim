@@ -471,7 +471,7 @@ falsified in substance.
 |---|---|
 | "the alphabet, *rather than recency or authority*" | it re-measured which copy was older: for 5 of 6 ids recency picked the same one, so the "rather than" claimed a contrast the data cannot show |
 | "serves them *by id, title and body*" | it read the serialiser and found `a2a_task` never emits `title` or `body` — the mechanism was right and the sentence sold more |
-| ledger totals 352/31/343 | it re-counted and got 354/33/345, because the ledger had grown since I wrote the sentence |
+| ledger totals 352/31/343 | it re-counted and got 354/33/345, because the ledger had grown since I wrote the sentence — and a third measurement at `7def563` reads 358/36/349, so the number is a snapshot by construction (see §4.6) |
 
 The pattern across all three: **the measurement was sound and the sentence was
 not.** A verifier asked to *confirm* would have agreed with each; the instruction
@@ -507,7 +507,7 @@ a `file:line`.
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
 | 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
-| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **the file holds 354 rows; 276 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6 | measured **[V]**, §4.6 |
+| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **the file holds 358 rows; 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6 | measured **[V]**, §4.6 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -739,31 +739,35 @@ README §3 states the vocabulary in the present tense, twice:
 returns exactly those three and is published as `refusal_classes` at `:490`,
 which `web/src/panes/HelpPane.vue:344` renders as **the** token table.
 
-Measured over every `channels/*/ledger.jsonl` in the live tree, `2026-09-23T02:47Z`
-(the last append — `channels/hello/ledger.jsonl` is append-only and growing, so
-the totals move; the refusal counts below have not moved since the tree was
-cloned):
+Measured over every `channels/*/ledger.jsonl`, **at the committed revision
+`7def563`** — derived with `git show HEAD:channels/<ch>/ledger.jsonl` rather than
+from a working tree, so these are numbers anyone can re-derive:
 
 | | rows | |
 |---|---|---|
-| all ledger rows | **354** | |
-| `event == "refusal"` | **276** | `barrier` 148 · `form` 126 · `unrecorded` 2 |
+| all ledger rows | **358** | |
+| `event == "refusal"` | **280** | `barrier` 152 · `form` 126 · `unrecorded` 2 |
 | not a refusal, **carrying a refusal class** | **36** | `task_published_during_divergence` 35 + `channel_member_added` 1 |
 | carrying `class: "record"` — **not in the vocabulary** | **33** | every `event: "push"` |
 | carrying no `class` at all | 9 | 6 `seal`, 3 `phase`, written before the field existed |
 
-*(A first draft of this section read 352 / 31 / 343. The difference is two
-`push` rows that landed in `hello` at `18:47:02Z`, eight minutes after it was
-written, and it is the shape of the whole finding: every one of those numbers
-moves the moment an agent sends a message, while `refusal`, `barrier` and `form`
-do not.)*
+**These numbers move, and that is the shape of the finding.** Section 4.6 has now
+been measured three times: a first draft read 352 / 276 / 343; the verifier
+re-counted 354 / 276 / 345; at `7def563` it is 358 / 280 / 349. Every one of those
+increments is an agent sending a message — and **the refusal class split moved
+too this time** (`barrier` 148 → 152, four new refusals in `hello`), which is
+worth stating plainly because the previous two drafts claimed it had not. The
+counts that have never moved are the structural ones: 36 non-refusal rows
+carrying a refusal class, 33 `push` rows carrying `record`, 9 rows with no class.
 
 So `class` is not what makes a row a refusal, and a reader who counts either one
 for the other is off by a figure that looks like a measurement. Over the whole
-tree: `grep -c '"class": "barrier"'` returns **184**, and the refusals *of that
-class* number **148** — 36 rows apart. Count every class-bearing row as a refusal
-and the total is 345 against the true 276 — 69 rows apart. Both numbers are the
-kind that gets quoted without a second look.
+tree at `7def563`: `grep -c '"class": "barrier"'` returns **188**, and the
+refusals *of that class* number **152** — 36 rows apart. Count every class-bearing
+row as a refusal and the total is 349 against the true 280 — 69 rows apart. Both
+numbers are the kind that gets quoted without a second look. (The two gaps are
+themselves stable across all three measurements: 36 and 69, unchanged, while
+every total around them grew.)
 
 **The 36 rows are not noise. They are the mechanism README §3 asks for.** The
 comment above the writer (`bin/aim:2373-2381`) says so outright:
@@ -775,7 +779,7 @@ comment above the writer (`bin/aim:2373-2381`) says so outright:
 So the tool invented a row that is *shaped like a refusal* so the ledger could
 answer "did anyone lean on the barrier", and gave it the barrier class on
 purpose. The cost is that the class no longer means one thing: `class: barrier`
-today covers *a request the phase refused* (148) and *an act the phase permitted
+today covers *a request the phase refused* (152) and *an act the phase permitted
 that you then performed while shut* (35) — opposite verdicts under one token.
 
 **And the pane that exists to show them can never show them.** `BarrierPane.vue`
@@ -783,14 +787,14 @@ draws its table from `channel.refusals`, which the board fills at
 `aimboard/api.py:372` out of `ch["refusals"]`, which is `fabric.py:265` —
 `[r for r in ledger if r.get("event") == "refusal"]`. The 35 divergent
 publications are in the ledger, carry `class: barrier`, and are filtered out
-one layer below the pane. Measured on `hello`, the channel where all of this
-lives:
+one layer below the pane. Measured on `hello` at `7def563`, the channel where all
+of this lives:
 
-| rows in `channels/hello/ledger.jsonl` | **344** | |
+| rows in `channels/hello/ledger.jsonl` | **348** | |
 |---|---|---|
-| `class: barrier` | **183** | caught by `grep` |
-| `event: refusal` | **271** | what the pane receives |
-| both — the refusals a reader calls `barrier` | **147** | neither of the above |
+| `class: barrier` | **187** | caught by `grep` |
+| `event: refusal` | **275** | what the pane receives |
+| both — the refusals a reader calls `barrier` | **151** | neither of the above |
 
 The pane's own filter (`:300-308`, a `v-if` over `row.class !==
 filters.refusalClass`) is correct and keys on a token that, for the rows it can
@@ -803,7 +807,7 @@ one owner — asks of every other object here. Either the divergent publication
 gets its own class token, or `refusal_classes()` grows a fourth entry and the
 pane's loader stops being `event == "refusal"`. Until one of those lands, the
 sharper statement of README's sentence is: **`ledger.jsonl` is an event ledger;
-`class` is a field 345 of its 354 rows carry, and the word for a row whose class
+`class` is a field 349 of its 358 rows carry, and the word for a row whose class
 is `barrier` is not "refusal".**
 
 ---
@@ -1056,10 +1060,11 @@ refusal class, and not the action, is the thing a reader can count on.
 # Part V — The judgement
 
 **The core is sound and the ceremony around it is not.** Three things are real:
-the phase gate refuses and records refusals (**148 `barrier` + 126 `form`
-refusals** in the live tree today, each with a reason — re-measured, not carried:
-an earlier pass printed 137 `barrier`, which was an exact snapshot at its own
-commit and is stale here); the seal chain detects tampering after the fact; and
+the phase gate refuses and records refusals (**152 `barrier` + 126 `form` + 2
+`unrecorded` = 280 refusal rows** at the committed revision `7def563`, each with a
+reason — re-measured rather than carried: an earlier pass printed 137 `barrier`
+and a later one 148, and both were exact snapshots of their own commits); the seal
+chain detects tampering after the fact; and
 the task-actor rules genuinely stop a bystander from submitting another's card.
 Those are the load-bearing mechanisms and they work.
 
