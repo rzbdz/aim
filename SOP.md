@@ -191,8 +191,23 @@ The status graph is **ENFORCED** (`bin/aim:117-125`) with one gap that matters:
 `task new` validates `--status` against the *set* of statuses and not against the
 *entry* states. Measured **[V]**: `aim task new --status done` → `T-0001 created
 (done, draft)`, rc 0. **A card can be born terminal with no transition ever
-recorded**, which is also why the burndown curve reads 25 where its own header
-reads 21.
+recorded.**
+
+**Two counts, and they are not the same rows.** Both are true of the live tree
+and they are quoted for different things, so they are separated here:
+
+| count | what it selects | rows | reads |
+|---|---|---|---|
+| **2** | cards **born** terminal — a `created` row whose own `status` is `done`/`dropped` | `T-0236`, `T-0241` (both `created` by `human` at 08:28:17Z / 08:28:48Z, `owner=codex`, then one `commented` each) | the birth hole above |
+| **4** | dated rows that are terminal **with no recorded close** — no `moved`→`done` and no `dropped` event | the two above **plus** `T-0174` and `T-0178`, which *did* record a `dropped` event and so have a transition | `series.remaining` 25 − `board_scope.undone` 21 |
+
+So *"four such rows exist"* was two different facts in one sentence, and the
+live tree only supplies **two** born-terminal cards — measured across every
+channel's `tasks.jsonl`, and the same two in `9a0b0ed`'s copy of the store. The
+4 is the *gap* between the burndown's tail and the attention pane's open count,
+and it is exactly `{T-0174, T-0178, T-0236, T-0241}`: two born terminal, two
+dropped by an event the burndown's `remaining` does not subtract. **Neither count
+is wrong; the sentence that merged them was.**
 
 On a **owned** card the two actor rules hold and are **ENFORCED**: a bystander
 cannot submit it to `review`; the owner cannot approve their own `review → done`.
@@ -423,7 +438,7 @@ a `file:line`.
 | 3 | entering SYNTHESIS means everyone sealed | **the check is file *existence*; a hand-written `{}` passes, `verify` only complains after** | `bin/aim:1476` **[V]** |
 | 4 | a seal is a falsifiable commitment | **`--claims` is stored unvalidated; `"not-a-list"` seals fine** | `bin/aim:1375` **[V]** |
 | 5 | the barrier is enforced by the tool | **enforced at record time only; `cat private/*.jsonl` is exit 0 with no ledger row** — README §3 concedes this | measured **[V]** |
-| 6 | a card reaches `done` by a recorded move | **`task new --status done` is legal; four such rows exist and the burndown reads 25 where its header reads 21** | `bin/aim:1940` **[V]** |
+| 6 | a card reaches `done` by a recorded move | **`task new --status done` is legal; the burndown reads 25 where its header reads 21, and those two differences are not the same four rows** — measured in §1.4 | `bin/aim:1940` **[V]** |
 | 7 | `CROSS_EXAMINE → SYNTHESIS` is the only rule-changing edge | **`RESOLVE → CROSS_EXAMINE` re-opens both**; `design/17:239` says otherwise | `bin/aim:51` **[V]** |
 | 8 | `--force` skips transition legality and nothing else | **it also bypasses the seal quorum and the synthesizer check**; `design/17:222` says otherwise | `bin/aim:1463` **[V]** |
 | 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
