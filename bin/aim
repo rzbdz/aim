@@ -1424,7 +1424,15 @@ def cmd_advance(args):
     # the sentence is simply omitted rather than printed empty.
     next_opener = PHASE_OPENERS[to].get("read_others", "")
     if rule_changes:
-        moved = "; ".join(f"{n}: {'closed' if was else 'open'} -> "
+        # The `was` side was inverted: `'closed' if was else 'open'` prints the
+        # *opposite* of the old value, so the one line T-0213 exists to make
+        # readable read `read_others: open -> open; channel_say: open -> open`
+        # for the transition that opens both of them. A reader who trusted it
+        # would conclude CROSS_EXAMINE changes nothing, which is the exact
+        # misreading the card was filed about -- one that this line created
+        # rather than prevented. The `now` side was correct, which is why the
+        # bug survived a green-looking output: only one of the two arrows lied.
+        moved = "; ".join(f"{n}: {'open' if was else 'closed'} -> "
                           f"{'open' if now else 'closed'}" for n, was, now in rule_changes)
         verdict = f"rules       {rules_now}  — this advance changed {len(rule_changes)}: {moved}"
         if not PHASE_RULES[to]["read_others"] and next_opener:

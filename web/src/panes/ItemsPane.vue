@@ -329,7 +329,7 @@ function argvText(argv) {
  * What the control says when it is hovered, including why it is unavailable.
  *
  * A disabled button with no reason is the dead end this card is about one step
- * further in: `bin/aim:1441` refuses `--to done` while a blocker is open, so the
+ * further in: `bin/aim:1449` refuses `--to done` while a blocker is open, so the
  * reader has to be told which blocker before the click, not after it.
  */
 function decisionTitle(task, decision) {

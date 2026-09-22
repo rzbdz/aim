@@ -184,7 +184,7 @@ not a measurement — and that applies to the board itself.
 
 ### 1.7 The time model is a day wide, and the estimate unit is undeclared
 
-**Measured.** The store field is `estimate_pts` (`bin/aim:1397`, `bin/aim:2842`).
+**Measured.** The store field is `estimate_pts` (`bin/aim:1397`, `bin/aim:2850`).
 It is rendered as **days** in Kanban (`web/src/panes/KanbanPane.vue:125`,
 `{{ t.estimate }}d`) and in Gantt (`web/src/panes/GanttPane.vue:84`,
 `(${t.estimate}d estimate)`), and as a **bare number with no unit** in Items

@@ -18,9 +18,9 @@ into `review` so the only obstacle to `done` is the dependency:
     aim task move --id T-0001 --to done             -> REFUSED: blocked by T-0002
     aim task move --id T-0002 --to done             -> REFUSED: blocked by T-0001
 
-`cmd_task_link` (bin/aim:1931) checks two things -- that the named task exists
+`cmd_task_link` (bin/aim:1939) checks two things -- that the named task exists
 and that it is not the task itself -- and nothing else. `cmd_task_move`
-(bin/aim:1823) opens the block gate with
+(bin/aim:1831) opens the block gate with
 
     open_blockers = [b for b in t["blocked_by"] if board.get(b, {}).get("status") != "done"]
 

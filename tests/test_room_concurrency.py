@@ -19,7 +19,7 @@ file pins four things separately rather than one "it worked":
                    but the file -- the second is the claim `aim verify` makes.
 
 What would make it red, said here so the negative control is a measurement and
-not a hope. Read the writer first: `cmd_room_say` (bin/aim:2789-2796) takes
+not a hope. Read the writer first: `cmd_room_say` (bin/aim:2797-2804) takes
 `seq = len(read_jsonl(...)) + 1` *inside* `with Lock(channel_dir(ch) / ".lock")`
 and appends inside the same block, on the comment's own reasoning that two
 writers both computing `len+1` would make the second one's message "the one that
@@ -31,7 +31,7 @@ is exactly the "well-formed and one fact short" shape the count-only check would
 have missed.
 
 One thing the card does not say and the code does: the room must be *published*
-before 12 peers may write to it. `_load_room_or_die` (bin/aim:2616) refuses a
+before 12 peers may write to it. `_load_room_or_die` (bin/aim:2624) refuses a
 draft room to a non-author whenever the channel is in a divergence phase, and a
 fresh channel is born in SEALED_DIVERGENT (measured: all 12 `room say` calls
 exit 2 with "REFUSED: room 'r' in ch is a draft" when the publish step is
@@ -209,6 +209,6 @@ with tempfile.TemporaryDirectory() as tmp:
 print(f"\n{passed}/{passed + failed} checks passed")
 print("The count is exact and the bodies are the set that was written on purpose: a test")
 print("that asserted '>= 1 record' would pass on a room that lost eleven, which is the")
-print("failure T-0026 names. The lock in bin/aim:2789 and the chain in bin/aim:425 are")
+print("failure T-0026 names. The lock in bin/aim:2797 and the chain in bin/aim:425 are")
 print("two mechanisms, and the checks above fail separately when either one is removed.")
 sys.exit(1 if failed else 0)

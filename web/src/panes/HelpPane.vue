@@ -171,7 +171,7 @@ const countOf = {
  * `provenance: "seed only (not yet in the store)"`. The row's sentence --
  * "minted by aim task new; the store is the authority" -- was therefore false of
  * 87 of the ids it counted. Not a wording nit: `aim task move --id T-0042`
- * answers `no such task: T-0042` (`_load_task_or_die`, `bin/aim:1682`), because
+ * answers `no such task: T-0042` (`_load_task_or_die`, `bin/aim:1690`), because
  * `fold_tasks('hello')` folds the *events* and the store has no event for it;
  * the id exists only in `plan/plan.json`. A reader who believed the row goes
  * looking for T-0042 in the store and does not find it, which is what "the
@@ -344,7 +344,7 @@ const REFUSAL_CLASSES = computed(() => {
 /**
  * The verbs a person actually reaches for, with their flags.
  *
- * Every flag here except `--force` is quoted from `bin/aim:4118-4170`; `--force`
+ * Every flag here except `--force` is quoted from `bin/aim:4126-4178`; `--force`
  * is on `task link` and is named because it is the one flag that writes a
  * deadlock into the record on purpose. The channel is the live one, so the
  * sentence is runnable rather than illustrative, and `--as` carries the identity

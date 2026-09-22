@@ -12,7 +12,7 @@
  *     `channel_payload`, `aimboard/api.py:358`), which the server reads out of
  *     `channels/<id>/manifest.json` (`aimboard/fabric.py:261`) -- the same
  *     manifest `aim status --channel` prints participants from
- *     (`bin/aim:3775-3776`). There is no second roster on this page to drift.
+ *     (`bin/aim:3783-3784`). There is no second roster on this page to drift.
  *   - the dispatch edges are the *intersection* of those participant lists. The
  *     fabric has no authority graph and no delegation tree: a peer is someone
  *     you share a channel with.
@@ -149,7 +149,7 @@ const synthesises = byRole('synthesizer')
  * The other participants of the channels this agent is in -- the dispatch set.
  *
  * This is the whole of the fabric's authority. `aim push` refuses a sender who
- * is not a participant of the channel it names (`bin/aim:3183`), and two agents
+ * is not a participant of the channel it names (`bin/aim:3191`), and two agents
  * therefore have a channel to talk in exactly when they share one:
  * `hello` holds `claude-session1, codex, codex-orangement`, so all three may
  * push to each other and none of them to `claude-session2`, who shares no
@@ -275,12 +275,12 @@ const answer = computed(() => {
 /**
  * Why the dispatch answer is drawn beside a measured counter-example.
  *
- * Sharing a channel is necessary to *push* and to *speak* (`bin/aim:3183`,
+ * Sharing a channel is necessary to *push* and to *speak* (`bin/aim:3191`,
  * `bin/aim:1100`), and it is not what bounds who work can be handed to: measured
  * in a scratch root, `alpha` (a participant of `team`) ran
  * `aim task assign --owner gamma` for a `gamma` who was registered and in no
  * channel, rc 0, and `gamma` then read the card and moved it
- * (`bin/aim:2127-2128` checks that the owner is *registered*, not that it is a
+ * (`bin/aim:2135-2136` checks that the owner is *registered*, not that it is a
  * participant). Drawing only the channel intersection and calling it "who you
  * may dispatch to" would therefore understate the fabric by exactly the edge
  * that a new seat arrives on -- and the card this pane answers was filed for a
@@ -388,7 +388,7 @@ const DISPATCH_CAVEAT = 'a card can also be handed to any *registered* agent, pa
     <!-- The card's anti-drift clause, stated once, with the key it came from. -->
     <p class="aim-dim" style="font-size:12px; margin:0 0 10px">
       Read from <code>channels[].participants</code> in <code>/api/state</code> — the same object
-      <code>aim status --channel</code> prints participants from (<code>bin/aim:3775</code>), which the
+      <code>aim status --channel</code> prints participants from (<code>bin/aim:3783</code>), which the
       server builds from <code>channels/&lt;id&gt;/manifest.json</code> (<code>aimboard/fabric.py:261</code>).
       This is not a second roster: a member this table does not show is a member the tool does not have.
       Cross-checked against the conversation gate's own view (<code>channels[].gated</code> and its rule

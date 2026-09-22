@@ -11,8 +11,8 @@ _SPAN_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 # One fact, four spellings, and every one of them is live in this tree (T-0204).
-# The store writes `reason` (`bin/aim:1839`, `cmd_task_move`); this fold published
-# it as `move_reason`, `bin/aim`'s own fold as `status_reason` (`bin/aim:1564`),
+# The store writes `reason` (`bin/aim:1847`, `cmd_task_move`); this fold published
+# it as `move_reason`, `bin/aim`'s own fold as `status_reason` (`bin/aim:1572`),
 # and `PLAN_FIELDS` carries `notes` -- a name no writer emits -- which
 # `TaskDecisionDrawer.vue` draws as
 # `task.notes || task.status_reason || task.move_reason`. A reader that asks for
