@@ -20,6 +20,16 @@ const TASK = (id, title, owner, status, priority, milestone, tags, due, extra = 
   events: [], comments: [], ...extra,
 })
 
+/**
+ * A promise is not work (T-0180), and this file is about work.
+ *
+ * The summary signals count what is on the record, so a fixture of plan seeds
+ * draws six zeros -- and every assertion below would then be about a board with
+ * nothing to point at while looking exactly like a passing test. These two ids
+ * are the ones the reader is meant to reach, so they are the ones recorded.
+ */
+const RECORDED = { provenance: 'store only' }
+
 const LINKS_STATE = {
   digest: 'links-fixture',
   generated_at: '2026-09-22T00:00:00.000Z',
@@ -31,9 +41,10 @@ const LINKS_STATE = {
   agents: { human: { kind: 'human', model: '' } },
   register: {},
   tasks: {
-    'T-0001': TASK('T-0001', 'Alpha is being worked on', 'codex', 'review', 'high', 'M1', ['ui'], '2026-09-20'),
+    'T-0001': TASK('T-0001', 'Alpha is being worked on', 'codex', 'review', 'high', 'M1', ['ui'], '2026-09-20',
+                   RECORDED),
     'T-0002': TASK('T-0002', 'Beta waits on Alpha', 'claude-session1', 'blocked', 'normal', 'M1', [], '2026-09-25',
-                   { blocked_by: ['T-0001', 'T-9000'] }),
+                   { blocked_by: ['T-0001', 'T-9000'], ...RECORDED }),
   },
   reports: {
     series: [{ date: '2026-09-22', remaining: 2, done: 0 }],
@@ -177,11 +188,16 @@ test.describe('identifiers and summaries are ways in', () => {
     await page.goto('/#/kanban')
     await page.locator('.aim-card[data-id="T-0001"]').click()
     await expect(page.locator('.el-drawer h3')).toHaveText('Alpha is being worked on')
-    // The drawer offers the action this item actually has. Alpha is a plan seed,
-    // so that is "record it", not the review decisions -- offering a decision for
-    // work that has never been recorded is the control that lies.
+    // The drawer offers the action this item actually has. Alpha is on the record
+    // and in review, so that is the three review decisions -- offering "record it"
+    // for work the store already holds, or a move the flow does not have from
+    // `review`, is the control that lies.
     await expect(page.locator('.aim-action-panel').first()).toBeVisible()
-    await expect(page.locator('.aim-action-panel')).toContainText('Record this work item')
+    await expect(page.locator('.aim-action-panel')).toContainText('Approve')
+    await expect(page.locator('.aim-action-panel')).toContainText('Request changes')
+    await expect(page.locator('.aim-action-panel')).not.toContainText('Record this work item')
+    // The panel the row promised in its button, checked where the promise is
+    // kept: an `accept or return` row opens a panel holding accept and return.
     await page.keyboard.press('Escape')
     await expect(page.locator('.el-drawer')).toBeHidden()
 

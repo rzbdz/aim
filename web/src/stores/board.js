@@ -44,6 +44,23 @@ const TOP_EPSILON = 2
  */
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'email', 'password', 'number'])
 
+/**
+ * A plan seed is a promise, and a promise is not work.
+ *
+ * `/api/state` ships one `tasks` dict holding two disjoint universes: the plan's
+ * static seeds (`provenance` "seed only (not yet in the store)") and the items a
+ * person actually recorded. Nothing on the record distinguishes them again, so
+ * every count over `tasks` silently answers "how many lines does the plan file
+ * have" for a question the reader asked about their own work. Measured live:
+ * 0 of 4 overdue, 0 of 6 blocked and 0 of 1 review were on the record, and the
+ * page therefore told the leader they were behind on work that does not exist.
+ *
+ * So the predicate lives here, once, instead of in each pane's `provenance`
+ * string test -- a count and the list it lands on have to be the same question
+ * asked once, or the number is decoration.
+ */
+export const isPromise = (task) => (task?.provenance || '').includes('seed')
+
 const holdsText = (el) => {
   const tag = (el.tagName || '').toLowerCase()
   if (tag === 'textarea') return (el.value || '').length > 0
@@ -229,12 +246,53 @@ export const useBoard = defineStore('board', {
     dated() {
       return this.tasks.filter((t) => t.start || t.due)
     },
-    /** Tasks a person has actually recorded, as opposed to a plan seed. */
+    /** Promises from the plan, and nothing else. */
     seedOnly() {
-      return this.tasks.filter((t) => (t.provenance || '').includes('seed'))
+      return this.tasks.filter((t) => isPromise(t))
     },
+    /** Tasks a person has actually recorded, as opposed to a plan seed. */
     recorded() {
-      return this.tasks.filter((t) => !(t.provenance || '').includes('seed'))
+      return this.tasks.filter((t) => !isPromise(t))
+    },
+    /**
+     * The recorded half of the board, read the way the whole board used to be.
+     *
+     * Every signal on the landing page means *work the reader can act on now*, and
+     * only a recorded item can be acted on: a seed has no record to move, so
+     * "overdue" over a seed is the summary lying to the person who has to act. The
+     * panes that draw the merged board on purpose -- Items, Kanban, Gantt, Plan --
+     * keep reading `tasks`; this is for the page that counts.
+     */
+    recordedOverdue() {
+      return this.recorded.filter((t) => isOverdue(t.due, t.status, this.terminal))
+    },
+    recordedByStatus() {
+      const out = {}
+      for (const t of this.recorded) (out[t.status] ||= []).push(t)
+      return out
+    },
+    /**
+     * Promises that are worth the reader's attention anyway, and why.
+     *
+     * A seed is usually noise to count, but not always: `owner: human` with status
+     * `ready` is a decision the plan has assigned to the leader and is waiting on
+     * -- "Leader: approve the plan; advance hello past SEALED_DIVERGENT" was
+     * exactly that, and it is the row the leader pointed at. It is still not work
+     * they have failed to do, so it is counted here rather than in a work signal.
+     */
+    promiseDecisions() {
+      return this.seedOnly.filter((t) => t.owner === 'human' && t.status === 'ready')
+    },
+    promiseSummary() {
+      const total = this.seedOnly.length
+      const mine = this.promiseDecisions.length
+      return {
+        total,
+        mine,
+        text: mine
+          ? `${total} promises in the plan, ${mine} of them need you`
+          : `${total} promises in the plan, none of them need you`,
+      }
     },
     horizon() {
       const dates = this.dated.flatMap((t) => [t.start, t.due].filter(Boolean))

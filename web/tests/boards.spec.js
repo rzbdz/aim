@@ -6,11 +6,23 @@ import { PHASES, GLOSSARY } from '../src/concepts.js'
  * a filter is an assertion about the filter and not about whatever the live
  * fabric happens to hold today.
  */
-const TASK = (id, title, owner, status, priority, milestone, tags, due, accept = '') => ({
+const TASK = (id, title, owner, status, priority, milestone, tags, due, accept = '',
+              extra = {}) => ({
   id, title, owner, status, priority, milestone, tags, due, accept,
   blocked_by: [], visibility: 'published', provenance: 'seed only (fixture)',
-  events: [], comments: [],
+  events: [], comments: [], ...extra,
 })
+
+/**
+ * A plan seed is a promise and a promise is not work (T-0180).
+ *
+ * The landing page counts and lists only what is on the record, so a fixture
+ * whose items are all seeds tests the attention queue against an empty queue --
+ * and an empty queue is a page that looks correct while asserting nothing about
+ * the things it draws. `recorded` is what a seed looks like once someone has
+ * actually written it down.
+ */
+const RECORDED = { provenance: 'store only' }
 
 const KANBAN_STATE = {
   digest: 'kanban-filter-fixture',
@@ -21,9 +33,10 @@ const KANBAN_STATE = {
   agents: {},
   register: {},
   tasks: {
-    'T-0001': TASK('T-0001', 'Alpha', 'codex', 'doing', 'normal', 'M1', ['ui'], '2026-09-20'),
-    'T-0002': TASK('T-0002', 'Beta', 'claude-session1', 'review', 'high', 'M2', ['api'], '2026-09-23'),
-    'T-0003': TASK('T-0003', 'Gamma', 'codex', 'backlog', 'low', 'M1', ['ui', 'api'], '2026-09-24'),
+    // On the record, so the board these tests drive is one a reader can act on.
+    'T-0001': TASK('T-0001', 'Alpha', 'codex', 'doing', 'normal', 'M1', ['ui'], '2026-09-20', '', RECORDED),
+    'T-0002': TASK('T-0002', 'Beta', 'claude-session1', 'review', 'high', 'M2', ['api'], '2026-09-23', '', RECORDED),
+    'T-0003': TASK('T-0003', 'Gamma', 'codex', 'backlog', 'low', 'M1', ['ui', 'api'], '2026-09-24', '', RECORDED),
   },
   reports: { series: [], throughput: [], blocked: [], median_cycle: null },
   conversation: { channels: [], rooms: [], mail: [] },
@@ -54,10 +67,12 @@ const SHELL_STATE = {
   agents: { human: { kind: 'human', model: '' }, codex: { kind: 'agent', model: '' } },
   register: {},
   tasks: {
-    'T-0001': { ...TASK('T-0001', 'Alpha needs a decision', 'codex', 'review', 'high', 'M1', ['ui'], '2026-09-20'),
-                accept: 'the reviewer can falsify this sentence' },
-    'T-0002': { ...TASK('T-0002', 'Beta is waiting on Alpha', 'claude-session1', 'blocked', 'normal', 'M1', [], '2026-09-25'),
-                blocked_by: ['T-0001'] },
+    'T-0001': { ...TASK('T-0001', 'Alpha needs a decision', 'codex', 'review', 'high', 'M1', ['ui'], '2026-09-20',
+                       'the reviewer can falsify this sentence', RECORDED) },
+    'T-0002': { ...TASK('T-0002', 'Beta is waiting on Alpha', 'claude-session1', 'blocked', 'normal', 'M1', [], '2026-09-25',
+                       '', { blocked_by: ['T-0001'] }), ...RECORDED },
+    // A promise: drawn on the page, counted as a promise, never counted as work.
+    'T-0003': TASK('T-0003', 'Promised and not yet recorded', 'codex', 'doing', 'normal', 'M1', [], '2026-09-15'),
   },
   reports: { series: [], throughput: [], blocked: [], median_cycle: null },
   conversation: {
