@@ -120,6 +120,39 @@ const watchingSince = ref(Date.now())
 const boardRefreshes = ref(0)
 watch(events, () => { boardRefreshes.value += 1 })
 
+/**
+ * How the whole board stands right now: done, dropped, and still undone.
+ *
+ * This is not derivable from the events above, and that is the point of it being
+ * a separate tally. `events` counts *moves*, so a task done before the window
+ * opened contributes no event and would be invisible to a figure built from
+ * them -- which is exactly the reading the leader was missing: a chart of
+ * closes per minute with no line for the work still standing reads as though
+ * every minute of it were progress toward nothing.
+ *
+ * Terminal means the two statuses that are not outstanding work. `blocked` is
+ * deliberately not one of them: a blocked item is unfinished, and counting it
+ * as finished is the failure this line exists to make visible.
+ */
+const tally = computed(() => {
+  const out = { undone: 0, done: 0, dropped: 0, total: 0 }
+  for (const t of board.tasks) {
+    out.total += 1
+    const s = t.status
+    if (s === 'done') out.done += 1
+    else if (s === 'dropped') out.dropped += 1
+    else out.undone += 1
+  }
+  return out
+})
+
+/** How much of the board is finished, as a percentage of the work that can be. */
+const finishedPct = computed(() => {
+  const t = tally.value
+  const denominator = t.done + t.undone
+  return denominator ? Math.round((t.done / denominator) * 100) : 0
+})
+
 const flow = computed(() => {
   // The window ends at the newest recorded event, not at the clock: a store
   // whose last write was an hour ago would otherwise open on a screen of empty
@@ -144,6 +177,17 @@ const flow = computed(() => {
   let running = 0
   const cumulative = cells.map((c) => (running += c.done))
 
+  // The same running total for opens, because one cumulative line says what was
+  // finished and nothing says what was started. Two lines on one axis is the
+  // whole reading: the gap between them is work this window created and did not
+  // close, and a window where the blue line is above the green one is a board
+  // going backwards however busy the bars look. This is *not* the count of
+  // undone work -- a task that existed before the window opened has no event
+  // here at all -- and `tally` below is the honest figure for that. Naming the
+  // difference is why both exist.
+  let opening = 0
+  const openedCumulative = cells.map((c) => (opening += c.opened))
+
   // The longest run of minutes with nothing recorded. At minute resolution this
   // is the signal that matters most -- a fabric that has been quiet for eleven
   // minutes is stalling, and no per-minute bar chart says that on its own.
@@ -165,7 +209,7 @@ const flow = computed(() => {
 
   const lastEvent = events.value.at(-1)
   const quietMinutes = lastEvent ? (Date.now() - lastEvent.ts) / BUCKET_MS : null
-  return { cells, cumulative, start, end: endBucket, opened, done, gap, burst, lastEvent, quietMinutes }
+  return { cells, cumulative, openedCumulative, start, end: endBucket, opened, done, gap, burst, lastEvent, quietMinutes }
 })
 
 /**
@@ -198,14 +242,14 @@ const flowOption = computed(() => {
     backgroundColor: 'transparent',
     grid: { left: 52, right: 48, top: 30, bottom: 34 },
     tooltip: { trigger: 'axis' },
-    legend: { data: ['opened', 'done', 'done cumulative'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: ['opened', 'done', 'opened cumulative', 'done cumulative'], top: 0, textStyle: { fontSize: 11 } },
     xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, interval: every } },
     // The axis carries its unit: a count of items over a minute bucket, and a
     // figure whose unit is only in the title is a figure somebody reads wrong.
     yAxis: [
       { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
         splitLine: { lineStyle: { opacity: 0.18 } } },
-      { type: 'value', minInterval: 1, name: 'done total', nameTextStyle: { fontSize: 10 },
+      { type: 'value', minInterval: 1, name: 'running total', nameTextStyle: { fontSize: 10 },
         splitLine: { show: false } },
     ],
     // Different mark shapes as well as different colours: the series have to be
@@ -215,8 +259,22 @@ const flowOption = computed(() => {
         itemStyle: { color: '#60a5fa' }, barMaxWidth: 10, data: f.cells.map((c) => c.opened) },
       { name: 'done', type: 'bar', stack: 'permin', symbol: 'rect', symbolSize: 6,
         itemStyle: { color: '#34d399' }, barMaxWidth: 10, data: f.cells.map((c) => c.done) },
+      // The two running totals on one axis are the whole reading: where the blue
+      // line sits above the green one, the window created more than it closed.
+      { name: 'opened cumulative', type: 'line', yAxisIndex: 1, step: 'end', symbol: 'none',
+        lineStyle: { color: '#60a5fa', width: 1.5, type: 'dotted' }, data: f.openedCumulative },
       { name: 'done cumulative', type: 'line', yAxisIndex: 1, step: 'end', symbol: 'none',
-        lineStyle: { color: '#f59e0b', width: 2 }, data: f.cumulative },
+        lineStyle: { color: '#f59e0b', width: 2 }, data: f.cumulative,
+        // What is *still* undone is not a trajectory, so it is drawn as a
+        // reference line and not as a fifth series: a series would invite the
+        // reader to watch it move, and it does not move with the window -- it is
+        // the board's standing figure, taken over every task that exists.
+        markLine: {
+          silent: true, symbol: 'none',
+          lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
+          label: { formatter: `undone ${tally.undone}`, fontSize: 10, position: 'insideEndTop' },
+          data: [{ yAxis: tally.undone }],
+        } },
     ],
   }
 })
@@ -336,6 +394,11 @@ const quietLabel = computed(() => {
               title="nothing recorded in this window: these buckets count recorded `created` and `moved -> done` events, and a plan seed has none" />
 
     <div class="aim-flow-stats">
+      <span><strong>{{ tally.undone }}</strong> undone</span>
+      <span><strong>{{ tally.done }}</strong> done</span>
+      <span><strong>{{ tally.dropped }}</strong> dropped</span>
+      <span><strong>{{ finishedPct }}%</strong> of the board finished</span>
+      <span class="aim-dim"><strong>{{ tally.total }}</strong> work item(s) in this view</span>
       <span><strong>{{ flow.opened }}</strong> opened (items)</span>
       <span><strong>{{ flow.done }}</strong> done (items)</span>
       <span><strong>{{ (flow.opened / windowMinutes * 60).toFixed(1) }}</strong> opened / h</span>
