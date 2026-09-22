@@ -508,7 +508,19 @@ expect_ok   "beta walks T-0003 to review" bash -c "
 expect_fail "'done' is refused while a blocker is open" \
   $AIM task move --as beta --channel t5 --id T-0003 --to done
 expect_ok   "and the refusal explains why" \
-  bash -c "$AIM task move --as beta --channel t5 --id T-0003 --to done 2>&1 | grep -q 'decided by something other'"
+  bash -c "$AIM task move --as beta --channel t5 --id T-0003 --to done 2>&1 | grep -q 'is blocked by T-0001'"
+# T-0221's third clause. This check used to grep for `decided by something
+# other`, a sentence the refusal carried until f4b8310. There is no such rule in
+# `task move` and there never was: the actual reason a blocked card cannot close
+# is the open blocker above, which the message names. A test that asserts the
+# tool explains a check it does not perform is worse than no test -- it is how
+# the sentence survived, so the assertion now runs in both directions. The
+# remedy half is checked too, because a refusal that names the blocker without
+# saying how to clear it is a wall rather than a gate.
+expect_ok   "and the refusal states the remedy, not a rule the tool lacks" bash -c "
+  out=\$($AIM task move --as beta --channel t5 --id T-0003 --to done 2>&1);
+  echo \"\$out\" | grep -q 'unmet edge' &&
+  ! echo \"\$out\" | grep -q 'decided by something other'"
 expect_ok   "clear the blocker by finishing it" bash -c "
   $AIM task move --as alpha --channel t5 --id T-0001 --to ready >/dev/null &&
   $AIM task move --as alpha --channel t5 --id T-0001 --to doing >/dev/null &&
