@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useBoard } from '../stores/board'
+import { directScope, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import OwnerAvatar from '../components/OwnerAvatar.vue'
 import { MAIL_STATE_TYPE } from '../theme'
@@ -271,7 +271,7 @@ async function sendDirect() {
     directError.value = response.stderr || response.stdout || `aim exited ${response.rc}`
     return
   }
-  const key = `dm:${board.writer} ⇄ ${directPeer.value}`
+  const key = `dm:${directScope(board.writer, directPeer.value)}`
   directDialog.value = false
   directSubject.value = ''
   directBody.value = ''

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useBoard } from '../../src/stores/board'
+import { directScope, useBoard } from '../../src/stores/board'
 
 describe('conversationRows', () => {
   beforeEach(() => {
@@ -75,5 +75,36 @@ describe('conversationRows', () => {
       currentPhase: 'SEALED_DIVERGENT',
       participants: ['alpha', 'beta'],
     })
+  })
+})
+
+describe('directScope', () => {
+  it('names a pair once, whichever way the message travelled', () => {
+    expect(directScope('codex', 'human')).toBe(directScope('human', 'codex'))
+    expect(directScope('claude-session1', 'codex')).toBe('claude-session1 ⇄ codex')
+    expect(directScope('codex', 'claude-session1')).toBe('claude-session1 ⇄ codex')
+  })
+
+  it('keeps two different pairs apart', () => {
+    expect(directScope('codex', 'human')).not.toBe(directScope('codex', 'claude-session1'))
+  })
+
+  it('folds a two-way exchange into one conversation', () => {
+    const board = useBoard()
+    board.doc = {
+      conversation: {
+        channels: [],
+        rooms: [],
+        mail: [
+          { from: 'human', to: 'codex', ts: '2026-09-22T01:00:00Z', body: 'out' },
+          { from: 'codex', to: 'human', ts: '2026-09-22T02:00:00Z', body: 'back' },
+        ],
+      },
+    }
+
+    expect(board.conversationRows.map((row) => row.scope)).toEqual([
+      'codex ⇄ human',
+      'codex ⇄ human',
+    ])
   })
 })

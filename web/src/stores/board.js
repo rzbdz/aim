@@ -18,6 +18,18 @@ import { days, isOverdue, today } from '../theme'
  */
 const PRIORITY_ORDER = ['high', 'normal', 'low']
 
+/**
+ * A direct message belongs to a *pair*, not to a direction.
+ *
+ * The scope used to be `from ⇄ to`, which makes `codex ⇄ human` and
+ * `human ⇄ codex` two threads: one conversation split in half, the reader's own
+ * words in one pane and the agent's answer in another, and a reply box whose
+ * addressee depended on who had written last. Sorting the two names gives one
+ * canonical key per pair. Direction is not lost -- every message header still
+ * draws `from → to` -- it just stops deciding thread identity.
+ */
+export const directScope = (a, b) => [a, b].map(String).sort().join(' ⇄ ')
+
 /** A scroll container is "at the top" if it is within this many pixels of it. */
 const TOP_EPSILON = 2
 
@@ -229,7 +241,7 @@ export const useBoard = defineStore('board', {
         rows.push({
           ...message,
           shape: 'direct',
-          scope: `${message.from} ⇄ ${message.to}`,
+          scope: directScope(message.from, message.to),
           channel: null,
           room: null,
           rule: 'a direct message is a durable record with a receipt, not a chat window',
