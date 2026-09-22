@@ -20,6 +20,27 @@ def export_csv(tasks):
     return "\n".join(lines) + "\n"
 
 
+def _fold_content_line(line, limit=75):
+    """RFC 5545 section 3.1: a content line is at most `limit` octets, and a
+    continuation begins with a single space that counts toward its own limit.
+
+    The fold points are chosen between characters, never inside one: a
+    3-byte character that does not fit on the current line starts the next one,
+    so unfolding cannot produce a different string than the one folded. The
+    octet count is what the spec limits, which is why this measures bytes and
+    not `len()`.
+    """
+    out, cur = [], b""
+    for ch in line:
+        enc = ch.encode("utf-8")
+        if cur and len(cur) + len(enc) > limit:
+            out.append(cur.decode("utf-8"))
+            cur = b" "          # the continuation marker, and part of the budget
+        cur += enc
+    out.append(cur.decode("utf-8"))
+    return out
+
+
 def _ical_date(value):
     d = parse_day(value)
     return d.strftime("%Y%m%d") if d else None
@@ -55,7 +76,8 @@ def export_ical(tasks, milestones, generated_at):
                 f"DESCRIPTION:{desc}".replace("\n", " "),
                 "END:VEVENT"]
     out.append("END:VCALENDAR")
-    return "\r\n".join(out) + "\r\n"
+    folded = [part for line in out for part in _fold_content_line(line)]
+    return "\r\n".join(folded) + "\r\n"
 
 
 def json_payload(state, viewer, risks, generated_at):

@@ -36,18 +36,20 @@ BOARD = ROOT / "bin" / "aimboard.py"
 
 passed = failed = broken = 0
 
-T0201_ICAL_EOL = (
-    "RFC 5545 requires CRLF between content lines. This file uses bare LF, so an "
-    "importer that is strict about it either refuses the file or reads it as one "
-    "long line. Fix in aimboard's ical writer; when it is fixed this expectation "
-    "fails on purpose, which is the signal to delete it and close T-0201."
-)
-T0201_ICAL_FOLDING = (
-    "RFC 5545 folds every content line at 75 octets. This file has no folding at "
-    "all -- one VEVENT arrives as a single 52,076-octet line -- so a strict parser "
-    "either rejects it or truncates the DESCRIPTION of nearly every event. Fix in "
-    "aimboard's ical writer; the same on-purpose failure applies once it is fixed."
-)
+# Both of T-0201's measured defects are now asserted as requirements rather than
+# recorded as known-broken, and the history matters because the first one was not
+# a product defect at all.
+#
+#   * CRLF. The first version of this test ran the export through
+#     `subprocess.run(..., text=True)`, whose universal-newline decoding turns
+#     CRLF into LF. The check therefore counted every line in the file as a "bare
+#     LF" and reported 932 of them against an encoder that had been emitting CRLF
+#     all along. It is a test bug that reads exactly like a product bug, and the
+#     fix is to compare the bytes the process actually wrote.
+#   * Folding. This one was real: no line was folded, so a DESCRIPTION was one
+#     physical line of up to 691 octets where RFC 5545 allows 75. Folded now, and
+#     `unfold(body)` below is the proof that folding is lossless -- the logical
+#     lines it recovers are the ones the writer meant to write.
 
 
 def expect_broken(name, still_broken, why, detail=""):
@@ -81,9 +83,15 @@ def check(name, ok, detail=""):
 
 
 def export(fmt):
+    """The export as BYTES.
+
+    Not `text=True`: universal-newline decoding would fold CRLF to LF and this
+    file has to be able to tell the two apart, because the iCal rule is about
+    which one the producer wrote.
+    """
     proc = subprocess.run(
         [sys.executable, str(BOARD), "export", "--format", fmt],
-        capture_output=True, text=True, cwd=ROOT,
+        capture_output=True, cwd=ROOT,
     )
     return proc
 
@@ -98,9 +106,16 @@ def split_lines(text):
 
 
 def unfold(text):
-    """RFC 5545 folding: a line starting with a space continues the previous one."""
+    """RFC 5545 unfolding: a line starting with a space continues the previous one.
+
+    The trailing empty element that `split_lines` produces for a file ending in
+    CRLF is dropped: it is the terminator, not a content line, and keeping it
+    would make this side of the round-trip one line longer than the file.
+    """
     out = []
     for raw in split_lines(text):
+        if raw == "" and text.endswith(("\r\n", "\n")):
+            continue
         if raw.startswith((" ", "\t")) and out:
             out[-1] += raw[1:]
         else:
@@ -108,18 +123,43 @@ def unfold(text):
     return out
 
 
+def fold(line, limit=75):
+    """RFC 5545 folding, written independently of aimboard's own folder.
+
+    The round-trip check below is only worth anything if this is not the same
+    code under test, so this one is deliberately written the other way round:
+    it slices the encoded bytes and steps back to a character boundary, where
+    `exporters._fold_content_line` walks characters and sums their lengths.
+    """
+    raw = line.encode("utf-8")
+    if len(raw) <= limit:
+        return [line]
+    out, take = [], limit
+    while raw:
+        if len(raw) <= take:
+            out.append(raw.decode("utf-8"))
+            break
+        cut = take
+        while cut > 0 and (raw[cut] & 0xC0) == 0x80:   # not a character boundary
+            cut -= 1
+        out.append(raw[:cut].decode("utf-8"))
+        raw = b" " + raw[cut:]   # the continuation marker is part of the line,
+        take = limit             # and so counts toward the same 75-octet budget
+    return out
+
+
 def main():
     # --- iCal -------------------------------------------------------------
     ical = export("ical")
-    check("export --format ical exits 0", ical.returncode == 0, ical.stderr[:300])
-    body = ical.stdout
+    check("export --format ical exits 0", ical.returncode == 0, (ical.stderr or b"")[:300])
+    body_bytes = ical.stdout
+    body = body_bytes.decode("utf-8")
     # RFC 5545 requires CRLF. `icalendar` and most apps tolerate a bare LF on
-    # import, but the spec does not, and the tolerance is not universal -- so this
-    # is recorded as a defect rather than asserted away. See the note on
-    # `expect_broken` below.
-    bare_lf = len(body.replace("\r\n", "").split("\n")) - 1
-    expect_broken("the .ics still uses bare LF instead of CRLF", bare_lf > 0,
-                  T0201_ICAL_EOL, f"{bare_lf} bare LF")
+    # import, but the spec does not and the tolerance is not universal.
+    total_nl = body_bytes.count(b"\n")
+    bare_lf = total_nl - body_bytes.count(b"\r\n")
+    check("every content line ends CRLF, with no bare LF", bare_lf == 0,
+          f"{bare_lf} bare LF in {total_nl} line ending(s)")
     check("the file opens and closes exactly one VCALENDAR",
           body.count("BEGIN:VCALENDAR") == 1 and body.count("END:VCALENDAR") == 1)
 
@@ -177,17 +217,33 @@ def main():
     check("every DTSTART parses as a calendar date", not bad_dtstart,
           f"unparseable: {bad_dtstart[:3]}")
 
-    phys = split_lines(body)
-    too_long = [l for l in phys if len(l.encode("utf-8")) > 75]
-    expect_broken("the .ics is still written as unfolded lines over 75 octets",
-                  bool(too_long), T0201_ICAL_FOLDING,
-                  f"longest physical line {max((len(l.encode()) for l in too_long), default=0)} octets "
-                  f"in {len(too_long)} line(s)")
+    # The octet rule, measured on the bytes: 75 octets excluding the CRLF, and a
+    # continuation line's leading space counts toward its own 75.
+    phys_bytes = body_bytes.split(b"\r\n")[:-1]
+    too_long = [l for l in phys_bytes if len(l) > 75]
+    check("no physical line exceeds 75 octets before folding", not too_long,
+          f"longest {max((len(l) for l in too_long), default=0)} octets "
+          f"in {len(too_long)} line(s)")
+    # Folding must be lossless: unfolding the file has to give back the logical
+    # lines, so a writer cannot satisfy the octet rule by truncating. Compared
+    # against the unfolded body of the *same* file -- the invariant is that the
+    # fold/unfold pair is the identity, not that some particular text is present.
+    phys = body_bytes.split(b"\r\n")[:-1]
+    unfolded = unfold(body)
+    folded_again = [part.encode("utf-8") for line in unfolded for part in fold(line)]
+    check("re-folding the unfolded file reproduces it byte for byte",
+          folded_again == phys,
+          f"{len(folded_again)} folded line(s) vs {len(phys)} in the file; "
+          f"first difference at "
+          f"{next((i for i, (a, b) in enumerate(zip(folded_again, phys)) if a != b), 'none')}")
+    check("at least one logical line was actually folded",
+          len(phys) > len(unfolded),
+          f"{len(phys)} physical for {len(unfolded)} logical line(s)")
 
     # --- CSV --------------------------------------------------------------
     csvout = export("csv")
     check("export --format csv exits 0", csvout.returncode == 0, csvout.stderr[:300])
-    rows = list(csv.DictReader(csvout.stdout.splitlines()))
+    rows = list(csv.DictReader(csvout.stdout.decode("utf-8").splitlines()))
     check("the CSV has a header row with the documented columns",
           rows and {"id", "status", "owner", "title"} <= set(rows[0].keys()),
           f"columns: {sorted(rows[0].keys())[:8] if rows else 'none'}")
@@ -196,7 +252,7 @@ def main():
     js = export("json")
     check("export --format json exits 0", js.returncode == 0, js.stderr[:300])
     try:
-        doc = json.loads(js.stdout)
+        doc = json.loads(js.stdout.decode("utf-8"))
     except json.JSONDecodeError as exc:
         doc = None
         check("the JSON export parses", False, str(exc))
