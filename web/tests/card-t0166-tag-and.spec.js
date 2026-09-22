@@ -130,14 +130,43 @@ async function stub(page, state) {
 
 /** The tag control, addressed by what it offers: the filter select whose
  *  placeholder is the surface's own word for tags. Positional afterwards is
- *  safe -- adding a filter moves no select, it only renumbers this one. */
+ *  safe -- adding a filter moves no select, it only renumbers this one.
+ *
+ *  The read is retried, and it is the only read here that has to be. Every other
+ *  step goes through `expect.poll`, but the control is found *before* the first
+ *  poll, so a single-shot read makes the whole pane's mount latency the test's
+ *  problem. Measured 2026-09-23, the two ways that shows up:
+ *
+ *    $ npx playwright test tests/card-t0166-tag-and.spec.js        # 10/10 green
+ *    $ npx playwright test                                        # kanban FAILS, twice over
+ *    $ npx playwright test --workers=1                            # 176/176 green
+ *
+ *  `panes/KanbanPane.vue` is a lazy chunk (`views/kanban.js`'s `() => import`),
+ *  so between `page.goto('#/kanban')` and the filter bar there is a dynamic
+ *  import, and at four parallel workers that sometimes costs more than the read.
+ *  On the two failures the Playwright error-context snapshot holds the shell
+ *  (`menubar`, "0 open - 0 late - 0 blocked") and a `main` whose only child is
+ *  the pane's own empty `<h2>` -- the filter bar had not rendered yet. The
+ *  adjacent `items` and `gantt` tests do the same bare read and did not trip,
+ *  which is why this stayed invisible: it is a race that needs the load.
+ *
+ *  Retrying rather than raising the timeout: the missing control and the
+ *  not-yet-mounted control are the same observation at different instants, and
+ *  only a retry can tell them apart. The failure message is unchanged, so a
+ *  surface that genuinely drops the control still fails by name. */
 async function tagControl(page, placeholder) {
   const selects = page.locator('.aim-filterbar .el-select')
-  const count = await selects.count()
-  for (let i = 0; i < count; i += 1) {
-    if ((await selects.nth(i).innerText()).trim() === placeholder) return selects.nth(i)
+  const indexOf = async () => {
+    const count = await selects.count()
+    for (let i = 0; i < count; i += 1) {
+      if ((await selects.nth(i).innerText()).trim() === placeholder) return i
+    }
+    return -1
   }
-  throw new Error(`no filter select labelled "${placeholder}"`)
+  await expect.poll(indexOf, {
+    message: `no filter select labelled "${placeholder}"`,
+  }).toBeGreaterThanOrEqual(0)
+  return selects.nth(await indexOf())
 }
 
 /** Choose one tag through the control. Element Plus keeps a multi-select's
