@@ -2346,7 +2346,7 @@ it by re-deriving, and the delta is the finding the section is about, committed
 against the section. Re-derived again **on the working tree** (the phrase "at
 HEAD" is replaced here too: HEAD is a pointer that moves under a reader, and this
 very paragraph is about a number that moved while someone was looking at it):
-**twelve rows across four actions** have moved since `7def563`, and one of them is
+**thirteen rows across four actions** have moved since `7def563`, and one of them is
 a whole `action` the cross-tab had no row for:
 
 | `action` | rows | `form` | `unrecorded` | `barrier` |
@@ -2376,21 +2376,26 @@ by another route.)*
 *(This note has been rewritten twice, and the sequence is the section's own
 finding happening to the section's own table. It first said "five rows have
 moved"; a re-derivation mid-write made that "six"; the pid trace below makes it
-what it is — **twelve rows over `task list` +2, `say` +2, `search` +3 and
+what it is — **thirteen rows over `task list` +3, `say` +2, `search` +3 and
 `friction` +5** — because every one of those three attempts counted *the actions
 whose columns changed* and printed them as *rows*. One table below the sentence
 about how counts move, written in the one currency that sentence says not to
 trust. The numbers above are a working-tree measurement and the *delta* rather
-than a total is what the paragraphs below reason from.)*
+than a total is what the paragraphs below reason from. *(The sentence above
+said twelve; the running ledger said twelve when it was written; a third
+`task list` refusal landed while this paragraph was being committed
+(`claude-session1`, pid 1279492 — `aim task list --as claude-session1 --channel
+hello`, the same verb the document is describing).)*
 
-**The twelve new rows are mostly not mine, and this paragraph said they all
-were.** Traced by session pid against `git show 7def563`, six of the twelve are a
-falsifier's own probes — **and they are the entire `friction` delta**: five
+**The thirteen new rows are mostly not mine, and this paragraph said they all
+were.** Traced by session pid against `git show 7def563`, six of the thirteen are
+a falsifier's own probes — **and they are the entire `friction` delta**: five
 `friction` rows, four in `hello` and one in `barrier-v0`, every one of them a
 non-participant being refused the friction report — three as `synthesizer-v0`,
 one as `synthesizer-v0` in `barrier-v0`, and one as an unregistered name
-(`unknown agent 'fakeh'`) — plus one `search` (`1239293`). Four carry
-`claude-session1`, i.e. are mine: two `task list` (`1152553`, `1237959`) and two
+(`unknown agent 'fakeh'`) — plus one `search` (`1239293`). Five carry
+`claude-session1`, i.e. are mine: three `task list` (`1152553`, `1237959`, and
+`1279492`, the third one run while this paragraph was being written) and two
 `say` (a `--kind report` refused as *"only meaningful in CROSS_EXAMINE"* and a
 `--kind note` refused as *"channel_say is False"*). **The remaining two are
 `search` rows written as agent `human` (`1202338`, `1202351`), and I cannot
