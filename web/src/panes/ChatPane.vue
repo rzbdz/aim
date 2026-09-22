@@ -78,6 +78,7 @@ const q = ref('')
 const drafting = ref('')
 const kind = ref('note')
 const sending = ref(false)
+const publishing = ref(false)
 const refusal = ref('')
 const sent = ref('')
 const historyEl = ref(null)
@@ -462,13 +463,20 @@ function quote(m) {
  * The one write path from the browser: it does not write anything itself, it runs
  * `bin/aim` and returns whatever that said. So a write from here lands in the
  * ledger, refuses when the tool refuses, and prints the refusal verbatim.
+ *
+ * A room is a write path like any other, and the card T-0219 called for
+ * (`room new/say/publish` exist and are recorded) landed in `bin/aim` while this
+ * pane still carried a card saying room sending was pending. It was not pending:
+ * the refusal below would have been printed on the *client* for a command the
+ * tool accepts, which is the one thing this pane is not allowed to do -- a
+ * message misrouted to the parent channel is bad, and a working command hidden
+ * behind prose about a mechanism that was already built is worse, because
+ * nothing in the record shows it happened. The argv is the tool's own:
+ * `aim room say --channel <ch> --id <id> --body <text>`, and the room's own
+ * draft gate is what refuses a peer, on the record, with the rule quoted.
  */
 async function send() {
   if (!drafting.value.trim() || !current.value) return
-  if (current.value.target.type === 'room') {
-    refusal.value = 'REFUSED: room writes are not implemented yet. The thread is readable, but sending here would misroute the message to a channel.'
-    return
-  }
   sending.value = true
   refusal.value = ''
   sent.value = ''
@@ -476,7 +484,9 @@ async function send() {
   const argv = t.type === 'direct'
     ? ['push', '--to', t.peer, '--subject', `reply from ${board.writer}`, '--body', drafting.value,
        '--via', 'aim dashboard', '--require-ack']
-    : ['say', '--channel', t.id, '--kind', kind.value, '--body', drafting.value]
+    : t.type === 'room'
+      ? ['room', 'say', '--channel', t.channel, '--id', t.id, '--body', drafting.value]
+      : ['say', '--channel', t.id, '--kind', kind.value, '--body', drafting.value]
   const res = await api.command(argv)
   sending.value = false
   if (res.rc === 0) {
@@ -484,6 +494,31 @@ async function send() {
     drafting.value = ''
     await board.load()
     jumpToEnd()
+  } else {
+    refusal.value = (res.stderr || res.stdout || '').trim() || `exit ${res.rc}`
+  }
+}
+/**
+ * Open a draft room on the record.
+ *
+ * `design/06` §2 makes this the deliberate act: a room written during a
+ * divergence phase is readable by its author alone until somebody publishes it,
+ * and publishing during that phase is itself a barrier event. The board shows
+ * the state and does not perform the act -- the reader presses, the command is
+ * named, and the ledger records who opened it. That is the whole reason the
+ * control exists rather than the pane publishing a room on load.
+ */
+async function publishRoom() {
+  const room = currentRoom.value
+  if (!room) return
+  publishing.value = true
+  refusal.value = ''
+  sent.value = ''
+  const res = await api.command(['room', 'publish', '--channel', room.channel, '--id', room.id])
+  publishing.value = false
+  if (res.rc === 0) {
+    sent.value = (res.stdout || '').trim() || 'published'
+    await board.load()
   } else {
     refusal.value = (res.stderr || res.stdout || '').trim() || `exit ${res.rc}`
   }
@@ -648,10 +683,51 @@ async function sendDirect() {
           </div>
         </el-card>
         <el-card v-else-if="current?.target?.type === 'room'" shadow="never" style="margin-top:4px">
-          <template #header><span>Room read state</span></template>
-          <el-alert type="warning" :closable="false" show-icon
-                    title="Room sending is not implemented yet"
-                    description="This thread is readable, but the M2 room writer is still pending. A send button here would misroute the message to the parent channel." />
+          <template #header>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span>reply as <b>{{ board.writer }}</b> to
+                <b>#{{ current?.target?.channel }} / #{{ currentRoom?.id }}</b></span>
+              <!-- The state is the room's own `visibility`, straight off the
+                   payload, with the author it is gated to. A draft is not an
+                   error and not a wait: design/06 §2 makes it the default, and
+                   the author writes into it freely. Publishing is the act that
+                   opens it, and it is a barrier event during a divergence
+                   phase -- so it is a button the reader presses, not something
+                   this pane does for them. -->
+              <el-tag size="small" :type="currentRoom?.visibility === 'published' ? 'success' : 'info'"
+                      effect="plain">
+                {{ currentRoom?.visibility === 'published' ? 'published' : 'draft' }}
+              </el-tag>
+              <span v-if="currentRoom?.published_by" class="aim-dim" style="font-size:11px">
+                opened by {{ currentRoom.published_by }}
+              </span>
+              <span style="flex:1" />
+              <el-button v-if="board.canWrite && currentRoom?.visibility !== 'published'"
+                         size="small" :loading="publishing" @click="publishRoom">
+                publish — open it to the channel
+              </el-button>
+              <span class="aim-dim" style="font-size:11px">
+                runs <code class="aim-mono">aim room {{ currentRoom?.visibility === 'published' ? 'say' : 'publish/say' }}</code>
+              </span>
+            </div>
+          </template>
+          <el-input ref="composerEl" v-model="drafting" type="textarea" :rows="4" resize="vertical"
+                    placeholder="markdown is fine. a room message is appended to the room's own hash-chained log under the channel's lock, so `aim verify --channel` covers it." />
+          <div class="aim-dim" style="font-size:11.5px;margin-top:6px">
+            A draft room is readable by its author and the leader. Anyone else sending here is
+            refused by the room gate, on the record, with the rule quoted — including you, if you
+            are not the author.
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+            <el-button type="primary" :loading="sending" @click="send">send</el-button>
+            <span class="aim-dim" style="font-size:11.5px">{{ drafting.length }} characters</span>
+            <span style="flex:1" />
+          </div>
+          <el-alert v-if="refusal" type="error" :closable="false" show-icon style="margin-top:10px"
+                    title="the tool refused, and the refusal is recorded">
+            <pre class="aim-mono" style="white-space:pre-wrap;margin:6px 0 0">{{ refusal }}</pre>
+          </el-alert>
+          <el-alert v-if="sent" type="success" :closable="false" show-icon style="margin-top:10px" :title="sent" />
         </el-card>
         <el-card v-else shadow="never" style="margin-top:4px">
           <template #header>
