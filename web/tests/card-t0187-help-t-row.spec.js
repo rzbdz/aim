@@ -51,14 +51,50 @@ const SEED_ONLY = 'seed only (not yet in the store)'
 const BOTH = 'store + seed'
 const STORE_ONLY = 'store only'
 
-/** The payload's count of each universe, keyed the way `isPromise` splits them. */
+/**
+ * The payload's count of each universe, keyed the way `isPromise` splits them.
+ *
+ * The read is scoped to the viewer the page is reading as, and it has to be: the
+ * board is gated, so `/api/state` without `?as=` answers in the *server's*
+ * default identity while the page asks as the reader's. Measured on the served
+ * board 2026-09-22: bare `/api/state` reports `viewer: claude-session1` and 148
+ * tasks, `?as=human` reports `viewer: human` and 177. The page rendered 177 and
+ * this probe, un-scoped, compared it against 148 -- so the test failed with "the
+ * row's count column says 177; /api/state has 148 tasks" while the row was right
+ * and the probe was asking a different question. Confirmed by the page's own
+ * traffic rather than by inference: the board issues `/api/state?as=human` and
+ * `/api/digest?as=human`, and nothing un-scoped.
+ *
+ * The viewer is read off the page rather than written down here. The shell's
+ * header carries it in a select (`App.vue` renders `<el-select class="aim-viewer">`
+ * whose selected cell reads `` `${id} · ${kind}` ``), and the id is the half
+ * before the separator. The select draws *two* of those cells -- an empty
+ * `el-select__input-wrapper is-hidden` ahead of the visible one -- so the read
+ * takes the first cell that has text instead of the first cell, which measured
+ * `""` and would have fallen back to the un-scoped endpoint this comment is
+ * about. Measured live: the cells are `["", "human · human"]`. That is a DOM read
+ * of a pane this file does not own and it is recorded as such, but the
+ * alternatives are worse: the payload publishes the viewer only *inside* the
+ * response to the question being asked, and starting the test board with
+ * `--as human` would bake one identity into `playwright.config.js` and change
+ * which board every other spec in the suite measures. With no select on the page
+ * the read falls back to the un-scoped endpoint, so a shell that stops drawing it
+ * fails loudly here rather than silently comparing two viewers.
+ */
 async function payloadCounts(page) {
-  const response = await page.request.get('/api/state')
+  const viewer = await page.evaluate(() => {
+    const text = [...document.querySelectorAll('.aim-viewer .el-select__selected-item')]
+      .map((cell) => (cell.textContent || '').trim()).find(Boolean)
+    return text ? text.split('·')[0].trim() : null
+  })
+  const response = await page.request.get(viewer ? `/api/state?as=${encodeURIComponent(viewer)}` : '/api/state')
   expect(response.ok(), `GET /api/state answered ${response.status()}`).toBe(true)
   const state = await response.json()
   const tasks = Object.values(state.tasks || {})
   const count = (value) => tasks.filter((task) => (task.provenance || '') === value).length
   return {
+    viewer,
+    viewerOnPayload: state.viewer,
     total: tasks.length,
     storeOnly: count(STORE_ONLY),
     both: count(BOTH),
