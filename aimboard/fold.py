@@ -402,6 +402,31 @@ def _flip(kind):
     return kind[5:] if kind.startswith("task.") else kind
 
 
+def _is_import(ev):
+    """Was this `created` a bulk recording rather than somebody's own work?
+
+    `flow_series`'s docstring answers this with `created_by != actor`, and that
+    answer is wrong twice over on the store it reads. `bin/aim` never writes
+    `created_by` on a `created` event -- the field is derived at read time, so
+    `'created_by' in ev` is False for every record in the store and the rule
+    would call every card work. And the 15 cards that genuinely did enter by bulk
+    carry the signature in their `recorded-from-plan` tag, which is the tag this
+    project uses everywhere else for exactly this.
+
+    A signature that reads a field the writer does not write is worse than a
+    missing one: it type-checks, it runs, and it labels the 07:10Z burst as work.
+    So the field is still honoured when a caller does supply it -- a harness that
+    forwards one is asking the same question -- and the tag is what settles the
+    store we have.
+    """
+    if not isinstance(ev, dict):
+        return False
+    created_by = ev.get("created_by")
+    if created_by is not None:
+        return str(created_by) != str(ev.get("actor") or "")
+    return "recorded-from-plan" in (ev.get("tags") or [])
+
+
 def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
                 digest="", tasks_sha256="", seeds=None, provenance="recorded"):
     """The `GET /api/flow` answer: a dense opened/done series, folded from RAW events.
@@ -544,8 +569,6 @@ def flow_series(events, now=None, bucket="10m", window="12h", channels=(),
                 status[tid] = ev.get("to", status.get(tid))
                 if ev.get("to") == "done":
                     done_ids.add(tid)
-                    done_actors[tid] = actor
-                    done_tids.add(tid)
             elif kind == "dropped":
                 status[tid] = "dropped"
         else:

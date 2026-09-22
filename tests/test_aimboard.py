@@ -510,7 +510,15 @@ def main():
                       bad404 == "" and advertised, bad404 or str(advertised))
                 for label in advertised:
                     ep = label.partition(" ")[0]
-                    if label.endswith("(POST, --allow-write)"):
+                    # The check is "the body advertises a route and the route
+                    # answers", and a POST route answers a POST. This used to key
+                    # on the exact suffix `(POST, --allow-write)`, so `/rpc (POST)`
+                    # -- a POST-only route that is advertised in the same list --
+                    # was probed with a GET, got the 405 its own handler documents
+                    # for a GET, and was reported as an endpoint that does not
+                    # answer. A listing that says POST and a probe that sends GET
+                    # cannot agree, however right both halves are.
+                    if "(POST" in label:
                         req = urllib.request.Request(f"{url}{ep}", method="POST", data=b"{}",
                                                      headers={"Content-Type": "application/json"})
                     else:
