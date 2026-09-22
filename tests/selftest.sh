@@ -847,6 +847,48 @@ print([r for r in rows if r.get('event')=='doorbell_created'][-1]['configId'])\"
            $AIM task doorbell delete --as alpha --channel $BELLCH --config-id \"\$cid\" >/dev/null &&
            ! $AIM task doorbell list --as alpha --channel $BELLCH --id T-0001 --json | grep -q \"\$cid\""
 
+echo "== the friction log has a writer now (T-0084) =="
+# design/06 §4: "the command that was typed, what happened, what it cost, and
+# whether the workaround touched the record". The log existed — the board read
+# `ch['friction']` and `aim verify` covered it — but nothing wrote it, so an
+# empty log was indistinguishable from a log nobody was keeping. These checks
+# are about the writer: it records the four fields, it chains, it refuses a
+# non-participant, and the board sees the record it wrote.
+expect_fail "a friction record needs a command" \
+  $AIM friction --as alpha --channel $BELLCH --add --cost "2 minutes"
+expect_fail "and a cost" \
+  $AIM friction --as alpha --channel $BELLCH --add --command "aim task list hung"
+expect_fail "a stranger cannot write to a channel's friction log" \
+  $AIM friction --as gamma --channel $BELLCH --add --command "x" --cost "1s"
+expect_ok   "a participant writes the four fields as one chained record" \
+  bash -c "$AIM friction --as alpha --channel $BELLCH --add \
+             --command 'aim relate --help hung' --happened 'printed a traceback' \
+             --cost '6 minutes' >/dev/null &&
+           python3 -c \"
+import json,sys
+r=[json.loads(l) for l in open('$AIM_ROOT/channels/$BELLCH/friction.jsonl')][-1]
+ok = (r['command']=='aim relate --help hung' and r['happened']=='printed a traceback'
+      and r['cost']=='6 minutes' and r['channel']=='$BELLCH'
+      and r['hash'] and r['prev']=='genesis')
+sys.exit(0 if ok else 1)\""
+expect_ok   "a workaround that touched the record is stated, not inferred" \
+  bash -c "$AIM friction --as alpha --channel $BELLCH --add \
+             --command 'edited ledger.jsonl by hand' --cost 'a rolled-back commit' \
+             --touched-record >/dev/null &&
+           python3 -c \"
+import json,sys
+r=[json.loads(l) for l in open('$AIM_ROOT/channels/$BELLCH/friction.jsonl')][-1]
+sys.exit(0 if r['touched_record'] is True else 1)\""
+expect_ok   "the read shape shows them, newest first" \
+  bash -c "$AIM friction --as alpha --channel $BELLCH 2>&1 | grep -q 'edited ledger.jsonl by hand' &&
+           $AIM friction --as alpha --channel $BELLCH 2>&1 | grep -q '\[touched the record\]'"
+expect_ok   "the log verifies with the channel's chain" \
+  bash -c "python3 -c \"
+import pathlib
+p = pathlib.Path('$AIM_ROOT/channels/$BELLCH/push.jsonl')
+p.write_text(p.read_text().replace('plaintext-edit', 's3cret'))\" &&
+           $AIM verify --channel $BELLCH"
+
 echo "== a verifier cannot die on the input it exists to judge =="
 # Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
 # whose entire job is to describe damage raised KeyError on a seal that had no

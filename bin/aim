@@ -2381,6 +2381,100 @@ def _render_card(agent, target):
     return json.dumps(agent_card(agent, target), indent=2, ensure_ascii=False)
 
 
+# Which chained channel files `aim verify` audits. `friction.jsonl` is written
+# with the same `append_chained` as the rest, and an unverified chain is a
+# decoration: nothing reads the `prev`/`hash` it carries, so the fields look
+# like tamper-evidence and are not. The board already verifies it (fabric.py
+# puts it in the channel's `chain` dict); this is the CLI's copy of the same
+# contract, one check instead of two answers.
+VERIFY_CHAIN = ("log.jsonl", "ledger.jsonl", "tasks.jsonl", "push.jsonl",
+                "friction.jsonl")
+
+
+def _friction_path(ch=None):
+    """Where friction lives. One record per time the fabric got in the way.
+
+    Written by the verb that is the whole of T-0084. design/06 §4 is precise
+    about the shape — "the command that was typed, what happened, what it cost,
+    and whether the workaround touched the record" — so a bare note with none of
+    the four is a note that does not exist yet. The record is chained like the
+    log and the ledger it sits beside, so `aim verify` audits it and the board
+    reads it as the channel's `friction` list, which means the cheapest
+    instrument in the system has the same evidentiary footing as every other
+    record the fabric keeps.
+    """
+    return channel_dir(ch or _CTX.get("channel") or "") / "friction.jsonl"
+
+
+def cmd_friction(args):
+    """Write or read the friction log. Nobody wrote it, so nobody did.
+
+    The wall-avoidance was invisible (design/06 §4): an agent hits a wall,
+    works around it, and the workaround is lost — three sessions later the
+    design still assumes the wall is fine. This is the writer for the log that
+    measures the fabric *as used* rather than as designed, and its whole point
+    is to be cheap enough that the note happens instead of being postponed into
+    nothing.
+
+    Deliberately not gated by the barrier, and the reason is the phase map
+    rather than a guess: this is not a position on the topic and not a claim
+    about anyone's reasoning, so `read_others` has no rule for it — it is a
+    note *about the tool* the tool ran. Refusing it in SEALED_DIVERGENT would
+    refuse the exact moment (the barrier refusing) that produces the most
+    friction, which is the one note the log exists to record. So any participant
+    or the human leader may write in any phase, and what a writer is trusted not
+    to do is put someone else's sealed reasoning in the note — that is a
+    position entered by hand, and it is refused only if it tries to cross the
+    barrier the way every other leak does.
+
+    `--touched-record` is the alarming flag and exists because design/06 §4
+    asks for it: *whether the workaround touched the record*. A workaround that
+    wrote the fabric's own log or ledger by hand, rather than through a verb, is
+    the exact failure the barrier exists to catch — bypassing the record rather
+    than navigating it — so it is stated rather than inferred, and defaulting
+    to false on purpose: an unexamined workaround is the common case, but a
+    truthful record of one that touched the record is the case the log is for.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)                 # refuses an unknown channel
+    if who not in m["participants"] and kind != "human":
+        die(f"'{who}' is not a participant in {args.channel}")
+    if args.add:
+        missing = [f for f, v in (("--command", args.command), ("--cost", args.cost))
+                   if not v]
+        if missing:
+            die(f"a friction record needs {', '.join(missing)}; "
+                f"see `aim friction --help`")
+        with Lock(channel_dir(args.channel) / ".lock"):
+            append_chained(_friction_path(args.channel), {
+                "ts": now_iso(), "event": "friction", "actor": who,
+                "channel": args.channel, "context_id": args.channel,
+                "command": args.command, "happened": args.happened,
+                "cost": args.cost,
+                "touched_record": bool(args.touched_record),
+                "action": "friction add",
+            })
+        print(f"{args.channel}: friction noted ({args.command[:60]}{'…' if len(args.command) > 60 else ''})")
+        return
+    recs = [r for r in read_jsonl(_friction_path(args.channel))
+            if r.get("channel", args.channel) == args.channel]
+    if args.json:
+        print(json.dumps(recs, indent=2, ensure_ascii=False))
+        return
+    if not recs:
+        print(f"{args.channel}: the friction log is empty — which means either "
+              f"nobody used the fabric or nobody is recording, and design/06 §4 "
+              f"calls both a failure")
+        return
+    for r in reversed(recs):
+        touched = " [touched the record]" if r.get("touched_record") else ""
+        print(f"{r.get('ts', '')[:19]}  {r.get('actor', ''):<14} "
+              f"cost={str(r.get('cost', '')):<0} "
+              f"{r.get('command', '')[:60]}{touched}")
+        if r.get("happened"):
+            print(f"          " + r["happened"][:120])
+
+
 def cmd_verify(args):
     ok = True
     # `push.jsonl` is checked with the rest because it is written with the same
@@ -2391,8 +2485,10 @@ def cmd_verify(args):
     # record, so the *history* is what makes 'which secret was live then'
     # answerable, and a history nobody verifies is a history anyone may rewrite.
     # Only TAMPER lines are printed, never contents, so verifying it prints no
-    # secret.
-    for rel in ("log.jsonl", "ledger.jsonl", "tasks.jsonl", "push.jsonl"):
+    # secret. `friction.jsonl` is covered for the same reason: a friction note
+    # that names a wall in the log no verb audits is a note that can be quietly
+    # rewritten, and the cheapest instrument must not be the first one to rot.
+    for rel in VERIFY_CHAIN:
         p = channel_dir(args.channel) / rel
         try:
             recs = read_jsonl(p)
@@ -2754,6 +2850,24 @@ def main():
 
     p = add("verify", cmd_verify)
     p.add_argument("--channel", required=True)
+
+    # The verb that gives the friction log a writer, and thereby finishes the
+    # sentence M6 opens with: a diary nobody can write to is a diary that will
+    # be empty, and an empty friction log is design/06 §4's definition of a
+    # project nobody is dogfooding. `--as --channel` sit on the root verb, not
+    # on `--add`, because the read (`aim friction` alone) needs the same
+    # identity the write does and a reader who cannot say who they are cannot
+    # be distinguished from a writer.
+    p = add("friction", cmd_friction, help="write or read the friction log: the record of the fabric getting in the way")
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--add", action="store_true", help="append a friction record (default is to read)")
+    p.add_argument("--command", default="", help="the command that was in the way (with --add)")
+    p.add_argument("--happened", default="", help="what the wall did (with --add)")
+    p.add_argument("--cost", default="", help="what it cost to get around (with --add)")
+    p.add_argument("--touched-record", dest="touched_record", action="store_true",
+                   help="the workaround wrote the fabric's own record by hand (with --add)")
+    p.add_argument("--json", action="store_true")
 
     # Its own verb rather than a flag on `verify`. `verify` validates *a
     # channel's record* — chains, seals, tamper — and this validates *the
