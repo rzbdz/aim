@@ -41,19 +41,22 @@ describe('threadWaiting: the one rule behind the filter and the row marker', () 
   })
 
   it('a direct thread is waiting when a message is addressed to the viewer and unanswered', () => {
-    const msgs = [{ by: 'codex', to: 'claude-session1', state: 'unread' },
-                  { by: 'codex', to: 'human', state: 'unread' }]
+    // Both rows carry `ack_required`, so the recipient is the only difference
+    // between them: without it the case passes for a second reason and stops
+    // discriminating the moment the rule tightens.
+    const msgs = [{ by: 'codex', to: 'claude-session1', state: 'unread', ack_required: true },
+                  { by: 'codex', to: 'human', state: 'unread', ack_required: true }]
     expect(threadWaiting(thread('direct', { type: 'direct', peer: 'codex' }, msgs), 'human', [])).toBe(true)
   })
 
   it('a demand addressed to another agent is not the viewer\'s', () => {
-    const msgs = [{ by: 'codex', to: 'claude-session1', state: 'unread' },
-                  { by: 'codex', to: 'claude-session1', state: 'unread' }]
+    const msgs = [{ by: 'codex', to: 'claude-session1', state: 'unread', ack_required: true },
+                  { by: 'codex', to: 'claude-session1', state: 'unread', ack_required: true }]
     expect(threadWaiting(thread('direct', { type: 'direct', peer: 'codex' }, msgs), 'human', [])).toBe(false)
   })
 
   it('an answered message is not waiting, whatever it asked for', () => {
-    const msgs = [{ by: 'codex', to: 'human', state: 'acked' }]
+    const msgs = [{ by: 'codex', to: 'human', state: 'acked', ack_required: true }]
     expect(threadWaiting(thread('direct', { type: 'direct', peer: 'codex' }, msgs), 'human', [])).toBe(false)
   })
 
@@ -66,14 +69,29 @@ describe('threadWaiting: the one rule behind the filter and the row marker', () 
 })
 
 describe('messageWaiting', () => {
-  it('is addressed-to-the-viewer and not-yet-answered, and nothing else', () => {
-    expect(messageWaiting({ to: 'human', state: 'unread' }, 'human')).toBe(true)
-    expect(messageWaiting({ to: 'human', state: 'acked' }, 'human')).toBe(false)
-    expect(messageWaiting({ to: 'codex', state: 'unread' }, 'human')).toBe(false)
-    expect(messageWaiting({ to: '#hello', state: 'unread' }, 'human')).toBe(false)
+  it('is addressed-to-the-viewer, asks for a receipt, and is not yet answered', () => {
+    expect(messageWaiting({ to: 'human', ack_required: true, state: 'unread' }, 'human')).toBe(true)
+    expect(messageWaiting({ to: 'human', ack_required: true, state: 'acked' }, 'human')).toBe(false)
+    expect(messageWaiting({ to: 'codex', ack_required: true, state: 'unread' }, 'human')).toBe(false)
+    expect(messageWaiting({ to: '#hello', ack_required: true, state: 'unread' }, 'human')).toBe(false)
+  })
+
+  it('does not count mail that asks for nothing, because a receipt is not owed on it', () => {
+    // The row that cost the Attention tile its number. A receipt is written with
+    // `ack_required: false` (`bin/aim`, `cmd_receipt`) and answering one flips the
+    // *original* message to `acked`, leaving the receipt in `claimed` -- a state
+    // that is not `acked`. So under the two-field rule every receipt a reader had
+    // ever received counted as waiting on them forever: measured live, 42 -> 20 for
+    // `claude-session1`, 89 -> 14 for `codex`, and the tile printed 19 beside
+    // `human`'s 15.
+    expect(messageWaiting({ to: 'human', ack_required: false, state: 'claimed' }, 'human')).toBe(false)
+    expect(messageWaiting({ to: 'human', ack_required: false, state: 'unread' }, 'human')).toBe(false)
+    // An absent field is not consent: the payload carries the flag on every row
+    // (220/220 measured), so a row without it is a row this rule cannot vouch for.
+    expect(messageWaiting({ to: 'human', state: 'unread' }, 'human')).toBe(false)
   })
 
   it('does not read a chip, because a chip is a fact about the message', () => {
-    expect(messageWaiting({ to: 'human', state: 'acked', chips: ['receipt demanded'] }, 'human')).toBe(false)
+    expect(messageWaiting({ to: 'human', ack_required: true, state: 'acked', chips: ['receipt demanded'] }, 'human')).toBe(false)
   })
 })

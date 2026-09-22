@@ -10,20 +10,45 @@
  * -- was filtered out of the one view that would have shown it. A channel can
  * never be unread under a rule that says channels are never unread.
  *
- * So the question is asked of the messages that are addressed to the viewer and
- * that nothing has answered:
+ * So the question is asked of the messages that are addressed to the viewer, that
+ * ask for a receipt, and that nothing has answered:
  *
- *   * a direct message is waiting if `to === viewer` and its `state` is not
- *     `acked`. `state` is on the wire per row already (T-0162's spec), and the
- *     row's `receipt` flag is derived from those same two fields, so the marker,
- *     the anchor and the chip cannot disagree. The chip stays, because it is the
- *     record; it stops being the predicate.
+ *   * a direct message is waiting if `to === viewer`, `ack_required` is set, and
+ *     its `state` is not `acked`. Both fields are on the wire per row already
+ *     (`state` is T-0162's, `ack_required` has never been absent: 220/220 rows of
+ *     the live payload carry it), and the row's `receipt` flag is derived from
+ *     those same two fields, so the marker, the anchor and the chip cannot
+ *     disagree. The chip stays, because it is the record; it stops being the
+ *     predicate.
  *   * a room is waiting for the unread count the server computes per agent.
  *   * a channel is waiting when its newest message is not from the viewer -- the
  *     honest thing that is computable today. A true per-viewer cursor is a fabric
  *     change (`aim read --as <who> --channel <ch> --through <msg_id>`, a new event
  *     on the chain) and it is not built; inventing one here from the browser's
  *     memory would be the weaker answer that T-0181 warns against.
+ *
+ * `ack_required` was missing from this until T-0162's tile asked for it, and what
+ * its absence cost is measured rather than argued. A receipt is written with
+ * `ack_required: false` (`bin/aim`, `cmd_receipt`), and answering one flips the
+ * *original* message to `acked` -- which leaves the receipt itself in `claimed`,
+ * a state that is not `acked`. So every receipt the reader had ever received
+ * counted as mail waiting on them, forever. On the live payload:
+ *
+ *   viewer            to+unacked   +ack_required   dropped
+ *   human                    19              15         4  (1 greet, 1 receipt, 2 notes)
+ *   codex                    89              14        75  (33 notes, 42 receipts)
+ *   claude-session1          42              20        22  (1 greet, 6 receipts, 15 notes)
+ *
+ * and the Attention tile printed the wide number: 19, against `human`'s 15. The
+ * 19 is not arithmetic the tile can be reading from anywhere -- one of the four
+ * dropped rows is a receipt `human` wrote, addressed to itself (`human ⇄ human`,
+ * measured), which no rule that asks about *incoming* mail can reach. So the
+ * predicate and the tile have now converged on one shape rather than the tile
+ * being a second derivation beside it.
+ *
+ * Greets and ordinary notes are dropped by the same clause, and that is the
+ * reading the marker's own wording endorses: `receipt demanded` is what the chip
+ * says, and a message that asks for nothing is not waiting on a receipt.
  *
  * The viewer and the rooms are arguments rather than the store, and the two
  * functions are exported, so the rule can be driven without a browser
@@ -33,7 +58,7 @@
  * happens.
  */
 export const messageWaiting = (message, viewer) => message.to === viewer
-  && message.state !== 'acked'
+  && Boolean(message.ack_required) && message.state !== 'acked'
 
 /**
  * What the payload says a channel is for, and what it holds.
@@ -243,9 +268,18 @@ const threads = computed(() => {
        * of the request; drawing both as chips made a row that reads `acked` and
        * `receipt demanded` side by side. The field is what the marker and the
        * anchor read, so the sentence and the predicate cannot drift apart.
+       *
+       * Both fields keep the wire's own names on purpose. `messageWaiting` is
+       * called on two shapes -- `board.conversationRows` (which spreads the mail
+       * row, so it carries `ack_required`) and these message objects -- and a
+       * second spelling here (`ackRequired`) made the predicate read a field that
+       * exists on one shape and is `undefined` on the other. Measured: the tree
+       * below drew every thread and marked none of them, so `codex ⇄ human` showed
+       * no badge for `human` while the tile counted the same one message. A rename
+       * is not a fix here; one field, one name, is.
        */
       state: row.state || '',
-      ackRequired: Boolean(row.ack_required),
+      ack_required: Boolean(row.ack_required),
       /**
        * What happened, and what the message asked for -- never both as one row.
        *

@@ -88,19 +88,39 @@ import { expect, test } from '@playwright/test'
 /** A timestamp at minute `mm` of a fixed hour, so thread order is mail order. */
 const at = (mm) => `2026-09-22T02:${String(mm).padStart(2, '0')}:00.000Z`
 
-/** A direct message, in the shape `/api/state` ships in `conversation.mail`. */
+/**
+ * A direct message, in the shape `/api/state` ships in `conversation.mail`.
+ *
+ * `shape` is the one field the wire does *not* carry and `board.conversationRows`
+ * adds (`stores/board.js:435`, alongside `scope`, `channel` and `room`). It is here
+ * because two readers test it: the receipts tile asks `row.shape === 'direct'`
+ * before it counts a row, and `threadKey` answers by shape (`ch:` / `room:` /
+ * `dm:`). Without it this fixture's mail is not direct mail to either of them --
+ * measured before it was added, one clause failed on `their own thread is drawn`
+ * with a row that had not been drawn at all.
+ */
 const dm = (id, from, to, state, ackRequired, ts) => ({
   msg_id: id, from, to, ts,
   subject: `subject ${id}`, body: `body ${id}`, bytes: 42,
   ack_required: ackRequired,
   acked_at: state === 'acked' ? ts : '', claimed_at: '', state,
+  shape: 'direct', scope: [from, to].sort().join(' ⇄ '),
 })
 
-/** A message that demands nothing back: a receipt, which is what d6/d7/d8 are. */
+/**
+ * A message that demands nothing back: a receipt, which is what d6/d7/d8 are.
+ *
+ * `shape`/`scope` are here for the same reason as on `dm`: `threadKey` and the
+ * receipts tile read them. `ts` is a parameter because `conversationRows` sorts on
+ * it (`stores/board.js:443`); every one of these rows is newer than every `dm` row
+ * above, and the sort is stable, so before this they kept mail order by accident
+ * rather than by the field the payload's own ordering rule reads.
+ */
 const receipt = (id, from, to, ts) => ({
   msg_id: id, from, to, ts,
   subject: `RECEIPT for ${id}`, body: `${from} received it from ${to}.\n`,
   bytes: 0, ack_required: false, acked_at: '', claimed_at: '', state: 'delivered',
+  shape: 'direct', scope: [from, to].sort().join(' ⇄ '),
 })
 
 const DEMAND_ON_HUMAN = dm('d1', 'codex', 'human', 'unread', true, at(1))
@@ -325,10 +345,15 @@ test.describe('T-0162: needs me is the recipient state, not the presence of a ch
     // holding mail addressed to the viewer that demands *nothing* -- `human` drew
     // `claude-session1 ⇄ human` (d6), `codex` drew `claude-session1 ⇄ codex` (d7),
     // `claude-session1` drew `claude-session1 ⇄ human` (d8). `messageWaiting`
-    // (`web/src/panes/ChatPane.vue:35`) asks `to === viewer && state !== 'acked'` and
-    // never asks `ack_required`. Delete this annotation when it does; until then the
-    // annotation is what keeps a red measurement from being a green lie.
-    test.fail()
+    // (`web/src/panes/ChatPane.vue:35`) asked `to === viewer && state !== 'acked'` and
+    // never asked `ack_required`.
+    //
+    // That warrant is spent and the annotation is gone with it: the predicate now
+    // asks `Boolean(message.ack_required)` as well, so the three receipt rows are
+    // not waiting mail and no longer enter the set. Playwright reports an annotated
+    // test whose body passes as "Expected to fail, but passed", which is what this
+    // test did on the fixed bundle; removing the marker is the fix for that, not a
+    // concession about the card.
     for (const viewer of VIEWERS) {
       await showViewer(page, viewer)
       // soft, so all three viewers are measured before the test is called failed
@@ -339,8 +364,8 @@ test.describe('T-0162: needs me is the recipient state, not the presence of a ch
 
   test('sent mail, mail for another agent and answered mail are not counted', async ({ page }) => {
     // Same failure as the test above, measured from the other side: the two threads
-    // the card drops are the two the shipped predicate keeps.
-    test.fail()
+    // the card drops are the two the shipped predicate kept. Annotation removed with
+    // the one above, for the same reason and on the same bundle.
     for (const viewer of VIEWERS) {
       await showViewer(page, viewer)
       const seen = await labels(page)
@@ -389,10 +414,14 @@ test.describe('T-0162: needs me is the recipient state, not the presence of a ch
   test('receipts-owed counts the recipient, and the payload counts the fabric', async ({ page }) => {
     // The card's fourth clause, on the payload the wire really ships: `fabric.py:108`
     // appends every message with `ack_required && !acked_at` and filters on no
-    // recipient, and `api.py:135` publishes that list as it is. Measured live at
-    // 08:32Z: 50 rows for `?as=human`, 50 for `?as=codex`, 50 for `?as=claude-session1`.
-    // The fixture carries the same three rows, and each viewer owes exactly one.
-    test.fail()
+    // recipient, and `api.py:135` publishes that list as it is. The fixture carries
+    // the same three rows, and each viewer owes exactly one.
+    //
+    // The predicate asks `messageWaiting`, which is the card's rule, so the three
+    // rows `unacked` names produce the same tile as the scoped payload below does:
+    // the tile no longer counts the list that counts the fabric. Annotation removed
+    // on the bundle that made it pass (`f83c4c0+dirty`); the test below, which never
+    // carried one, is the same measurement on the viewer-scoped payload.
     expect(UNACKED.length, 'the fixture ships three receipts for every viewer').toBe(3)
     for (const viewer of VIEWERS) {
       await showViewer(page, viewer, { receipts: 'fabric', hash: '#/attention' })
