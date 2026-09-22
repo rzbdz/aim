@@ -1653,6 +1653,52 @@ because the rule being broken is *the rule about rules* — and the falsifier wh
 reached this section found that the section's own crown example was one of the
 false statements it was meant to catalogue.
 
+**And the same question the whole section is about is answered a fifth time, in
+the one place a human actually looks.** The header of the board carries a phase
+chip, and the chip's phase is not the phase of the work. The chain is four hops:
+
+    aimboard/api.py:383   channel = gate_channel(state, viewer, {})
+    aimboard/api.py:504   "phase": channel.get("phase", "-")
+    web/src/stores/board.js:296   phase: (s) => s.doc?.phase || '-'
+    web/src/App.vue:312           <PhaseChip :phase="board.phase" ... />
+
+`gate_channel` (`aimboard/gate.py:43-45`) returns **the first channel, by sorted
+id, that the viewer participates in** — a rule written for a different question
+(*"which channel's phase governs a task that does not name one"*, its own
+docstring, `:37`). On the live root that resolves to, measured:
+
+| seat | the chip shows | from channel | task rows in that channel |
+|---|---|---|---|
+| `claude-session1` | `SYNTHESIS` | `barrier-v0` | **6** |
+| `human` | `SYNTHESIS` | `barrier-v0` | **6** |
+| `codex` | `SEALED_DIVERGENT` | `dev` | **0** (``dev`` has no store at all) |
+| `codex-orangement` | `COMMIT` | `hello` | 495 |
+
+**`hello` holds 495 of the root's 501 task rows and is the only channel with a
+rendered phase request, and two of the four seats are shown a different
+channel's phase for it.** A third is shown a channel that holds no tasks
+whatsoever. And nothing on the page — or in the payload — names the channel the
+chip came from: the top-level keys are `phase` and `channels`, the chip's
+tooltip is `` `${key} — ${summary}. ${consequence}` `` (`PhaseChip.vue:28`), and
+the header's next element prints the withheld count, not a channel. So the
+leader reads one integer next to no noun, out of five.
+
+**This is the repo's own stated rule, applied where it was not written.** The
+`board_scope` comment (`aimboard/api.py:436-438`) says why the payload publishes
+two scopes rather than one: *"an unlabelled total that changes with who reads it
+is precisely the failure `reports_scope` was added for."* `phase` is exactly
+that shape — it changes with who reads it and it is labelled by nothing — and it
+sits one key away from the `reports_scope` field that was added to stop this
+class of thing. The same component is bound **per channel** at nine other call
+sites in the tree (`BarrierPane.vue:408,729`, `OrgPane.vue:317,468`, and the
+Help pages); the header is the one place it is bound to a root-level scalar. The
+no-JS render path has the identical defect from the identical call
+(`aimboard/page.py:61` → `:68` → `:36`, `phase {page.phase}`), so this is not a
+front-end bug: the unlabelled value is the payload's. **A cheap fix would be to
+publish the channel beside the phase, or to bind the header chip to the pane's
+channel the way every other chip already is — but `web/src` is codex's lane and
+`bin/aim`/`aimboard` is codex's lane, so this is a report rather than an edit.**
+
 ## 4.5 Row 16: a missing flag silently becomes an identity [V]
 
 `AGENTS.md:9` gives the board command verbatim, and it includes the flag:
@@ -1867,7 +1913,7 @@ not a reader, so that cell is a category slip rather than a miscitation.
 | **receipt** | the push record's own fields | `confirm` `:3497` | `outbox` — gated on the caller's own inbox | first-class, narrow |
 | **seal** | `seals/<a>.json` | `seal` `:1354` | `synthesis-input` `bin/aim:1610` (leader + synthesizer); `status`/`verify` show digests to anyone | first-class **with one real gate and two ungated readers** |
 | **barrier phase** | `manifest.barrier` | `advance` `:1450` | the write side (`require_leader` `:830`, `advance`'s edge check `:1450`); the read side is `PHASE_RULES`, a **table**, not a reader — the same sentence the intro above makes about `:56`, so the two agree and a reader who saw them as contradicting twelve lines apart was reading a row that had already been corrected | first-class |
-| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured: **285** rows for every viewer, including a stranger) | first-class, **append-only and fully public** |
+| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **292** rows for every viewer, including a stranger — `286` of them in `hello` alone; this cell read `285` when it was written and the store had grown) | first-class, **append-only and fully public** |
 | **room** | `rooms/<id>.jsonl` | `room new` `:2822` | `visible_rooms` `gate.py:133` — **a real gate**, reached from the payload at `conversation.rooms` (`views/chat.py:44`) | first-class |
 | **friction** | `friction.jsonl` | `friction --add` `:4011` | `friction` `:4042` — gated on membership, and the payload also carries it unscoped (`channels[].friction`) | first-class, narrow, **and published anyway** |
 | **milestone** | `plan/plan.json` | **none** | `fold.report_data` | **read-only seed** |
@@ -2071,7 +2117,7 @@ some of the copies. `TASK_EVENTS` (`bin/aim:127`, the eight event names a card m
 carry) is declared and **read by nothing** — `grep TASK_EVENTS` finds the
 declaration and no reader — so the store's `tasks.jsonl` carries exactly those
 eight and never a stray one (`created 100, moved 249, commented 94, published 35,
-assigned 15, dropped 2, linked 1, retracted 1` — 497 rows at HEAD; the vector the
+assigned 15, dropped 2, linked 1, retracted 1` — **501** rows on the working tree, 497 at the revision this vector was read from; the vector the
 earlier draft printed, `created 97 … commented 91 … dropped 1`, matches **no
 single revision**: `created` is 97 at `5529368` and 98/99/100 after, `commented`
 is 87/92/93/94 and never 91, so it was assembled from more than one read), while
@@ -2632,14 +2678,20 @@ stated anywhere as a rule:
    was re-derived and this one was not, so for one revision the document carried
    two adjacent measurements of the same quantity that disagreed by exactly the
    two channel-less plan rows — `T-0018`/`T-0027` — that the section exists to
-   explain. The disagreement is not confined to the first column either: the
-   `a` row's delta moved with it, 73 → 75, because `a2a.hidden_count` returns
-   `0` for a non-participant at every revision. Only the `codex` and
-   `claude-session1` deltas held at 13 and 2 across the two trees, and they held
-   for a reason worth stating rather than assuming: **both terms grew by the same
-   two cards**, so the difference stayed put while the numbers either side of it
-   moved — which is precisely the stability that let a stale pair survive a
-   reading in §1.4.)*
+   explain. **And that causal claim is itself false, which a second falsifier
+   measured by re-materialising both trees and gating them.** `T-0018` and
+   `T-0027` are hidden in **both** tables; the +2 separating 73/49/32 from
+   75/51/34 is two *new* cards, `T-0249` and `T-0250` (both `context_id: hello`,
+   `visibility: draft`, no owner) — the two the room and `created_by` findings in
+   §4.4 were filed from. So the rows the section is about never moved, and the
+   two cards that did move are the ones this pass added. The `a` row's delta
+   moved with it, 73 → 75, because `a2a.hidden_count` returns `0` for a
+   non-participant at every revision. Only the `codex` and `claude-session1`
+   deltas held at 13 and 2 across the two trees, and they held for the reason
+   the note already gave and I should have stopped at: **both terms grew by the
+   same two cards**, so the difference stayed put while the numbers either side
+   of it moved — which is precisely the stability that let a stale pair survive
+   a reading in §1.4.)*
 
    and end-to-end on a throwaway root with one draft: `GET /api/state?as=c`
    (a registered stranger) → `tasks []`, `withheld_tasks 1`; `POST /rpc?as=c`
@@ -2652,7 +2704,7 @@ stated anywhere as a rule:
    `None not in DIVERGENCE_PHASES` is `True` at `a2a.py:792`. Note that
    `hidden_count` is a pure function over dicts: it asks `task_visible` with
    `by_id.get(task["context_id"] or task["channel"] or "", {})`, so it inherits
-   the `{}` default and returns **0** where the board returns 73.
+   the `{}` default and returns **0** where the board returns 75.
    `hidden_count`'s own docstring says it exists "so the two halves of D17 can be
    asserted against the *same* rule instead of against two rules that happen to
    agree today" — and it is not called by anything in the tree.
@@ -2678,7 +2730,7 @@ owner-or-creator the same way; the disagreement is `gate.gate_channel`'s
 fallback (a real channel declares the barring phase) against `list_tasks`'s
 `by_id.get("") → {}` (no channel means no phase means open), for a card that
 names no channel. §4.4 named `T-0018`/`T-0027`; §6.3(3) re-measured it as a
-73/0 gap for a stranger on this same root. It is a difference in **one line of
+75/0 gap for a stranger on this same root. It is a difference in **one line of
 argument**, not a second copy of the rule — which is why §4.4's "one rule, one
 owner" verdict needs to be restated as "one rule, three call sites, one gap".
 The diagram's cost is real and it is not quite the cost this section used to
