@@ -121,6 +121,14 @@ const routes = [
   ['reports', 'Reports'],
   ['barrier', 'Audit & barrier'],
   ['plan', 'Plan & risks'],
+  // Ten, not nine: the org pane registered in `web/src/views/org.js` and rendered
+  // at `#/org` from the start, but neither nav key list named it, so it had no
+  // rendered entry point. It is in the shell's Governance group now, which is why
+  // this list and the menu-item count below both moved by one. The number is not
+  // a detail of this file: it is the only assertion that would go red if a pane
+  // were ever registered and left unreachable again, so it is kept exact rather
+  // than relaxed to `>= 9`.
+  ['org', 'Org'],
   ['help', 'Help & concepts'],
 ]
 
@@ -196,7 +204,7 @@ test('conversation history and pinned input never overlap or reload the page', a
     'Governance',
     'Reference',
   ])
-  expect(await page.locator('.el-menu-item').count()).toBe(9)
+  expect(await page.locator('.el-menu-item').count()).toBe(10)
   await expect(page.locator('.aim-reader')).toBeVisible()
   await page.evaluate(() => {
     const history = document.querySelector('.aim-history')

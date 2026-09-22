@@ -28,8 +28,11 @@ import { expect, test } from '@playwright/test'
  *              glyph with no accessible name, and the card never says "blocked"
  *   #/items    the status cell and the "blocked by" cell are text ............ yes
  *
- * The Kanban clause carries `test.fail()` with that reason rather than being
- * weakened or deleted: it is the defect, recorded.
+ * The Kanban clause carried `test.fail()` with that reason rather than being
+ * weakened or deleted. That defect has since landed (`KanbanPane.vue` says
+ * "blocked" in text and names the glyph), so the marker is gone from that test
+ * and the assertion is untouched; the other four clauses in this file never
+ * carried one.
  *
  * Revision measured for this file: recorded in the report that carried it; the
  * bundle was read from `GET http://127.0.0.1:8777/api/revision` at run time.
@@ -154,10 +157,6 @@ test.describe('T-0203 status and blockers survive with colour taken away', () =>
 
     const card = page.locator('article[data-id="T-1305"]') // doing, blocked by T-1300
     const readable = await readText(card)
-    test.fail(true, 'measured on the served bundle: the card for T-1305 reads '
-      + `"${(await card.innerText()).replace(/\s+/g, ' ').trim()}" -- it carries the blocker id and a `
-      + 'lock glyph (KanbanPane.vue:210), but the word "blocked" and an accessible name for the '
-      + 'glyph are both absent, so the state is carried by colour and by an unnamed icon')
     expect(readable, 'the card must say "blocked" in text, or name the glyph').toMatch(/blocked/i)
   })
 

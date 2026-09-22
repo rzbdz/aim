@@ -43,7 +43,7 @@ const PANE_GROUPS = [
   { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
   { title: 'Conversation', keys: ['chat'] },
   { title: 'Insight', keys: ['reports'] },
-  { title: 'Governance', keys: ['barrier', 'plan'] },
+  { title: 'Governance', keys: ['barrier', 'plan', 'org'] },
   { title: 'Reference', keys: ['help'] },
 ]
 
@@ -126,6 +126,14 @@ const pathOf = (view) => `/${view.key}`
  * Two lists in one page is how a contents comes to link to a section that was
  * renamed -- so the hrefs here are `phaseAnchor(entry.id)` against ids that the
  * `v-for`s below consume.
+ *
+ * A title is a *summary*, not a claim, so the identifier section's title names
+ * what the section is about rather than quoting two example ids. A quoted `M3`
+ * in a title is a token a reader can see and cannot follow (T-0185 clause 3),
+ * and the ids it would have to link to are the rows the section itself is
+ * about; the section's own heading named the same examples, which made a
+ * sentence about the prefixes the one place on the page with two unlandable
+ * identifiers in it.
  */
 const SECTIONS = [
   { id: 'panes', title: 'The panes — what each page is for' },
@@ -134,7 +142,7 @@ const SECTIONS = [
   { id: 'machine', title: 'The state machine — how a channel moves' },
   { id: 'tokens', title: 'The words on the screen — every token the board draws' },
   { id: 'inspecting', title: 'How a person acts on a work item — and on a decision' },
-  { id: 'identifiers', title: 'Identifiers — what a bare M3 or R7 means' },
+  { id: 'identifiers', title: 'Identifiers — what a bare letter and number mean' },
   { id: 'glossary', title: 'Glossary' },
 ]
 
@@ -237,20 +245,35 @@ const taskSplit = computed(() => {
 const milestoneFiles = computed(() => [...new Set(Object.values(board.milestones || {})
   .map((m) => m.source).filter(Boolean))].sort())
 
+/**
+ * The prefix a row is addressed by, in the one place this page writes one down.
+ *
+ * `D7` in another pane's text is a definition this page owns, and the id is the
+ * contract that makes it landable from outside: `#prefix-d` is what a link
+ * points at, and `#prefix-` is the same string with the row's own `prefix` in it
+ * (`ID_PREFIXES` spells that as `D`, so the id is not the displayed text and
+ * cannot be a second spelling of it). It lives here rather than in `concepts.js`
+ * because nothing outside this page reads it: a shared vocabulary is what
+ * `concepts.js` is for, and an anchor only this file's `v-for` can produce is
+ * this file's.
+ */
+const prefixAnchor = (prefix) => `prefix-${String(prefix || '').replace(/[^a-z0-9]/gi, '').toLowerCase()}`
+
 const identifierRows = computed(() =>
   ID_PREFIXES.map((entry) => {
     const count = countOf[entry.prefix]?.() ?? 0
+    const anchor = prefixAnchor(entry.prefix)
     if (entry.prefix === 'T-') {
       // The T- row's `where` in `concepts.js` is the convention for an id the
       // *store* minted, and it is true of `taskSplit.recorded` of them. The
       // split is what the row has to say instead, so the override lives here
       // rather than as a second, contradicting entry in the shared vocabulary.
-      return { ...entry, count, split: taskSplit.value, where: 'the plan seeds it, or `aim task new` records it' }
+      return { ...entry, anchor, count, split: taskSplit.value, where: 'the plan seeds it, or `aim task new` records it' }
     }
     if (entry.prefix === 'M' && milestoneFiles.value.length) {
-      return { ...entry, count, where: `written by hand in ${milestoneFiles.value.map((f) => `plan/${f}`).join(', ')}` }
+      return { ...entry, count, anchor, where: `written by hand in ${milestoneFiles.value.map((f) => `plan/${f}`).join(', ')}` }
     }
-    return { ...entry, count }
+    return { ...entry, count, anchor }
   }))
 
 /**
@@ -364,7 +387,12 @@ const ACTIONS = computed(() => {
     { want: 'Answer a decision that is waiting on you', where: 'the decisions card on Attention',
       argv: `aim task move ${at} --id <T-…> --to <status> --reason "…"` },
     { want: 'Ask the leader to open cross-examination', where: 'a participant cannot advance a channel',
-      argv: `aim request-advance ${at} --to CROSS_EXAMINE --reason "…"` },
+      // The target is drawn as the phase's *chip*, not as its enum. `--to` takes
+      // the protocol value, but a bare `CROSS_EXAMINE` in a command column is an
+      // enum in a label with no English beside it, which is the defect this page
+      // exists to answer (T-0186 clause 3); the chip carries the value in its
+      // tooltip, one hover away, which is the bargain the phases table makes.
+      head: `aim request-advance ${at} --to`, to: 'CROSS_EXAMINE', tail: '--reason "…"' },
     { want: 'Advance the channel yourself (leader only)', where: 'the phase control on Audit & barrier',
       argv: `aim advance ${at} --to <PHASE>` },
     { want: 'Record a blocker between two items', where: 'the dependency editor on Gantt and Plan',
@@ -690,7 +718,18 @@ const ACTIONS = computed(() => {
         <tbody>
           <tr v-for="row in ACTIONS" :key="row.want">
             <td>{{ row.want }}<div class="aim-dim" style="font-size:11.5px;margin-top:3px">{{ row.where }}</div></td>
-            <td><code class="aim-mono">{{ row.argv }}</code></td>
+            <td>
+              <!-- Most rows are one command string. This one carries a phase,
+                   so it is drawn as the chip the rest of the board draws phases
+                   with, and the enum stays one hover away in the chip's tooltip
+                   rather than sitting in the command as a bare token. -->
+              <code v-if="!row.to" class="aim-mono">{{ row.argv }}</code>
+              <template v-else>
+                <code class="aim-mono">{{ row.head }}</code>
+                <PhaseChip :phase="row.to" style="margin:0 4px" />
+                <code class="aim-mono">{{ row.tail }}</code>
+              </template>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -706,11 +745,20 @@ const ACTIONS = computed(() => {
     </el-card>
 
     <el-card shadow="never" style="margin-bottom:14px" id="identifiers">
-      <template #header><span>Identifiers — what a bare M3 or R7 means</span></template>
+      <!-- The heading carries `id="identifiers"`, which is the way in for this
+           section: a `D7` or an `M3` elsewhere on the board lands on it, and so
+           does the contents. The heading used to spell two example ids, which
+           made the page that explains the prefixes the one place on it with two
+           tokens and nothing to follow them to (T-0185 clause 3). -->
+      <template #header><span>Identifiers — what a bare letter and number mean</span></template>
       <p class="aim-dim" style="font-size:12.5px;margin-top:0">
         Single letters are drawn on the board, the plan and the dependency lists. They are a naming
         convention held in the plan files rather than a vocabulary the tool defines, so each row says who
-        is the authority for it and how many exist in the record right now.
+        is the authority for it and how many exist in the record right now. Every row carries an anchor —
+        <code class="aim-mono">prefix-t</code>, <code class="aim-mono">prefix-m</code>,
+        <code class="aim-mono">prefix-d</code>, <code class="aim-mono">prefix-r</code> — and that anchor
+        is the id a bare letter and number elsewhere on the board resolves to, so the explanation the
+        reader is sent to is the row that defines the prefix they clicked.
       </p>
       <table class="aim-help-table">
         <thead>
@@ -722,7 +770,7 @@ const ACTIONS = computed(() => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in identifierRows" :key="row.prefix">
+          <tr v-for="row in identifierRows" :key="row.prefix" :id="row.anchor">
             <td><code class="aim-mono"><strong>{{ row.prefix }}</strong></code></td>
             <td>{{ row.kind }}</td>
             <td class="aim-dim">{{ row.count }}</td>

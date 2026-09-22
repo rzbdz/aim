@@ -38,10 +38,11 @@
  *      CROSS_EXAMINE, RESOLVE, CLOSED -- the same enum the row above it links as
  *      "Committed", "Synthesising", ...)
  *
- * All three clauses fail on that revision, so each test carries `test.fail()` with
- * the measured reason. That is not a weakened assertion: when a section list
- * appears the test that measures it starts passing, which Playwright reports as an
- * *unexpected pass* -- the annotation has to be removed deliberately.
+ * Clauses 2 and 3 fail on that revision. Since then clauses 1 and 3 have landed,
+ * so only clause 2 still carries `test.fail()` with its measured reason. That is
+ * not a weakened assertion: when a section list appears the test that measures it
+ * starts passing, which Playwright reports as an *unexpected pass* -- the
+ * annotation has to be removed deliberately.
  *
  * Two of the three assertions are written to compare the page against itself:
  *   * clause 1 compares the sentence in Help with the hint the shell shows on
@@ -110,7 +111,12 @@ async function openHelp(page) {
  * same line as that link.
  */
 test('T-0186: Help opens with a map of every pane, in the shell\'s own words', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: Help links 7 of the 9 shell routes (no #/gantt, no #/chat) and 0 of the 9 arrival sentences from views/*.js appear anywhere in its 4308px')
+  // Clause 1's defect was measured 2026-09-22 on bundle 870b282+dirty: Help linked
+  // 7 of the 9 shell routes (no #/gantt, no #/chat) and none of the 9 arrival
+  // sentences appeared anywhere in its 4308px. `HelpPane.vue` grew its PANE_GROUPS
+  // directory afterwards, and on the bundle built 2026-09-22T10:44Z this test runs
+  // "Expected to fail, but passed" -- so the marker is gone and the assertions are
+  // untouched. Clauses 2 and 3 below still fail for real and keep their markers.
   const routes = await shellRoutes(page)
   expect(routes.length, 'the shell rendered no nav items, so "every route in the shell" is not measurable').toBeGreaterThan(0)
   // A route with no arrival sentence would make the comparison below pass by
@@ -227,7 +233,12 @@ test('T-0186: one click reaches any section, and Element Plus says which one', a
  * phase's, "Sealed", which is the wrong label for the enum beside it).
  */
 test('T-0186: no protocol enum in Help without its English label beside it', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: 5 rows render a bare COMMIT/SYNTHESIS/CROSS_EXAMINE/RESOLVE/CLOSED in the "usually next" cell, with the English word for a different phase in the block and no link')
+  // Clause 3's defect was measured 2026-09-22 on bundle 870b282+dirty: 5 rows
+  // rendered a bare COMMIT/SYNTHESIS/CROSS_EXAMINE/RESOLVE/CLOSED in the "usually
+  // next" cell, with the English word for a different phase in the block and no
+  // link. HelpPane's TRANSITIONS rows now carry the label beside the enum, and on
+  // the bundle built 2026-09-22T10:51Z this test runs "Expected to fail, but
+  // passed" -- so the marker is gone and the assertion below is untouched.
   await openHelp(page)
 
   const report = await page.evaluate((enums) => {

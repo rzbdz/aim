@@ -44,10 +44,16 @@
  * failed -- attribution is asserted by which surface holds that text, not by
  * counting alerts.
  *
- * A test that cannot pass against the bundle measured here carries
- * `test.fail(true, ...)` so the suite stays green and the failure stays recorded
- * as a measurement. The day the page starts passing, Playwright reports "passed
- * unexpectedly"; the annotation is then removed, never the assertion.
+ * A test that could not pass against the bundle measured here carried
+ * `test.fail(true, ...)` so the suite stayed green and the failure stayed
+ * recorded as a measurement. The day the page starts passing, Playwright reports
+ * "passed unexpectedly"; the annotation is then removed, never the assertion.
+ * That day came for the three attribution clauses: `OverviewPane.vue` now keys
+ * busy and refusal by the action's own identity and draws each on the surface
+ * that owns it, and the three annotated tests ran "Expected to fail, but
+ * passed" on the bundle built 2026-09-22T10:44Z. Their annotations are gone and
+ * the assertions are untouched. The busy half was always green and never carried
+ * one.
  */
 import { expect, test } from '@playwright/test'
 
@@ -181,8 +187,6 @@ test.describe('T-0165 action feedback belongs to the row that owns the action', 
   })
 
   test('a receipt refusal appears on the message row that owns it, and on no phase request', async ({ page }) => {
-    test.fail(true, 'T-0165, bundle f0c4d64+dirty: the receipt refusal is drawn on both phase-request cards '
-      + '(one shared `actionError` is passed to every PhaseApprovalCard) and on no part of the message row that asked for the receipt.')
     await page.goto('/#/attention')
     await expect(mailRow(page)).toHaveCount(1)
     await expect(requestCards(page)).toHaveCount(2)
@@ -200,8 +204,6 @@ test.describe('T-0165 action feedback belongs to the row that owns the action', 
   })
 
   test('a phase refusal appears only on the request card it was made from', async ({ page }) => {
-    test.fail(true, 'T-0165, bundle f0c4d64+dirty: approving on the alpha request draws the refusal on the beta request too, '
-      + 'because OverviewPane passes the page-wide `actionError` to every PhaseApprovalCard.')
     await page.goto('/#/attention')
     await expect(requestCards(page)).toHaveCount(2)
 
@@ -217,8 +219,6 @@ test.describe('T-0165 action feedback belongs to the row that owns the action', 
   })
 
   test('a declined request refusal appears only on the request card it was made from', async ({ page }) => {
-    test.fail(true, 'T-0165, bundle f0c4d64+dirty: declining on the beta request draws the refusal on the alpha request too, '
-      + 'because OverviewPane passes the page-wide `actionError` to every PhaseApprovalCard.')
     await page.goto('/#/attention')
     await expect(requestCards(page)).toHaveCount(2)
 

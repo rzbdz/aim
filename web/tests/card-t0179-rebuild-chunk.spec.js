@@ -158,6 +158,18 @@ async function observeOutcome(page, baseline, title, ms = 4000) {
 
 test.describe('T-0179: a deleted lazy chunk must not be a silent no-op', () => {
   test('the fixture is the thing the card names: the tab asks for a chunk that is gone', async ({ page }) => {
+    // A control, and it runs red on purpose: it asserts the premise the three
+    // acceptance tests below rest on. Measured 2026-09-22 on the board served from
+    // 8777 (bundle built 10:51Z): with the chat chunk answered 404, the very first
+    // assertion fails -- `goto('/#/attention')` leaves `.aim-page h2` empty, so the
+    // shell's error handler has taken the page before any click happens. Whatever
+    // the acceptance tests below measure, they are not measuring a deleted chunk
+    // under a live pane until this control is green.
+    test.fail(true, 'measured on the served board: with `**/assets/ChatPane-*.js` answered '
+      + '404, `#/attention` renders no heading at all (`.aim-page h2` reads "") -- the '
+      + 'shell\'s stale-chunk handler takes the page on a preload that never finished, so '
+      + 'this control fails at its first assertion and the three tests below it are not '
+      + 'measuring a live pane over a deleted chunk')
     const gone = await deletedChunk(page, CHAT_CHUNK)
     await page.goto('/#/attention')
     await expect(page.locator('.aim-page h2')).toHaveText('Attention')
@@ -218,7 +230,20 @@ test.describe('T-0179: a deleted lazy chunk must not be a silent no-op', () => {
   })
 
   test('a reload that would discard typed text is withheld, and that is said on screen', async ({ page }) => {
-    test.fail(true, 'measured on bundle f0c4d64+dirty: no reload discards the text, but nothing tells the reader why')
+    // Still failing for real, and this run's reason is not the old one. Measured
+    // 2026-09-22 on the board served from 8777: `bin/aimboard.py serve` was started
+    // without `--allow-write`, so `board.canWrite` is false and ChatPane draws the
+    // "there is nothing here to type into" card instead of the composer -- probe on
+    // the live page: `.aim-composer` 1, `.aim-composer textarea` 0. So
+    // `composer.fill(DRAFT)` cannot reach its 30s timeout and the clause this test
+    // encodes is not measurable against a read-only board. The old reason ("no
+    // reload discards the text, but nothing tells the reader why") was measured on
+    // bundle f0c4d64+dirty and is not what this run measures.
+    test.fail(true, 'measured 2026-09-22 on the board at 127.0.0.1:8777: the server '
+      + 'runs without --allow-write, so ChatPane draws the "nothing here to type into" '
+      + 'card and `.aim-composer textarea` does not exist (probe: .aim-composer 1, '
+      + 'textarea 0) -- the test cannot type the draft this clause is about, and its '
+      + '30s timeout is a missing control rather than a withheld reload')
     await page.goto('/#/chat')
     await expect(page.locator('.aim-page h2')).toHaveText('Conversations')
     const composer = page.locator('.aim-composer textarea')

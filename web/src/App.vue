@@ -201,7 +201,7 @@ const navGroups = computed(() => {
     { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
     { title: 'Conversation', keys: ['chat'] },
     { title: 'Insight', keys: ['reports'] },
-    { title: 'Governance', keys: ['barrier', 'plan'] },
+    { title: 'Governance', keys: ['barrier', 'plan', 'org'] },
     // Concepts last, and in the nav rather than hidden behind a "?": the reader
     // who needs it is the one who does not yet know what to look for.
     { title: 'Reference', keys: ['help'] },

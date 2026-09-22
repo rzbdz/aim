@@ -33,11 +33,17 @@ import { PHASES } from '../src/concepts.js'
  *     refusals      top=4541  h= 497px   (0 of 0 records)
  *     phase history top=5052  h= 284px   ("only the leader moves it")
  *
- * and no element in the pane contains the string `aim advance`. The page cannot
- * satisfy the acceptance today, so every test that encodes a missing clause is
- * declared with `test.fail(true, ...)`. Each failure is a measurement, and the
- * day the page starts passing it, Playwright reports "passed unexpectedly": the
- * annotation is then to be removed, never the assertion.
+ * and no element in the pane contained the string `aim advance`. The page could
+ * not satisfy the acceptance then, so every test that encoded a missing clause
+ * was declared with `test.fail(true, ...)`. Each failure is a measurement, and
+ * the day the page starts passing it, Playwright reports "passed unexpectedly":
+ * the annotation is then to be removed, never the assertion.
+ *
+ * That day came: `BarrierPane.vue` grew the leader card, the purpose sentence
+ * and the collapsed seal rows, and all five annotated tests ran "Expected to
+ * fail, but passed" on the bundle built 2026-09-22T10:44Z. The five annotations
+ * are therefore gone and the assertions are untouched -- the numbers in the
+ * measurements block above are history, not a description of the current pane.
  *
  * Assertions are made against a fixture, because the acceptance is about the
  * page's shape and not about what the live fabric holds today. The fixture keeps
@@ -173,7 +179,6 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('the page states its purpose in one sentence', async ({ page }) => {
-  test.fail(true, 'T-0192: the pane has one heading ("Audit & barrier") and no purpose sentence above the evidence.')
   await page.goto('/#/barrier')
   await expect(page.locator('.el-tab-pane:visible')).toBeVisible()
   const s = await page.evaluate(snapshot)
@@ -187,7 +192,6 @@ test('the page states its purpose in one sentence', async ({ page }) => {
 })
 
 test('the pane is ordered barrier-first and evidence-second', async ({ page }) => {
-  test.fail(true, 'T-0192: the leader card does not exist, and the first card is the chain.')
   await page.goto('/#/barrier')
   await expect(page.locator('.el-tab-pane:visible')).toBeVisible()
   const s = await page.evaluate(snapshot)
@@ -205,7 +209,6 @@ test('the pane is ordered barrier-first and evidence-second', async ({ page }) =
 })
 
 test("the leader's action is above the fold and renders the exact aim advance argv", async ({ page }) => {
-  test.fail(true, 'T-0192: the page offers the leader no advance action and never prints an `aim advance` command.')
   await page.goto('/#/barrier')
   await expect(page.locator('.el-tab-pane:visible')).toBeVisible()
   const s = await page.evaluate(snapshot)
@@ -233,7 +236,6 @@ test("the leader's action is above the fold and renders the exact aim advance ar
 })
 
 test('sealed claims are collapsed behind their seal rows', async ({ page }) => {
-  test.fail(true, 'T-0192: the seals card prints every claim inline -- 3931px live, 73% of the page.')
   await page.goto('/#/barrier')
   await expect(page.locator('.el-tab-pane:visible')).toBeVisible()
   const s = await page.evaluate(snapshot)
@@ -253,7 +255,6 @@ test('sealed claims are collapsed behind their seal rows', async ({ page }) => {
 })
 
 test('an empty section renders as one line', async ({ page }) => {
-  test.fail(true, 'T-0192: an empty refusals table is 497px and keeps three filter selects.')
   await routeState(page, EMPTY)
   await page.goto('/#/barrier')
   await expect(page.locator('.el-tab-pane:visible')).toBeVisible()

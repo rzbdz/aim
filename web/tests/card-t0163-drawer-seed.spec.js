@@ -273,6 +273,13 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
   })
 
   test('the open drawer shows the board as it is now, not the object it was opened with', async ({ page }) => {
+    // Carries no `test.fail(true, ...)` because it measured green when the file was
+    // written -- and it is red now, at the assertion that the drawer follows the
+    // *#/api/state* payload a peer's write would move. What this run measured on the
+    // board served from 8777 (bundle built 2026-09-22T10:51Z): the drawer keeps the
+    // task object it was opened with, so a state that renames the dependency never
+    // reaches it. Recorded here as the measurement; unlike the acceptance clauses
+    // above this one is not annotated, so it fails the suite rather than the file.
     await open(page)
     let moved = false
     // The payload moves under the drawer the way a peer's write moves it: a new
@@ -300,18 +307,15 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
 
   test('the note and the error/result state do not survive a task change or a close', async ({ page }) => {
     // Measured 2026-09-22 against bundle 870b282+dirty (stale true): after the
-    // fixture accepts one action and refuses the next, the panel still draws the
-    // success alert and the refusal after the selected task changed (the
-    // open-blocker link moves the drawer to T-0012 without closing it), and the
-    // decision note typed for T-0011 is still in the textarea after the drawer
-    // was closed and reopened on the same row. `el-drawer` is mounted without
-    // `destroy-on-close` and nothing in `TaskDecisionDrawer.vue` resets the three
-    // refs when `task` changes.
-    test.fail(true,
-      'T-0163 acceptance 3 FAIL (bundle 870b282+dirty, /api/revision stale true): '
-      + '`decisionNote`, `error` and `result` are component refs with no watcher on '
-      + '`props.task`, and `el-drawer` has no `destroy-on-close`, so the note typed for '
-      + 'T-0011 and the alerts of its last action survive both a task change and a close.')
+    // fixture accepts one action and refuses the next, the panel drew the success
+    // alert and the refusal after the selected task changed (the open-blocker link
+    // moves the drawer to T-0012 without closing it), and the note typed for
+    // T-0011 was still in the textarea after the drawer was closed and reopened on
+    // the same row. That is history: on the bundle built 2026-09-22T10:44Z this
+    // test runs "Expected to fail, but passed", so its `test.fail(true, ...)` is
+    // gone and the assertions below are untouched. The other clause in this file
+    // (acceptance 1, the argv the drawer records) still fails for real and keeps
+    // its marker.
     await open(page)
     const panel = await drawerOf(page, REVIEW.id)
 
