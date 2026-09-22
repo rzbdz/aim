@@ -60,13 +60,12 @@ function flow(windowMinutes) {
 function option(f, windowMinutes) {
   const labels = f.cells.map((c) => clock(c.t))
   const every = Math.max(0, Math.ceil(f.cells.length / 12) - 1)
-  const unit = windowMinutes <= 60 ? 'min' : 'window'
   return {
     grid: { left: 52, right: 48, top: 30, bottom: 34 },
     tooltip: { trigger: 'axis' },
     legend: { data: ['opened', 'done', 'closes, the whole store', 'opened cumulative', 'closed cumulative'], top: 0, textStyle: { fontSize: 11 } },
     xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, interval: every } },
-    yAxis: { type: 'value', minInterval: 1, name: `items / ${unit}`, nameTextStyle: { fontSize: 10 },
+    yAxis: { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
              splitLine: { lineStyle: { opacity: 0.18 } } },
     series: [
       { name: 'opened', type: 'bar', stack: 'perbucket', symbol: 'circle', symbolSize: 6,

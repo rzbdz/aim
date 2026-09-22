@@ -313,7 +313,6 @@ const flowOption = computed(() => {
   // 60-minute window otherwise prints sixty overlapping labels and none of them
   // is legible.
   const every = Math.max(0, Math.ceil(f.cells.length / 12) - 1)
-  const unit = windowMinutes.value <= 60 ? 'min' : 'window'
   return {
     backgroundColor: 'transparent',
     grid: { left: 52, right: 48, top: 30, bottom: 34 },
@@ -328,10 +327,26 @@ const flowOption = computed(() => {
     // did not use, was indistinguishable from a series of the rate that happened
     // to climb. Everything here is a count of items, so everything here shares
     // the scale it is counted on, and a reader can compare a bar with a line
-    // without reading either axis. The unit says `min` under an hour and
-    // `window` over it, because past an hour one bucket is more than a minute
-    // and an axis named `items / min` would then be wrong by that factor.
-    yAxis: { type: 'value', minInterval: 1, name: `items / ${unit}`, nameTextStyle: { fontSize: 10 },
+    // without reading either axis.
+    //
+    // The unit is `min` at every window, not only the short ones. The buckets are
+    // one minute wide at *every* setting -- `cells` is `windowMinutes` long and
+    // `BUCKET_MS` is a minute -- so "1440 minutes" draws 1440 bars of one minute
+    // each and the rate on this axis is a rate per minute throughout. Naming it
+    // `window` past an hour, which is what this did, said the opposite: it made a
+    // bigger bar look like a coarser bucket, when the only thing that changed was
+    // how many buckets were drawn.
+    //
+    // What does not survive the long windows is the bar as a *mark*: at 1440
+    // buckets over the 1138px this chart is measured at, a bucket is 0.79px wide.
+    // `barMaxWidth` clamps the maximum and nothing floor-clamps the minimum, so
+    // the bars stop separating and the per-minute reading is gone. The step curve
+    // still reads there, which is the other reason the store's closes are drawn
+    // as a line rather than as a second pair of bars. Left as it is rather than
+    // bucketed coarser at long windows, because a wider bucket would change what
+    // the numbers mean; a reader who picks "last 24 h" is asking for the day's
+    // shape, and the curve is what gives it to them.
+    yAxis: { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
              splitLine: { lineStyle: { opacity: 0.18 } } },
     // Different mark shapes as well as different colours: the series have to be
     // told apart by a reader who is not being shown the legend's colours.
