@@ -186,6 +186,15 @@ The allocator is per-channel (`bin/aim:1832`); the merge is per-root
 (`aimboard/fabric.py:281`). Either half alone is defensible; together they are
 a data-loss shape, and nothing warns.
 
+**And there is a second, root-wide source of ids the allocator does not merge
+with the first.** `_plan_id_floor` (`bin/aim:1788`) reads every `plan/*.json`
+under the root and floors the per-channel counter above it. That was added
+because plan seeds once collided with store events, and it works — but it means
+a root's id space is *two* sources constrained by *one* floor, and the seed
+files could collide with each other. `plan/plan.json` alone carries 155 seeds,
+which is why this root's `hello` allocator is at `T-0245` rather than `T-0091`.
+Constructible, not measured live; recorded here because it is the same seam.
+
 `channel_kind` / `channel_lifecycle` (`aimboard/fabric.py:49,58`) compute
 scratch-vs-project and empty/dormant/active. **Nothing reads either.** `hello`
 derives `project` and `dev` derives `project`; the heuristic miscalibrates
@@ -267,10 +276,124 @@ a `file:line`.
 | 8 | `--force` skips transition legality and nothing else | **it also bypasses the seal quorum and the synthesizer check**; `design/17:222` says otherwise | `bin/aim:1463` **[V]** |
 | 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
 | 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits **[V]** |
+| 11 | a `human` is the leader, and only the leader | **every gate in the tool exempts any name that typed `--kind human`** — see below, it is the largest single hole | `bin/aim:2126` **[V]** |
+| 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns 70 drafts the board withholds from the same caller** | `aimboard/a2a.py:797` **[V]** |
+| 13 | the seal hides a participant's reasoning from everyone but the synthesizer | **any self-declared `human` can read the mixed bundle — including one who never sealed and is not a participant** | `bin/aim:1610` **[V]** |
+| 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 
-Ten rows, one shape: **a rule that reads as enforced and is only written down.**
-That is the same failure the barrier was built to catch, one level up — and it is
-the reason the SOP has to carry the three marks rather than a list of steps.
+## 4.1 Row 11 is the master key, and it is measured end to end
+
+The exemption is one line and it is not a leak in one place — it is the same
+test spelled at every gate. Measured on one throwaway root, with `outsider`
+registered `--kind human` (not the leader, not a participant, never sealed) and
+`alpha` a claude participant:
+
+| what the outsider did | result |
+|---|---|
+| submit `alpha`'s card to `review`, then approve it to `done` | both rc 0, **zero refusal rows** |
+| read the whole mixed bundle in `SYNTHESIS` via `synthesis-input` | **succeeded**, including alpha's private log |
+| the same command as `beta`, a claude peer | `REFUSED: only the synthesizer ('synth') may read mixed inputs` |
+
+The refusal for `beta` is the barrier working. The tool has no equivalent for
+`outsider`, because `bin/aim:1610` reads `if who != m.get("synthesizer") and kind
+!= "human"` — the same `kind != "human"` shape as `bin/aim:2126`, and as the
+read gate at `aimboard/gate.py:24` and the mail gate at `:159`. Live evidence on
+the real fabric: `human` reads **237** mail rows where `codex` reads 200 and
+`claude-session1` reads 175.
+
+**And `kind` is written by the agent it describes.** `aim register --as
+<name> --kind human` asks nobody's permission. So every sentence in this system
+of the form *"the leader is exempt"* is, in code, *"any name that typed human is
+exempt"* — and the tool's own docstrings say the first while the conditions say
+the second.
+
+## 4.2 Row 12 is the same rule, one surface out
+
+Measured against the live board with `synthesizer-v0`, a registered agent who
+participates in **no** channel:
+
+    /api/state?as=synthesizer-v0   ->  107 tasks, withheld_tasks = 70
+    /rpc?as=synthesizer-v0 ListTasks -> 178 returned, 177 distinct,
+                                        70 not on the board at all
+
+Every one of the 70 is a draft. The board counts them and withholds them; `/rpc`
+serves them by id, title and body, on the same port, to the same caller, in the
+same second. `aimboard/a2a.py:797` spells the stranger test as
+`if viewer not in channel.get("participants", []): return True` — *a stranger is
+not a participant, so show them everything* — where `gate.walled_off` spells the
+same membership test as the reason to **shut them out**
+(`aimboard/gate.py:23`). Two functions, one condition, opposite verdicts.
+
+## 4.3 Row 13 and the finding behind it
+
+`plan/*.json` is the leader's plan, and `load_plan` merges several files into
+one dict with `setdefault` (`aimboard/fabric.py:131,135`). `_plan_id_floor`
+(`bin/aim:1788`) reads *every* plan file so a fresh id clears all of them — good
+— but the merge itself is first-wins in glob order, so two plan files naming
+`T-0001` produce one task and no message. Measured: `plan/a.json` and `plan/b.json`
+each seeding `T-0001`, then a real `aim task new` → `T-0002` (the floor works),
+and the board folds `{'T-0001': 'seed from plan A', 'T-0002': 'real work'}` —
+`plan B`'s description is gone with nothing said.
+
+## 4.4 One rule, one owner — the rule this repo states about itself
+
+`design/08-solution-shape.md:22-28` says it twice: *"One rule, one owner. The
+write discipline lives in `bin/aim` and nowhere else. The gate lives in
+`aimboard/gate.py` and nowhere else… Every adapter in `protocols/` either calls
+`bin/aim` or returns `UnsupportedOperation`, and there is no third option."*
+
+Measured today: **the task-visibility rule lives in three places** —
+`bin/aim:_visible_to` (`:1759`), `aimboard/gate.py:visible_tasks` (`:52`), and
+`aimboard/a2a.py:task_visible` (`:761`). `a2a.py` says so itself in a comment at
+`:609`: *"the access rule it has to satisfy now exists in three places… That is
+one more than the project's own rule allows."* The three do not agree: `a2a.py`
+and `bin/aim` take the union (owner **or** creator), `gate.py` takes owner only.
+
+This is the document stating its own rule and then the code having three owners
+of the rule it names. It is the cleanest instance of the pattern in Part IV,
+because the rule being broken is *the rule about rules*.
+
+---
+
+# Part IV-b — The objects, and what owns each
+
+An object counts as first-class here only if it has a store, a writer, and a
+**gated** reader. A field is not an object.
+
+| object | store | writer | gated reader | verdict |
+|---|---|---|---|---|
+| **agent** | `registry.json` | `register` `bin/aim:959` | `card` `:3913` | first-class |
+| **session** | a free-text field | `register --session` | **none** | not an object |
+| **channel** | `manifest.json` | `new-channel` `:1030` | `status` `:3875` | first-class |
+| **project** | — | — | — | missing; channel is nearest (`design/17` §2) |
+| **task** | `channels/<ch>/tasks.jsonl` | `task new` `:1934` | **three owners**, §4.4 | first-class, contested |
+| **message** | `log.jsonl`, `private/`, `outbox/` | `say` `:1121`, `push` `:3288` | `inbox` `:1398`, `conversation_view` `gate.py:145` | first-class, three stores under one word |
+| **receipt** | the push record's own fields | `confirm` `:3497` | `outbox` | first-class, narrow |
+| **seal** | `seals/<a>.json` | `seal` `:1354` | `verify` `:4202`, `status` | first-class |
+| **barrier phase** | `manifest.barrier` | `advance` `:1450` | `PHASE_RULES` `bin/aim:56` | first-class |
+| **refusal** | `ledger.jsonl` | every `die` `:309` | `verify`, audit view | first-class |
+| **room** | `rooms/<id>.jsonl` | `room new` `:2822` | `visible_rooms` `gate.py:133` | first-class in the CLI, **absent from the JSON payload** |
+| **friction** | `friction.jsonl` | `friction --add` `:4011` | `verify` only | first-class, narrow |
+| **milestone** | `plan/plan.json` | **none** | `fold.report_data` | **read-only seed** |
+| **channel kind/state** | derived | **none** | **none** | **computed, read by nothing** |
+| **project** | — | — | — | **missing**, and §2.1 is what missing costs |
+
+Measured live, one line of evidence for the "read by nothing" rows: all five
+channels return `kind` and `state` nowhere in the payload, and
+`grep -rn "CLAIM:\|RELEASED:"` over `bin/aim aimboard/ web/src/` is empty.
+
+**Fourteen rows, one shape: a rule that reads as enforced and is only written
+down.** That is the same failure the barrier was built to catch, one level up —
+and it is the reason the SOP has to carry the three marks rather than a list of
+steps. Rows 11–14 were added after the first draft; rows 1–10 are unchanged, and
+every one of the fourteen now carries a command in its evidence cell.
+
+**One corollary, measured:** the two ends of the identity chain are not recorded
+the same. A refused `advance` writes a ledger row naming the actor **and the
+session** (`bin/aim:299`); the successful `advance` that follows writes a `phase`
+row with the actor and no session. So the caller who was stopped is identified in
+the record and the caller who got through is not — which is backwards for the
+one question the ledger exists to answer.
 
 ---
 
@@ -289,10 +412,18 @@ merges two projects into one, and an end state nothing asks for — none of thes
 is a missing feature. Each is a rule that exists in prose and in the readings and
 not in the machine.
 
-**The single highest-value fix is not a feature: it is to make the three marks
-the contract.** Every step in Parts I and II already carries one. Where a step
-reads **PROSE** and the leader believes it is **ENFORCED**, that is the defect —
-and there are ten of them above, each with a line number.
+**Row 11 is the master key.** The others are separate failures of separate
+mechanisms; that one is a single condition — `kind == "human"`, declared by the
+agent it describes — spelled at every gate in the tool and in the board. Fixing
+it first is not a preference: it is what makes the other thirteen measurable,
+because until it lands, any measurement of "who could reach this" has an actor
+who can reach everything and left no refusal row while doing it.
+
+**The single highest-value fix after that is not a feature: it is to make the
+three marks the contract.** Every step in Parts I and II already carries one.
+Where a step reads **PROSE** and the leader believes it is **ENFORCED**, that is
+the defect — and there are fourteen of them above, each with a line number and a
+command you can re-run.
 
 **What has to be decided before an end-of-life SOP can be written:** who, or what
 recorded evidence, declares a channel finished rather than merely quiet. `CLOSED`
