@@ -20,20 +20,32 @@ test('conversation history and pinned input never overlap or reload the page', a
   await expect(page.locator('.aim-page h2')).toHaveText('会话')
   const groups = await page.locator('.el-menu-item-group__title').allTextContents()
   expect(groups).toEqual([
-    'Work · 工作',
-    'Conversation · 会话',
-    'Insight · 报表',
-    'Governance · 治理',
+    '工作',
+    '会话',
+    '洞察',
+    '治理',
   ])
   expect(await page.locator('.el-menu-item').count()).toBe(8)
   await expect(page.locator('.aim-reader')).toBeVisible()
+  await page.evaluate(() => {
+    const history = document.querySelector('.aim-history')
+    if (!history) throw new Error('the conversation history is missing')
+    const message = document.createElement('article')
+    message.className = 'aim-msg'
+    message.dataset.testid = 'layout-fixture'
+    message.textContent = 'layout fixture'
+    const filler = document.createElement('div')
+    filler.dataset.testid = 'layout-filler'
+    filler.style.height = '2000px'
+    history.append(message, filler)
+  })
   await expect(page.locator('.aim-msg').first()).toBeVisible()
   const navigationsAfterLoad = navigations
 
   const layout = await page.evaluate(() => {
     const history = document.querySelector('.aim-history')
     const composer = document.querySelector('.aim-composer')
-    const input = document.querySelector('#aim-composer')
+    const input = document.querySelector('.aim-composer textarea')
     if (!history || !composer || !input) throw new Error('the conversation layout is incomplete')
     const historyBox = history.getBoundingClientRect()
     const composerBox = composer.getBoundingClientRect()
@@ -77,4 +89,8 @@ test('conversation history and pinned input never overlap or reload the page', a
   await expect(page.locator('.aim-reader')).toBeVisible()
   await expect.poll(() => page.evaluate(() => window.__aimConversationRegressionMarker)).toBe(marker)
   expect(navigations).toBe(navigationsAfterLoad)
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-testid="layout-fixture"], [data-testid="layout-filler"]')
+      .forEach((node) => node.remove())
+  })
 })

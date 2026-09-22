@@ -68,6 +68,51 @@ export const useBoard = defineStore('board', {
     },
     report: (s) => s.doc?.reports || { series: [], throughput: [], blocked: [], median_cycle: null },
     conversation: (s) => s.doc?.conversation || { channels: [], rooms: [], mail: [], withheld: 0 },
+    /**
+     * One chronological flattening of every conversation shape. Overview's recent
+     * rows and Chat's thread grouping must ask the same question once; two panes
+     * flattening the same three lists is two answers that will drift.
+     */
+    conversationRows(s) {
+      const rows = []
+      for (const channel of this.conversation.channels) {
+        for (const message of channel.messages || []) {
+          rows.push({
+            ...message,
+            shape: 'channel',
+            scope: channel.id,
+            channel: channel.id,
+            room: null,
+            gated: Boolean(channel.gated),
+            rule: channel.rule || '',
+          })
+        }
+      }
+      for (const room of this.conversation.rooms) {
+        for (const message of room.messages || []) {
+          rows.push({
+            ...message,
+            shape: 'room',
+            scope: `${room.channel}/${room.id}`,
+            channel: room.channel,
+            room: room.id,
+            visibility: room.visibility,
+            rule: 'a room inherits the parent channel gate; draft by default, publishing is deliberate',
+          })
+        }
+      }
+      for (const message of this.conversation.mail) {
+        rows.push({
+          ...message,
+          shape: 'direct',
+          scope: `${message.from} ⇄ ${message.to}`,
+          channel: null,
+          room: null,
+          rule: 'a direct message is a durable record with a receipt, not a chat window',
+        })
+      }
+      return rows.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+    },
     unacked: (s) => s.doc?.unacked || [],
     drift: (s) => s.doc?.drift || [],
     withheld: (s) => s.doc?.withheld_tasks || 0,

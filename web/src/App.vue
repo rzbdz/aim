@@ -19,10 +19,10 @@ const counts = computed(() => {
 const navGroups = computed(() => {
   const byKey = new Map(views.map((view) => [view.key, view]))
   return [
-    { title: 'Work · 工作', keys: ['overview', 'kanban', 'gantt', 'items'] },
-    { title: 'Conversation · 会话', keys: ['chat'] },
-    { title: 'Insight · 报表', keys: ['reports'] },
-    { title: 'Governance · 治理', keys: ['barrier', 'plan'] },
+    { title: '工作', keys: ['overview', 'kanban', 'gantt', 'items'] },
+    { title: '会话', keys: ['chat'] },
+    { title: '洞察', keys: ['reports'] },
+    { title: '治理', keys: ['barrier', 'plan'] },
   ].map((group) => ({
     title: group.title,
     views: group.keys.map((key) => byKey.get(key)).filter(Boolean),

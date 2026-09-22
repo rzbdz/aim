@@ -13,7 +13,7 @@ const stats = computed(() => {
     blocked: t.filter((x) => x.status === 'blocked').length,
     overdue: board.overdue.length,
     recorded: board.recorded.length, seedOnly: board.seedOnly.length,
-    messages: board.conversation.mail.length + board.conversation.channels.reduce((n, c) => n + c.messages.length, 0),
+    messages: board.conversationRows.length,
   }
 })
 const nextDue = computed(() => board.tasks
@@ -24,23 +24,7 @@ const msRows = computed(() => Object.values(board.milestones).map((m) => {
   const done = all.filter((t) => board.terminal.includes(t.status)).length
   return { ...m, done, total: all.length, pct: all.length ? Math.round(100 * done / all.length) : 0 }
 }))
-const recent = computed(() => {
-  const rows = []
-  for (const channel of board.conversation.channels) {
-    for (const message of channel.messages) {
-      rows.push({ ...message, scope: `#${channel.id}`, shape: 'channel' })
-    }
-  }
-  for (const room of board.conversation.rooms) {
-    for (const message of room.messages) {
-      rows.push({ ...message, scope: `#${room.channel}/${room.id}`, shape: 'room' })
-    }
-  }
-  for (const message of board.conversation.mail) {
-    rows.push({ ...message, scope: `${message.from} ⇄ ${message.to}`, shape: 'direct' })
-  }
-  return rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 6)
-})
+const recent = computed(() => board.conversationRows.slice(-6).reverse())
 const preview = (message) => message.subject || message.body || '(nothing yet)'
 </script>
 

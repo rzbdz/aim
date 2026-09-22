@@ -121,3 +121,29 @@ request services, and no pane imports another pane. It should be retained.
 The falsifier for this audit is the next user-facing concept that cannot be
 explained with the six model terms above. That concept needs either a new group
 or a redesign, not another card in an existing pane.
+
+## 7. Independent review and reconciliation
+
+Claude completed a read-only review of the shell, kernel, store/API, all panes,
+components, plugins, build, and tests on 2026-09-22. The two audits agree on:
+
+- the Cordis-like context and plugin-view architecture is sound;
+- the corrected Chat layout is the correct shape: bounded reader, independent
+  history scroller, pinned composer as a flex sibling;
+- navigation grouping is the right information-architecture direction;
+- the read/write posture must remain server-owned.
+
+Claude's additional findings and the decisions taken here:
+
+| finding | decision |
+|---|---|
+| Overview and Chat flattened the same three conversation lists independently | `stores/board.js` now exposes one chronological `conversationRows` getter; both panes consume it |
+| Chat layout test depended on live data being long enough | the browser test injects a temporary tall fixture, so overflow and scroll are deterministic |
+| `quote()` focused the composer through a global DOM id | replaced with a component-scoped ref |
+| `StatusTag` is used by only one pane | retained for now; extracting task meta/drawer is the next component refactor |
+| `Insight` has one child | retained as a separate group because reports answer a different question than execution |
+
+Claude also recommended route/API/status-vocabulary regressions. The immediate
+minimum is implemented: unit coverage for the conversation normalization and
+browser coverage for grouped navigation, Chat geometry, and no forced reload.
+The route/API/status tests remain follow-up work and are not claimed as complete.

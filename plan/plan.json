@@ -1541,7 +1541,7 @@
       "id": "T-0150",
       "title": "Define one information architecture and terminology model for the Vue front-end",
       "owner": "codex",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-22",
@@ -1554,13 +1554,13 @@
         "information-architecture",
         "design"
       ],
-      "accept": "design/11 records every front-end source area, separates viewer/writer, plan/store, conversation shapes, delivery/governance and foreign-tool exports; navigation is grouped rather than flat; remaining refactors are named with falsifiers"
+      "accept": "design/11 records every front-end source area, separates viewer/writer, plan/store, conversation shapes, delivery/governance and foreign-tool exports; navigation is grouped rather than flat; Claude's independent findings are reconciled with explicit decisions; remaining refactors are named with falsifiers"
     },
     {
       "id": "T-0151",
       "title": "Independent front-end review from Claude before further UI redesign",
       "owner": "claude-session1",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-22",
@@ -1573,7 +1573,26 @@
         "review",
         "dogfooding"
       ],
-      "accept": "Claude reviews the shell, kernel, store/API, all panes, build, and tests, and replies with concept/IA/component/layout findings; conflicts with Codex's audit are named rather than silently merged"
+      "accept": "Claude reviewed the shell, kernel, store/API, all panes, components, plugins, build, and tests, and replied with concept/IA/component/layout findings; conflicts and shared conclusions are reconciled in design/11 §7 rather than silently merged"
+    },
+    {
+      "id": "T-0152",
+      "title": "One chronological conversation row source for Overview and Chat",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "conversation",
+        "state"
+      ],
+      "accept": "Pinia exposes one conversationRows getter that flattens channel, room, and direct messages chronologically; Overview recent rows and Chat thread grouping consume it; a unit test pins all three shapes and ordering, while Playwright still pins the reader layout"
     }
   ]
 }

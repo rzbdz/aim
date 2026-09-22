@@ -7,11 +7,10 @@ import { MAIL_STATE_TYPE } from '../theme'
 
 /**
  * Reading the conversation is the point of this pane, so the layout is a
- * *document*, not a widget: the page scrolls, messages flow at a readable measure,
- * and nothing is trapped inside a nested scroll box. The first version put the
- * thread inside `el-scrollbar` with a `max-height`, which is a scroll container
- * whose height resolves to auto - so it clipped the end of every long report and
- * could not be scrolled at all. Reading the record is not a panel; it is the page.
+ * bounded reader: the history owns one scroller, the composer owns the bottom,
+ * and they are siblings rather than an input floating over a page. The first
+ * version put a sticky composer inside the normal page flow, so it overlapped
+ * exactly the long reports the leader needed to read.
  */
 const ctx = inject('ctx')
 const md = ctx.service('markdown')
@@ -26,46 +25,53 @@ const sending = ref(false)
 const refusal = ref('')
 const sent = ref('')
 const historyEl = ref(null)
+const composerEl = ref(null)
 
 const threads = computed(() => {
-  const out = []
-  for (const ch of board.conversation.channels) {
-    out.push({
-      key: `ch:${ch.id}`, group: 'channel', label: `#${ch.id}`, gated: ch.gated,
-      sub: `${ch.messages.length} message(s) · ${ch.gated ? 'sealed to you' : 'open'}`,
-      note: ch.rule, target: { type: 'channel', id: ch.id },
-      msgs: ch.messages.map((m) => ({ by: m.from, to: `#${ch.id}`, ts: m.ts, body: m.body,
-        chips: [m.kind && `kind ${m.kind}`, m.responds_to && `responds-to ${m.responds_to}`].filter(Boolean) })),
+  const byKey = new Map()
+  for (const row of board.conversationRows) {
+    const key = row.shape === 'channel'
+      ? `ch:${row.channel}`
+      : row.shape === 'room'
+        ? `room:${row.channel}:${row.room}`
+        : `dm:${row.scope}`
+    let thread = byKey.get(key)
+    if (!thread) {
+      thread = row.shape === 'channel'
+        ? {
+            key, group: 'channel', label: `#${row.channel}`, gated: row.gated,
+            note: row.rule, target: { type: 'channel', id: row.channel }, msgs: [],
+          }
+        : row.shape === 'room'
+          ? {
+              key, group: 'room', label: `#${row.channel} / #${row.room}`,
+              note: row.rule, target: { type: 'room', id: row.room, channel: row.channel }, msgs: [],
+            }
+          : {
+              key, group: 'direct', label: row.scope,
+              note: row.rule,
+              target: { type: 'direct', peer: row.scope.split(' ⇄ ').find((x) => x !== board.viewer) },
+              msgs: [],
+            }
+      byKey.set(key, thread)
+    }
+    thread.msgs.push({
+      by: row.from,
+      to: row.shape === 'channel' ? `#${row.channel}` : row.shape === 'room' ? `#${row.room}` : row.to,
+      ts: row.ts,
+      body: row.body,
+      subject: row.subject,
+      id: row.msg_id,
+      chips: row.shape === 'channel'
+        ? [row.kind && `kind ${row.kind}`, row.responds_to && `responds-to ${row.responds_to}`].filter(Boolean)
+        : row.shape === 'room'
+          ? (row.mentions || []).map((mention) => `@${mention}`)
+          : [row.state, row.ack_required && 'receipt demanded', `${row.bytes} bytes`].filter(Boolean),
     })
   }
-  for (const r of board.conversation.rooms) {
-    out.push({
-      key: `room:${r.channel}:${r.id}`, group: 'room', label: `#${r.channel} / #${r.id}`,
-      sub: `${r.messages.length} message(s) · ${r.visibility}`,
-      note: 'a room inherits the parent channel gate; draft by default, publishing is deliberate',
-      target: { type: 'room', id: r.id, channel: r.channel },
-      msgs: r.messages.map((m) => ({ by: m.from, to: `#${r.id}`, ts: m.ts, body: m.body,
-        chips: (m.mentions || []).map((x) => `@${x}`) })),
-    })
-  }
-  const byPair = new Map()
-  for (const m of board.conversation.mail) {
-    const key = [m.from, m.to].sort().join(' ⇄ ')
-    if (!byPair.has(key)) byPair.set(key, [])
-    byPair.get(key).push(m)
-  }
-  for (const [key, msgs] of [...byPair].sort()) {
-    out.push({
-      key: `dm:${key}`, group: 'direct', label: key, sub: `${msgs.length} message(s)`,
-      note: 'a direct message is a durable record with a receipt, not a chat window',
-      target: { type: 'direct', peer: key.split(' ⇄ ').find((x) => x !== board.viewer) },
-      msgs: [...msgs].sort((a, b) => (a.ts < b.ts ? -1 : 1)).map((m) => ({
-        by: m.from, to: m.to, ts: m.ts, body: m.body, subject: m.subject, id: m.msg_id,
-        chips: [m.state, m.ack_required && 'receipt demanded', `${m.bytes} bytes`].filter(Boolean),
-      })),
-    })
-  }
-  return out
+  const groupOrder = { channel: 0, room: 1, direct: 2 }
+  return [...byKey.values()].sort((a, b) =>
+    groupOrder[a.group] - groupOrder[b.group] || (a.label < b.label ? -1 : 1))
 })
 const groups = computed(() => {
   const g = {}
@@ -110,7 +116,7 @@ async function jumpToEnd() {
 }
 function quote(m) {
   drafting.value = `> ${(m.body || '').split('\n').slice(0, 3).join('\n> ')}\n\n`
-  document.getElementById('aim-composer')?.focus()
+  composerEl.value?.focus?.()
 }
 
 /**
@@ -234,7 +240,7 @@ async function copy(text) {
               </span>
             </div>
           </template>
-          <el-input id="aim-composer" v-model="drafting" type="textarea" :rows="4" resize="vertical"
+          <el-input ref="composerEl" v-model="drafting" type="textarea" :rows="4" resize="vertical"
                     placeholder="markdown is fine. what you send is recorded in the log, hashed, and wakes the peer on their next turn." />
           <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
             <el-button type="primary" :loading="sending" @click="send">send</el-button>
