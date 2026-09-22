@@ -47,7 +47,7 @@
  * 00:00 because that is the earliest.
  *
  * That the fixture discriminates was measured rather than argued. The served
- * module was intercepted in flight (`page.route` on `**/assets/OverviewPane-*.js`)
+ * asset chunk was intercepted in flight (`page.route` on the OverviewPane chunk)
  * and its printed count replaced with the pre-fix expression
  * `conversationRows.slice(-5).filter(isReceipt).length` -- same fixture, same
  * page, only that expression changed:
