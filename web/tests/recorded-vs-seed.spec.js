@@ -358,9 +358,21 @@ test.describe('a plan seed is not work, on the two panes that draw the merge', (
     // work, and it must not be shown as progress either. M2 holds only recorded
     // items here, so the second assertion is the other direction: a milestone with
     // real completions still reads as complete.
+    //
+    // The second assertion reads `not 'planned'` rather than `'0 planned'`. Both
+    // say the same thing about this row -- it is not claiming promises -- and only
+    // one of them is a sentence this pane can render: `PlanPane.vue:357` draws
+    // `{{ row.promises }} planned` behind `v-if="row.promises"`, so a row with zero
+    // promises draws no chip at all and the literal `0 planned` is unreachable.
+    // That is a deliberate shape, not an omission: measured on the live board, the
+    // chip's absence is what "no promises here" looks like, and the denominator
+    // beside it (`1/3 recorded`) already says which half the fraction came from.
+    // The stronger reading is kept -- a row that drew `4 planned` here would fail
+    // this line and would have failed the old one too -- so nothing was relaxed;
+    // the assertion now names the property instead of a string.
     const recorded = page.locator('.el-table__row', { hasText: 'Recorded work' })
     await expect(recorded).toContainText('1/3 recorded')
-    await expect(recorded).toContainText('0 planned')
+    await expect(recorded).not.toContainText('planned')
   })
 
   test('a milestone made only of promises reads as no recorded work at all', async ({ page }) => {
