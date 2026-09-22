@@ -70,12 +70,35 @@ second, and the ones that are not are now labelled as such.**
 | 1 | have `aim` on PATH | `/usr/local/bin/aim` → `bin/aim` | **PROSE** (`AGENTS.md:13`) |
 | 2 | create the root | `aim init` | **ENFORCED**, but **skippable** — `register` makes the root itself **[V]** |
 | 3 | register yourself | `aim register --as <you> --kind <claude\|codex\|human>` | **ENFORCED** (refuses a live id without `--force`; `bin/aim:959`) |
-| 4 | register the leader | `aim register --as human --kind human` | **ENFORCED**, but **not at the line it looks like** — `new-channel` refuses a leader who is not a registered human (`bin/aim:1041`), and `:1030-1039` refuses an *unregistered participant* first, in the same function. A leader need not be a participant, so the only path that reaches `:1041` is a leader who is already registered — measured: register `codex --kind codex`, name it leader, and the refusal comes from the participant check with the *same message*, so `:1041` is unreachable for the case it is cited for **[V]** |
+| 4 | register the leader | `aim register --as human --kind human` | **ENFORCED** — `new-channel` refuses a leader who is not a registered human (`bin/aim:1041`), and the check before it (`:1035-1040`) refuses an unregistered participant. A leader need not be a participant, and the participant loop does not stand in front of the leader check for the ordinary case — see the four shapes below |
 | 5 | open the channel | `aim new-channel --id <ch> --topic "…" --participants a,b --leader human` | **ENFORCED** (dup id, unregistered participant, non-human leader all refused) |
 | 6 | read where it stands | `aim status --channel <ch>` | read |
 | 7 | form a position | `aim say --private --kind claim` | **ENFORCED** — but not by §2.1, which this cell pointed at and which has never said anything about `say` (it is "N projects: the id space is the hole", at the first draft and now). Measured: in `SEALED_DIVERGENT`, `say --private --kind claim --body …` → rc 0, `[private/<you>] claim recorded`. The mark is right and the cross-reference was stale from the first draft |
 | 8 | seal | `aim seal --summary "…" --claims claims.json` | **ENFORCED that you sealed; PROSE what a seal means** |
 | 9 | be woken for the next turn | — | **MISSING.** `README.md:246` declares it unsolved; `aim wait` polls one channel's public log and nothing else |
+
+> **Step 4, the four shapes of a bad leader.** Measured on a throwaway root,
+> `aim new-channel --participants a --leader X`:
+>
+> | leader `X` | also a participant? | which check refuses | message |
+> |---|---|---|---|
+> | `codex` (registered, non-human) | no | **`:1041`** | `leader 'codex' must be a registered human` |
+> | `codex` (registered, non-human) | yes | **`:1041`** | `leader 'codex' must be a registered human` |
+> | `ghost` (unregistered) | no | **`:1041`** | `leader 'ghost' must be a registered human` |
+> | `ghost` (unregistered) | yes | `:1040` | `participant 'ghost' is not registered` |
+>
+> A leader who is a registered human and *not* a participant is accepted
+> (`manifest.leader == "h"`, `participants == ["a"]`), so the participant loop
+> does not stand in front of the leader check for the ordinary case.
+>
+> *This cell said the opposite: that `:1041` was a dead branch, reachable only
+> for an already-registered leader, whose refusal "comes from the participant
+> check with the same message". Both halves are false — the two lines print
+> different messages, and the participant check wins in exactly one of the four
+> shapes. The text presented this as a measurement ("measured: register `codex`
+> …") and the case it described, run, gives the leader message from `:1041`. The
+> shape that shadows is an unregistered leader *inside* the participant list.
+> The mark was right and the reasoning for it was invented.)*
 
 Steps 2–5 are the only part of this system that is a clean, enforced
 procedure, and step 1 (being launched at all) is the one nothing specifies.
@@ -525,18 +548,52 @@ phase simply has no membership rule attached to the task verbs.
 the scope has to be stated, and the first version of this sentence did not state
 it — it said *"no live channel"*, and a falsifier went looking past `channels/`
 and found one. **`.dbg/channels/c` is tracked in this repository and is at
-`CROSS_EXAMINE`, round 1**, with four phase rows and an unbroken chain:
+`CROSS_EXAMINE`, round 1**, with an unbroken chain:
 
-    SEALED_DIVERGENT -> COMMIT -> SYNTHESIS -> CROSS_EXAMINE   (all by 'h', one second)
+    SEALED_DIVERGENT -> COMMIT -> SYNTHESIS -> CROSS_EXAMINE   (all by 'h')
 
-So the barrier *has* been crossed — on a debug root, by a script, in one second,
-with no card and no message in it. That is a weaker fact than the sentence was
-claiming and a more interesting one: the five channels in `channels/` are the
-only ones that ever held work, and none of them got past `COMMIT`. The unfixed
-`.gitignore` does not cover `.dbg/` (`git check-ignore .dbg/...` returns 1), so
-this root is *visible* in every `git show` and nobody had read it. **A census
-that names its own glob is a census; one that says "no live channel" is a
-sentence about a directory the author did not enumerate.** Re-measured at
+Five rows, and the arithmetic is worth reading closely because the first version
+of this sentence got it wrong: **two `seal` rows** (agents `a` and `b`, both
+`"claims": 0`) and **three `phase` rows**. `prev`/`hash` links end to end from
+`genesis`. The three transitions span `08:14:36.252Z` → `08:14:36.362Z`, i.e.
+**0.110 s**; the whole root, first seal to last transition, is **0.274 s**. The
+earlier text said "four phase rows … one second" — the four is the
+**manifest's** `barrier.history` (which counts the opening `SEALED_DIVERGENT`
+entry as well, and is not a ledger), and the second is wall-clock rounding. Four
+phases are *named* above and three transitions *happen*; the ledger counts
+transitions.
+
+So the barrier *has* been crossed — on a debug root, by a script, in a tenth of
+a second. The earlier text called it barren ("no card and no message in it") and
+that is wrong in the direction that matters least but changes the reading: the
+root has **no `tasks.jsonl` at all** — never a card — and **two public messages
+and two private notes**. It is a scripted but complete run:
+
+    private/a  "a position"      (SEALED_DIVERGENT, round 0)
+    private/b  "b position"      (SEALED_DIVERGENT, round 0)
+    m0001  b -> a  question   "Name the observation that would have made you
+                              drop your first claim."
+    m0002  a -> b  rebuttal   "The observation is a second draft changing shape
+                              after exposure; I would have dropped it if two
+                              drafts had stayed incompatible."
+
+Those are, in miniature, the two artefacts the whole design exists to produce:
+the question is the falsifier asked *for its own answer*, and the answer names a
+specific observation. `echo_ratio: 0.0` on both. So the repo's only
+barrier-crossing run is also its only example of a well-formed cross-examination
+— not because anyone built one, but because a debug script did. **The demo
+proves the mechanism can work and the census proves nobody has used it**; both
+sentences are true of the same five-row file.
+
+That is a weaker fact than the sentence was claiming and a more interesting one:
+the five channels in `channels/` are the only ones that ever held real work, and
+none of them got past `COMMIT`. The unfixed `.gitignore` does not cover `.dbg/`
+(`git check-ignore .dbg/channels/c/ledger.jsonl` returns **1**, and
+`git ls-files .dbg` is 11 files), so this root is *visible* in every `git show`
+and nobody had read it.
+
+**A census that names its own glob is a census; one that says "no live channel"
+is a sentence about a directory the author did not enumerate.** Re-measured at
 `7def563` (the ledger counts move between sessions; the phase column does not,
 which is itself the point):
 
@@ -548,19 +605,35 @@ which is itself the point):
 | `s2-scratch` | SEALED_DIVERGENT | 1 | 2 | 0 | 2 |
 | `s2-scratch2` | SEALED_DIVERGENT | 0 | 1 | 0 | 1 |
 
+Re-measured again at `e6ba913`, from the blobs rather than the worktree, every
+cell is identical except `hello`'s ledger, **348 → 349**: one more row, added by
+the same work this document describes, in the hours between the two readings.
 `barrier-v0`'s 6 was checked two ways: `git show 7def563:channels/barrier-v0/
 ledger.jsonl | wc -l` returns 6 (blob `a175be050f30d8107fbe2bcc065600c32fc63f58`),
 and the worktree is 6. A falsifier read the committed copy as empty by mistake —
 it is not, and the cell was not changed by that misreading. The `hello` ledger
-grew 320 → 348 while this document was being written — every row of it a
+grew 320 → 348 → 349 while this document was being written — every row of it a
 refusal or a phase row from the same work the document describes. The census is
 the one place where a number that moves is *evidence* rather than drift: five
 channels, none above `COMMIT` after two days of real use.
 
-The channel named *"aim development"* holds **one** row in its ledger and no
-`log.jsonl` at all — it never carried a message, a seal or a room, and the single
-row is a `task move` refusal (`class: form`, `no such task: T-0206`, `09:43:27Z`)
-from the session that was building this document. The cell of the census says so.
+**Two columns of the table are counts of messages and three are counts of
+files, and the caption has to say which.** `seals`, `private` and `public` are
+records: `seals/*.json`, the lines of `private/*.jsonl`, the lines of
+`log.jsonl`. `ledger` is lines of `ledger.jsonl` — also records. What is *not* a
+count here is anything you get by `ls | wc -l` on `private/`: for `hello` that
+returns **4**, because four agents each have a file, and the table's 9 is the
+nine notes inside them. Measured both ways at HEAD and they agree with the
+table; the distinction is written down because it is the exact one the
+`dev` paragraph below got wrong once already.
+
+The channel named *"aim development"* (`channels/dev`, topic `aim development:
+task store, rooms, dashboard`, leader `human`, participants
+`claude-session1, codex`) holds **one** row in its ledger and no `log.jsonl` at
+all — it never carried a message, a seal or a room (measured: `seals/` 0 files,
+`private/` 0 files, `log.jsonl` absent, no `rooms/`), and the single row is a
+`task move` refusal (`class: form`, `no such task: T-0206`, `09:43:27Z`). The
+cell of the census says so.
 *(The sentence here first read "is empty" — a misreading of a `log` count as a
 `ledger` count, and a falsifier caught it. The correction then said the row was
 "a refusal of mine from this very rewrite", which is also wrong: `09:43Z` is ten
