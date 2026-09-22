@@ -523,15 +523,65 @@ phase simply has no membership rule attached to the task verbs.
   every `*→ divergence` edge — and `--synthesizer` is a precondition on *one*.
   The claim is weaker than it was written and the writing happened in the edit
   meant to fix this same bullet.)*
-- **`--force` is the only way out of `CLOSED`**, and only to a far phase.
-  `TRANSITIONS["CLOSED"] == []` (`bin/aim:52`), so every ordinary edge is
-  refused: measured, `CLOSED → RESOLVE` rc 2, `CLOSED → SYNTHESIS` rc 2,
-  `CLOSED → CROSS_EXAMINE` rc 2, while `advance --force --to CROSS_EXAMINE` is
-  rc 0 — and even the forced exit still routes through
+- **`--force` is the only way out of `CLOSED`.** `TRANSITIONS["CLOSED"] == []`
+  (`bin/aim:52`), so every ordinary edge is refused: measured, `CLOSED → RESOLVE`
+  rc 2, `CLOSED → SYNTHESIS` rc 2, `CLOSED → CROSS_EXAMINE` rc 2, `CLOSED →
+  COMMIT` rc 2, `CLOSED → SEALED_DIVERGENT` rc 2 — all with `allowed: []` —
+  while the same five with `--force` are **all rc 0** and reach the phase named.
+  *(The earlier bullet said "`CLOSED` to any non-stay edge is the only way out",
+  which has no parseable meaning and inverts the mechanism: the edges are all
+  refused, `--force` is what moves.)*
+
+  **The sentence that used to follow that list was false, and it was the
+  interesting half.** It said "even the forced exit still routes through
   `assert_barrier_defensible`, so it cannot land back on `COMMIT` or
-  `SEALED_DIVERGENT`. *(The earlier bullet said "`CLOSED` to any non-stay edge
-  is the only way out", which has no parseable meaning and inverts the
-  mechanism: the edges are all refused, `--force` is what moves.)*
+  `SEALED_DIVERGENT`." Measured on a throwaway root with **no shared workspace
+  declared anywhere** — the ordinary case:
+
+      CLOSED --force -> COMMIT             rc=0  "ch: CLOSED -> COMMIT (round 1, by h)"
+      CLOSED --force -> SEALED_DIVERGENT   rc=0  "ch: CLOSED -> SEALED_DIVERGENT (round 1, by h)"
+
+  and the ledger writes `forced: true` on the row. `assert_barrier_defensible`
+  does run on every advance, but it refuses only when the manifest declares a
+  shared writable path — so on a channel without one, which is every channel
+  this repo has, the guard cannot fire and the forced exit reaches any phase
+  including the two the sentence named. A closed channel can be forced back to
+  `SEALED_DIVERGENT`, i.e. **before the run started**, and read as one that
+  never opened.
+
+  *(The mistake is the one this document keeps making: I confirmed the guard
+  fires — in a *different* experiment, the one two bullets up where I had
+  declared `a=src b=src` to make it fire — and then described its reach as
+  general. Two measurements, one conclusion, and the conclusion belonged to the
+  experiment I ran to produce it.)*
+
+  **And the guard is fatal to exactly one edge, which strands a channel.**
+  Declaring a shared workspace on a channel already in `COMMIT` is allowed
+  (`aim channel workspace --set` → rc 0, *"This channel can no longer enter or
+  remain in a divergence phase"*), and then:
+
+      COMMIT -> SYNTHESIS      bare   rc=2  REFUSED: declares a shared workspace
+      COMMIT -> SYNTHESIS      FORCE  rc=2  REFUSED: declares a shared workspace
+      COMMIT -> SEALED_DIVERGENT  FORCE  rc=2  REFUSED
+      COMMIT -> CROSS_EXAMINE  FORCE  rc=0   (round 1, by h)
+      CROSS_EXAMINE -> RESOLVE FORCE  rc=0
+      RESOLVE -> CLOSED        FORCE  rc=0
+
+  `SEALED_DIVERGENT`, `COMMIT` and `SYNTHESIS` are the divergence phases
+  (`const.DIVERGENCE`), so the guard bites on every edge *into* one — and the
+  only forward edge out of `COMMIT` in `TRANSITIONS` goes into one. The five
+  advances that reach `CLOSED` from the start are `COMMIT → SYNTHESIS → …`, so
+  a channel that declares a shared workspace while in `COMMIT` can no longer
+  close the ordinary way: the single legal edge out is refused **even with
+  `--force`**, and the only exits are forced jumps that skip past it. The
+  mechanism designed to stop a barrier from being claimed falsely will, in this
+  one state, refuse the honest move and permit the dishonest one. The message
+  offers the way out correctly (`aim channel workspace --none`, measured rc 0,
+  after which `COMMIT → SYNTHESIS` is rc 0 again), so this is a foot-gun with a
+  labelled release, not a trap. But nothing in the tool says "you have just
+  disabled this channel's ordinary exit", and the bullet above it is titled
+  *End*.
+
 - `room say` works in `CLOSED` for a **participant**, refused for a non-participant
   (`aim room say --as out --channel ch --id r1` → `'out' is not a participant in
   ch`); `task publish` works for an owning participant. **Re-measured by me** on
