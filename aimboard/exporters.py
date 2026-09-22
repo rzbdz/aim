@@ -5,8 +5,8 @@ three writers below format a `tasks` mapping they are *given*, and the caller is
 the one that gated it -- `aimboard/cli.py:92` runs `gate.visible_tasks` and passes
 the result to `export_csv`/`export_ical`, so a task the viewer may not open never
 reaches them. The third, `json_payload`, needs more than the viewer's task set, so
-it calls the same two functions itself: `aimboard/api.py:375` is that same payload
-for the dashboard, and its two gate calls are `api.py:377-378`. A rule derived a
+it calls the same two functions itself: `aimboard/api.py:381` is that same payload
+for the dashboard, and its two gate calls are `api.py:383-384`. A rule derived a
 third time here would be the bug class `gate.conversation_view` was written to end
 (gate.py:145).
 """

@@ -257,7 +257,7 @@ def check_json_coverage():
     # half only; the clip in the measurement above is deliberate, because the other
     # half is narrower than it first reads and one claim I made about it was wrong:
     # `web/src/App.vue:260` links json to `/api/state`, which is `api.payload`, and
-    # that function publishes no `risks` key at all (`aimboard/api.py:375`; grep for
+    # that function publishes no `risks` key at all (`aimboard/api.py:381`; grep for
     # one and you get zero hits) -- so `cli.py:894` is not a route the app header
     # reaches, and `tests/test_aimboard.py:533-535` drives it only as far as
     # `"tasks" in legacy and "phases" in legacy`. Wiring it publishes a section no
