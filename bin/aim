@@ -73,6 +73,17 @@ CROSS_EXAMINE_KINDS = {
     "note",
 }
 
+# The kinds that *are* a position rather than a remark about one. Hoisted out of
+# `cmd_say`, where this set was a bare literal, so that `push` can ask the same
+# question of its own body (T-0147): a doorbell carrying a `position` is a
+# position whether or not it arrived through the channel, and a second copy of
+# the list here is exactly the second reader this repo keeps measuring. The
+# words are the sealed-position vocabulary design/05 gives `seal`/`say`;
+# `evidence` and `objection` are deliberately absent because they are moves
+# *about* someone else's sealed claim and have no meaning outside
+# CROSS_EXAMINE, which `cmd_say` already enforces.
+COMMITMENT_KINDS = {"note", "claim", "evidence", "position", "question"}
+
 MAX_MSGS_PER_ROUND = 2       # per participant, per cross-examination round
 ECHO_RATIO_LIMIT = 0.50      # share of 8-grams that may echo a peer verbatim
 
@@ -1124,7 +1135,7 @@ def cmd_say(args):
                 die(f"kind '{kind_of}' not allowed in CROSS_EXAMINE; use one of {sorted(CROSS_EXAMINE_KINDS)}",
                     cls="barrier")
         else:
-            if kind_of not in {"note", "claim", "evidence", "position", "question"}:
+            if kind_of not in COMMITMENT_KINDS:
                 die(f"kind '{kind_of}' is only meaningful in CROSS_EXAMINE",
                     cls="barrier")
 
@@ -2555,6 +2566,53 @@ def room_events(ch, rid):
     return read_jsonl(rooms_dir(ch) / f"{rid}.jsonl")
 
 
+def _room_author(meta, msgs):
+    """The room's single author, or `""` when it has none or more than one.
+
+    Hoisted out of `_load_room_or_die` for T-0024's `search`, and the hoist is
+    the point rather than tidiness: a searcher that re-derived "which rooms may
+    this caller read" would be a second implementation of the gate, which is the
+    failure this repo keeps measuring. `_load_room_or_die` and `cmd_room_list`
+    already had two copies of these four lines; the search asks the same
+    question a third time, so the rule now has one home and three callers.
+
+    One author is the room's author, for the same fail-closed reason
+    `aimboard/gate.py:94` gives: the gate is room-level while authorship is per
+    message, and a room with two attributed voices exempts neither rather than
+    opening one author's text to the other. Derived from the messages first and
+    the metadata second, because `aimboard/fabric.py:146` builds a room out of
+    the log alone -- a metadata `author` never reaches the renderer's gate.
+    """
+    authors = {x.get("agent") for x in msgs if x.get("agent")}
+    if not authors:
+        authors = {meta.get(k) for k in ("author", "created_by", "owner")} - {None}
+    return next(iter(authors)) if len(authors) == 1 else ""
+
+
+def _room_withheld(ch, rid, who, kind, phase=None):
+    """Would the room gate refuse this caller? The predicate, not the refusal.
+
+    `_load_room_or_die` refuses; `cmd_room_list` and `cmd_room_list` alone used
+    to *label* the same condition, and `search` is the third caller to need the
+    second shape, so the rule is written once here and the two others ask it.
+    A search that hid a room's text while `room list` announced it exists (or
+    the reverse) would be the two-readers disagreeing about one rule, and the
+    reader who is lied to would be the one holding the search output.
+    """
+    m = load_manifest(ch)
+    if phase is None:
+        phase = m["barrier"]["phase"]
+    if who not in m["participants"] and kind != "human":
+        return True
+    if _room_published(ch, rid) or phase not in DIVERGENCE_PHASES:
+        return False
+    if kind == "human":
+        return False
+    msgs = room_events(ch, rid)
+    return who != _room_author(read_json(rooms_dir(ch) / f"{rid}.json") or {"id": rid},
+                               msgs)
+
+
 def _load_room_or_die(ch, rid, who, kind):
     """The room and its metadata, with the barrier applied to the *record*.
 
@@ -2576,14 +2634,7 @@ def _load_room_or_die(ch, rid, who, kind):
     if meta is None and not msgs:
         die(f"no such room: {rid}", cls="form")
     meta = meta or {"id": rid}
-    authors = {x.get("agent") for x in msgs if x.get("agent")}
-    if not authors:
-        authors = {meta.get(k) for k in ("author", "created_by", "owner")} - {None}
-    # One author is the room's author, for the same fail-closed reason
-    # `aimboard/gate.py:94` gives: the gate is room-level while authorship is
-    # per message, and a room with two attributed voices exempts neither rather
-    # than opening one author's text to the other.
-    author = next(iter(authors)) if len(authors) == 1 else ""
+    author = _room_author(meta, msgs)
     published = _room_published(ch, rid)
     draft = not published
     if draft and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
@@ -2817,8 +2868,7 @@ def cmd_room_list(args):
         rid = path.stem
         meta = read_json(rooms_dir(args.channel) / f"{rid}.json") or {}
         msgs = read_jsonl(path)
-        authors = {x.get("agent") for x in msgs if x.get("agent")}
-        author = next(iter(authors)) if len(authors) == 1 else ""
+        author = _room_author(meta, msgs)
         pub = _room_published(args.channel, rid)
         draft = not pub
         # Named, not implied: a reader who cannot see a room must be able to tell
@@ -3134,6 +3184,48 @@ def cmd_push(args):
         die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     if args.to not in load_registry()["agents"]:
         die(f"'{args.to}' is not a registered agent", cls="form")
+    # ---- T-0147: the barrier's blind side -------------------------------
+    # `say` is gated twice -- by the phase, and by the ledger that records the
+    # refusal -- and this doorbell was gated by neither, so a *position* could
+    # travel the fabric without ever meeting the barrier: outbox is the one path
+    # a body takes that no `PHASE_RULES` entry names. The docstring above is
+    # still right that the outbox is a doorbell and not the record. The repair
+    # is not to gate the doorbell -- a doorbell that is refused is a broken
+    # doorbell, and every ordinary "your mail arrived" push would stop -- but
+    # to stop being silent about it. A push that carries a commitment meets the
+    # gate a say would (so the position cannot pass), and a push that does not
+    # is *recorded* in the ledger, so a position that travelled out-of-band is
+    # at least findable by whoever audits the channel. `findable` is the shape
+    # of the whole card: the failure was that the record could not tell "nobody
+    # sent a position out-of-band" from "somebody did and nothing wrote it
+    # down", which is the same unfalsifiable claim `_record_refusal` exists to
+    # prevent on the refusal side.
+    #
+    # The ledger and not `friction.jsonl`, on T-0084's own division of the two
+    # files: friction answers "the fabric got in the way" and is written by the
+    # reader's own hand (`cmd_friction`'s docstring: "a note about the tool the
+    # tool ran"), while a push-by-commitment is something that *happened* to the
+    # channel and has to be countable without opening the doorbell that rang --
+    # so it belongs where design/06 §2 put room publishes and where `aim audit`
+    # already reads. It also means `aim verify` covers this event with the rest
+    # of the channel's chain, which a record beside the outbox would not.
+    #
+    # `refs_seal` is the flag `cmd_say` treats as a commitment: it is what a
+    # position points at to say *which* sealed reasoning it speaks for, and
+    # `--kind` is the same vocabulary a say accepts (`position`/`claim`/
+    # `concession`). Either on a push is a body that would have needed a phase
+    # to be public, so the gate below is the same one `say` takes, with the same
+    # text shape and the same class. No new class is invented; the CLI has no
+    # `--refs-seal` on `push` today, so this is a documented contract for the
+    # harness that forwards one, not a live path.
+    carries_position = bool(getattr(args, "refs_seal", "") or
+                            (getattr(args, "kind", "") or "") in COMMITMENT_KINDS)
+    if carries_position and m is not None:
+        # `load_manifest` above returns a manifest only when a channel was
+        # named; with no channel there is no phase for anyone to have violated,
+        # and the event below is recorded with `channel: ""` so the audit can
+        # still find the push itself.
+        gate(m, who, "channel_say")
     d = outbox_dir(args.to)
     d.mkdir(parents=True, exist_ok=True)
     ts = now_iso()
@@ -3163,6 +3255,34 @@ def cmd_push(args):
         "from_session": session_of(),
     }
     write_json(d / f"{msg_id}.json", rec)
+    # T-0147 clause 1: one ledger event per successful push, written whether or
+    # not a channel was named. It names all five facts the card asks for --
+    # sender, recipient, channel, msg_id, and that this was a push rather than a
+    # say -- because `event: "push"` is the only field in the ledger that can
+    # tell the two apart after the fact, and a reader auditing "did a position
+    # travel around the barrier?" has to answer it from `refs_seal`/`kind` on a
+    # row that exists rather than from the absence of a row, which is
+    # indistinguishable from a push that never happened. Recorded after the
+    # write, so the ledger never claims a delivery the outbox does not hold: the
+    # failure mode of a crash between the two is an unrecorded push, and the
+    # failure mode of the other order is a recorded push nobody can read.
+    # `append_chained` is the same writer the room publishes and the refusals
+    # use, so this row is covered by `aim verify --channel` for free.
+    ch = args.channel or _CTX.get("channel")
+    if ch:
+        with Lock(channel_dir(ch) / ".ledger.lock"):
+            append_chained(channel_dir(ch) / "ledger.jsonl", {
+                "ts": ts, "event": "push", "agent": who, "session": session_of(),
+                "to": args.to, "channel": ch, "msg_id": msg_id,
+                "carries_position": carries_position,
+                # `--via` is the sender's own account of how the bytes were
+                # handed over (outbox is transport-agnostic by design), so it is
+                # carried here verbatim and attributed to them rather than
+                # checked: the ledger's job is to make the claim findable, not to
+                # be able to confirm it.
+                "via": args.via or "",
+                "action": "push", "class": "record",
+            })
     (d / f"{msg_id}.md").write_text(
         f"# message from {who} -> {args.to}\n"
         f"msg_id: {msg_id}\n"
@@ -3839,6 +3959,128 @@ def cmd_friction(args):
             print(f"          " + r["happened"][:120])
 
 
+def cmd_search(args):
+    """One query over the channel log, the board and the rooms (T-0024).
+
+    Three readers already exist and this verb calls them rather than opening a
+    file: `read_jsonl` on `log.jsonl` (as `cmd_inbox` does), `fold_tasks` over
+    `task_events` (as `cmd_task_list` does), and `room_events` under the room
+    gate (as `_load_room_or_die` does). A fourth reader for messages or for work
+    items is the second-implementation failure this project keeps measuring, and
+    a search is exactly where one gets written by accident -- it looks like a
+    filter over text rather than a read of a record.
+
+    **Order is the chain order.** Results print in the order the records appear
+    in their file, and for this fabric that is not a convention: `append_chained`
+    links every record to its predecessor through the `prev` field and recomputes
+    `hash` over the whole record, so a record's *position in the file* is the
+    position the chain attests to. Sorting by score or timestamp would each
+    destroy that -- `ts` is wall-clock from two writers who interleave under the
+    lock, and a score is not a fact about the record at all -- and sorting by
+    path would be a claim about where the file happens to live. A search is where
+    a reader reconstructs what happened, so the answer has to arrive in the order
+    it happened.
+
+    The gate is the existing one, not a new one: the log half applies
+    `PHASE_RULES[...]["read_others"]` record by record exactly as `cmd_inbox`
+    does (including that the log has no human exemption, because adding one here
+    would make `search` read more than `inbox` under the same phase), the task
+    half asks `_visible_to` with the same `fold_tasks` board, and the room half
+    asks `_room_withheld`. What is withheld is *counted* rather than silently
+    dropped, the same way `task list` prints its hidden count: a search that
+    quietly omits records is a search that lies about the size of the log.
+    """
+    who, kind = resolve_actor(args)
+    query = (args.query or "").strip().lower()
+    if not query:
+        # A malformed invocation, which is what `form` means here: the request
+        # is well-formed but empty, so it is not the barrier's business and no
+        # phase would make it answerable.
+        die("REFUSED: search needs a query.\n"
+            "  aim search --as <who> --channel <ch> [--log] [--tasks] [--rooms] <query>",
+            cls="form")
+    scopes = ({name for name, on in (("log", args.log), ("tasks", args.tasks),
+                                     ("rooms", args.rooms)) if on}
+              or set())
+    if not scopes:
+        die("REFUSED: name at least one scope to search (--log, --tasks, --rooms).\n"
+            "An unnamed scope is not every scope: a search that silently widens to "
+            "the whole fabric is the cross-read this tool exists to gate.",
+            cls="form")
+    m = load_manifest(args.channel)
+    withheld = {"log": 0, "tasks": 0, "rooms": 0}
+    rows = []
+    phase = m["barrier"]["phase"]
+
+    if "log" in scopes:
+        can_read_others = PHASE_RULES[phase]["read_others"]
+        for r in read_jsonl(channel_dir(args.channel) / "log.jsonl"):
+            if r.get("from") != who and not can_read_others:
+                withheld["log"] += 1
+                continue
+            if query in (r.get("body") or "").lower():
+                rows.append(f"log   {r.get('id', ''):<7} {r.get('from', ''):<16} "
+                            f"{(r.get('kind') or ''):<10} {_snippet(r.get('body', ''))}")
+
+    if "tasks" in scopes:
+        board = fold_tasks(args.channel)
+        # Walked in *file* order and resolved against the fold, so the board's
+        # output order is the chain order of the `created` events and not the
+        # sorted id order `task list` prints. Same reader, same visibility rule,
+        # different order -- the order is a property of what the caller asked.
+        seen = set()
+        for ev in task_events(args.channel):
+            tid = ev.get("task")
+            t = board.get(tid)
+            if t is None or tid in seen:
+                continue
+            if not _visible_to(t, who, phase) and kind != "human":
+                continue
+            if query in (t.get("title") or "").lower() or \
+                    query in (t.get("accept") or "").lower():
+                seen.add(tid)
+                rows.append(f"task  {tid:<7} {(t.get('status') or ''):<10} "
+                            f"{(t.get('owner') or '(unclaimed)'):<16} "
+                            f"{_snippet((t.get('title') or '') + ' | ' + (t.get('accept') or ''))}")
+        withheld["tasks"] = sum(1 for t in board.values()
+                                if not _visible_to(t, who, phase) and kind != "human")
+
+    if "rooms" in scopes:
+        for path in sorted(rooms_dir(args.channel).glob("*.jsonl")):
+            rid = path.stem
+            if _room_withheld(args.channel, rid, who, kind, phase):
+                withheld["rooms"] += len(read_jsonl(path))
+                continue
+            for x in read_jsonl(path):
+                if query in (x.get("body") or "").lower():
+                    rows.append(f"room  {rid:<7} {x.get('id', ''):<7} "
+                                f"{x.get('agent', ''):<16} "
+                                f"{(x.get('kind') or ''):<10} {_snippet(x.get('body', ''))}")
+
+    if not rows:
+        print(f"aim: nothing in '{args.channel}' ({', '.join(sorted(scopes))}) "
+              f"matches {query!r}")
+    for line in rows:
+        print(line)
+    for name in ("log", "tasks", "rooms"):
+        if withheld[name]:
+            # Counted, never shown: the reader must be able to tell "no match"
+            # from "there is a match behind the gate in {phase}".
+            print(f"\n({withheld[name]} record(s) in {name} were not searched: the "
+                  f"barrier in {phase} does not let you read them)")
+
+
+def _snippet(text, width=72):
+    """One line of a body, for the search result row.
+
+    Flattened to a single line because the reader is scanning *positions in a
+    chain* and a multi-line body would break the one-row-per-record shape that
+    makes the order legible. Truncated at `width` for the same reason.
+    """
+    flat = " ".join((text or "").split())
+    return flat[:width] + ("…" if len(flat) > width else "")
+
+
 def cmd_verify(args):
     ok = True
     # `push.jsonl` is checked with the rest because it is written with the same
@@ -4341,6 +4583,23 @@ def main():
     p.add_argument("--via", default="", help="how you intend to deliver this (recorded for the ledger)")
     p.add_argument("--require-ack", action="store_true",
                    help="record that this message demands a receipt")
+    # T-0147 clause 2's two flags. They are declared here rather than left to a
+    # caller that forwards them, and the reason is the failure this repo keeps
+    # measuring: an interface that cannot express the case cannot be audited for
+    # it. With the flags undeclared, `cmd_push`'s commitment gate was reachable
+    # only by a hand-built namespace -- so "a push that carries a position is
+    # refused" was a claim no command line could test, and a reader of the ledger
+    # could not tell whether it held because the gate worked or because nothing
+    # could reach it. The verbs keep their meaning: `--refs-seal` is the digest of
+    # the seal this body speaks for, exactly as in `say` (`bin/aim:1150`), and
+    # `--kind` is the same vocabulary `say` accepts. Declaring them costs nothing
+    # on the ordinary doorbell, which names neither.
+    p.add_argument("--refs-seal", dest="refs_seal", default="",
+                   help="the seal this message speaks for; a push carrying one is a "
+                        "position and meets the barrier (T-0147)")
+    p.add_argument("--kind", default="",
+                   help="position/claim/note/…; a commitment kind makes this push a "
+                        "position and it meets the barrier (T-0147)")
 
     p = add("pull", cmd_pull)
     p.add_argument("--as", dest="actor", required=True)
@@ -4397,6 +4656,28 @@ def main():
 
     r = radd("meta", cmd_room_meta)
     r.add_argument("--id", required=True)
+
+    # ---- search (T-0024) --------------------------------------------------
+    # Scopes are flags rather than a positional list because the *answer* has to
+    # say which record it came from, and a caller who asked only about the board
+    # must not be handed a log message that matched. `--tasks` is the name of the
+    # store the reader knows (`aim task list`), `--rooms` the name of the verb
+    # they came from, `--log` the name `cmd_status` and `cmd_inbox` print.
+    p = add("search", cmd_search,
+            help="one query over the channel log, the board and the rooms, answered "
+                 "in chain order")
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--channel", required=True)
+    p.add_argument("--log", action="store_true",
+                   help="search message bodies in the channel's public log")
+    p.add_argument("--tasks", action="store_true",
+                   help="search work item titles and acceptance text")
+    p.add_argument("--rooms", action="store_true",
+                   help="search message bodies in the channel's rooms, under the room gate")
+    # Last, so a query that begins with `-` is still the query: `aim search --as x
+    # --channel y --log ""` is refused for an empty query rather than being
+    # reported as an unrecognised flag, which is the shape every refusal here has.
+    p.add_argument("query", nargs="?", default="")
 
     # No git verb is registered here, and T-0238 is why one must not be added
     # casually. The hazard is measured, not hypothetical: two live sessions share

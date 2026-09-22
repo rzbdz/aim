@@ -12,6 +12,7 @@
    carries the whole family. */
 :root {
   --aim-dim: #5b6b83;
+  --aim-command: #334155;
   --aim-line: rgba(15, 23, 42, .14);
   --aim-line-soft: rgba(15, 23, 42, .08);
   --aim-radius: 12px;
@@ -35,6 +36,7 @@
 }
 html.dark {
   --aim-dim: #8b9cb6;
+  --aim-command: #cbd5e1;
   --aim-line: rgba(148, 163, 184, .16);
   --aim-line-soft: rgba(148, 163, 184, .09);
   --aim-accent: #38bdf8;
@@ -225,6 +227,17 @@ html.dark {
 .aim-card:hover { border-color: rgb(var(--aim-accent-rgb) / .42); transform: translateY(-1px); }
 .aim-card:active { cursor: grabbing; }
 .aim-card .aim-id { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--aim-dim); letter-spacing: .02em; }
+/* A claim string is a command the reader is meant to run, and the card's own
+   `.aim-id` is the wrong voice for it: 10.5px in the quietest token is for the
+   id and the estimate, which are labels. The string gets the full 11.5px of
+   `.aim-mono` and `--aim-command`, which is dark ink in both palettes (it is
+   defined in `:root` and shadows to `#cbd5e1` under `html.dark`, since the light
+   `#334155` on a dark card would be unreadable). It wraps rather than
+   ellipsises, because a command cut in the middle is one nobody can copy, and a
+   card is wide enough that `aim task claim --as human --channel hello --id
+   T-0001` stays on one line at 272px. */
+.aim-card .aim-claim { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--aim-command);
+                       white-space: normal; overflow-wrap: anywhere; letter-spacing: 0; }
 .aim-card .aim-title { display: block; font-size: 13px; line-height: 1.45; font-weight: 600; margin: 4px 0 0;
                        overflow-wrap: anywhere; }
 .aim-card .aim-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 10px; padding-top: 9px;

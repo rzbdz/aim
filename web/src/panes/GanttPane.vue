@@ -2,7 +2,8 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
-import { STATUS_TYPE, color, days, isOverdue, today } from '../theme'
+import TaskLink from '../components/TaskLink.vue'
+import { color, days, isOverdue, today } from '../theme'
 
 const ctx = inject('ctx')
 const board = useBoard()
@@ -216,6 +217,18 @@ const LANES = [
   { key: 'recorded', label: 'recorded work — in the store' },
 ]
 const laneOf = (task) => (isPromise(task) ? 'promise' : 'recorded')
+/**
+ * The lane's mark, in one place, because it is drawn on three surfaces.
+ *
+ * The glyph was written twice -- the row label (`rowOf`) and the undated tags --
+ * and absent from the third. The tooltip does name the authority in words
+ * (`planned dates` / `plan seed, not recorded`), but a reader who has learned the
+ * mark from the labels is the reader this mark is for -- the one who cannot tell
+ * the lanes apart by colour -- and the tooltip handed them a different vocabulary
+ * at the moment the row explaining it was under the pointer. One derivation, so
+ * the three surfaces cannot drift apart.
+ */
+const laneMark = (task) => (isPromise(task) ? '◌' : '●')
 const barStyle = (task) => (isPromise(task)
   ? { color: fade(color(task.status), SEED_FILL_ALPHA), borderColor: color(task.status),
       borderWidth: 1, borderType: [3, 3], borderRadius: 3 }
@@ -241,7 +254,7 @@ const barTooltip = (p) => {
   if (!t) return ''
   const seed = isPromise(t)
   const when = seed ? 'planned dates' : 'recorded dates'
-  return `<b>${t.id}</b> ${t.title}<br/>${t.status} · ${t.owner || 'unassigned'} · ${t.priority || '-'}<br/>`
+  return `${laneMark(t)} <b>${t.id}</b> ${t.title}<br/>${t.status} · ${t.owner || 'unassigned'} · ${t.priority || '-'}<br/>`
     + `${when}: ${t.start || '?'} → ${t.due || '?'}${t.estimate ? ` (${t.estimate}d estimate)` : ''}<br/>`
     + (seed
       ? '<i>plan seed, not recorded</i>: this bar is a promise from plan/*.json, '
@@ -289,7 +302,7 @@ const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone
  */
 const rowOf = (t, first) => ({
   task: t,
-  label: `${isPromise(t) ? '◌' : '●'} ${first && t.milestone ? `${t.milestone} ▏` : '  '}${t.id} · ${t.title.length > 62 ? t.title.slice(0, 61) + '…' : t.title}`,
+  label: `${laneMark(t)} ${first && t.milestone ? `${t.milestone} ▏` : '  '}${t.id} · ${t.title.length > 62 ? t.title.slice(0, 61) + '…' : t.title}`,
 })
 const allRows = computed(() => {
   const seen = new Set()
@@ -647,7 +660,16 @@ const undatedOpen = ref(false)
          The tags are behind a count and a link (T-0161 clause 3): 57 tags is a
          wall, and a wall is not a list. The count and the link are the same
          number, so the header answers "how many" and the button answers "show me"
-         without either of them lying. -->
+         without either of them lying.
+
+         The id is a `TaskLink`, not text: this list is where a reader is most
+         likely to be looking for a way in, because an item with no dates has no
+         bar to click either, and an id drawn as text here is the dead end that
+         component exists to remove. `laneMark` rides in the link's label, the same
+         glyph the row labels and the chip above use. The tag's `type` -- a status
+         colour -- did not survive the swap: this pane's header states the split in
+         words, and a colour on a control that opens a drawer is a claim the reader
+         cannot act on. -->
     <template #header>{{ undated.length }} item(s) with no dates, so no bar:
       <b>{{ undatedRecorded }}</b> on the record{{ undatedSeeds ? `, ${undatedSeeds} plan seeds (a promise with no date is not work)` : '' }}</template>
     <el-button size="small" text @click="undatedOpen = !undatedOpen">
@@ -656,10 +678,9 @@ const undatedOpen = ref(false)
     <span v-if="!undatedOpen" class="aim-dim" style="font-size:12px;margin-left:6px">
       ({{ undatedRecorded }} recorded · {{ undatedSeeds }} promises)
     </span>
-    <div v-if="undatedOpen">
-      <el-tag v-for="t in undated" :key="t.id" size="small" effect="plain" style="margin:2px" :type="STATUS_TYPE[t.status] || 'info'">
-        {{ isPromise(t) ? '◌' : '●' }} {{ t.id }}
-      </el-tag>
+    <div v-if="undatedOpen" class="aim-undated-tags">
+      <TaskLink v-for="t in undated" :key="t.id" :id="t.id" :label="`${laneMark(t)} ${t.id}`"
+                class="aim-task-link-tag" />
     </div>
   </el-card>
 
@@ -669,4 +690,8 @@ const undatedOpen = ref(false)
 /* Not scoped: `style.css` is another task's file this round, and a chart whose
    own width is a scroll is a property of the box, not of the pane's markup. */
 .aim-gantt-scroll { overflow-x: auto; overflow-y: hidden; }
+/* The wall the count/link guards is still a wall when it is drawn: these wrap, and
+   `style.css`'s `.aim-task-link-tag` is a right-margin built for a row of blockers,
+   which spaces a wrapped run of 57 links on one axis only. */
+.aim-undated-tags .aim-task-link-tag { margin: 2px; display: inline-block; }
 </style>

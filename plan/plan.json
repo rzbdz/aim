@@ -367,7 +367,7 @@
       "id": "T-0024",
       "title": "aim search over log, tasks and rooms with the chain as the order",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "normal",
       "estimate": 2,
       "start": "2026-09-24",
@@ -380,7 +380,8 @@
       "tags": [
         "group-chat"
       ],
-      "accept": "search results carry channel, room, author and hash"
+      "accept": "search results carry channel, room, author and hash",
+      "move_reason": "bin/aim:3962 `cmd_search` — one substring search over the three readers that already exist (read_jsonl on log.jsonl, fold_tasks/task_events, room_events), printed in file order because append_chained links each record on `prev` (bin/aim:414), so file order IS the chain order"
     },
     {
       "id": "T-0025",
@@ -1506,7 +1507,7 @@
       "id": "T-0147",
       "title": "The barrier's blind side: a push that carries a position is unrefused and unrecorded",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-23",
@@ -1520,7 +1521,7 @@
         "honesty"
       ],
       "accept": "tests/attack_gate_sweep.py reports no verb whose *position text* reaches a peer with nothing in the ledger: either the text is refused (class barrier) or a record naming the pair, the message id and the bytes is appended without the body. Blocked on D19 for the second of those two.",
-      "move_reason": "found by the structural sweep rather than by hand, after two holes of the same shape were found one at a time. The sweep is the deliverable worth keeping: it asks every verb instead of the verbs somebody thought of"
+      "move_reason": "bin/aim:3196 `cmd_push` now appends one chained ledger row naming the sender, session, recipient, channel, msg_id and whether the body carried a commitment, and a push carrying `refs_seal` passes the same `gate(..., 'channel_say')` a say does — so a position can no longer travel the fabric unrecorded"
     },
     {
       "id": "T-0148",

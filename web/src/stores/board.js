@@ -420,6 +420,18 @@ export const useBoard = defineStore('board', {
      * changes, the board catches up on its own. Only two things veto it -- unsent
      * text in a field, and a reader who has deliberately scrolled away from the
      * top -- and both come back with a visible way to apply the change now.
+     *
+     * So the veto is asked twice, and only the second answer protects anyone.
+     * Asked before the fetch it is economy: a reader who is still holding the
+     * update should not cost a state request every poll. Asked after it, it is
+     * the protection, because the record is swapped a round trip later than the
+     * check that allowed it -- and the round trip is exactly the window in which
+     * a reader who was idle becomes a reader mid-sentence. A reader who starts
+     * typing or scrolls while the state is in flight is re-rendered under their
+     * own hands by a rule that ran before they moved, which is the deferral's
+     * whole purpose undone by its own timing. The late check can only refuse a
+     * state it just fetched; the next poll asks again, and `checkDigest` still
+     * holds the change, so the update is late rather than lost.
      */
     async update({ force = false } = {}) {
       const obstruction = force ? null : readingInterrupt()
@@ -430,6 +442,15 @@ export const useBoard = defineStore('board', {
       }
       try {
         const next = await this.api.state()
+        // What the pre-fetch check cannot know: whether the reader is still
+        // clear. Taken before the swap and not only before the request, because
+        // the swap is the part the reader would feel.
+        const late = force ? null : readingInterrupt()
+        if (late) {
+          this.deferred = true
+          this.deferredReason = late.reason
+          return { applied: false, reason: late.reason }
+        }
         const restore = withReadingPosition(() => {
           this.doc = next
           this.viewer = next.viewer
@@ -453,9 +474,16 @@ export const useBoard = defineStore('board', {
     /** Cheap: the server answers this from file metadata, not by rendering. */
     async checkDigest() {
       if (document.hidden || !this.api) return
-      if (this.deferred) return
       try {
         const { digest } = await this.api.digest()
+        // Asked even while `deferred` is set, because a deferral is not a state
+        // the digest has to agree with: the digest moves on while the board
+        // deliberately sits still. Returning early here made the flag outlive the
+        // change that set it -- whatever cleared `deferred` without comparing
+        // (the reader's own click on the banner, a `force`, or the pane's own
+        // resume) then applied a digest it had never checked, and `lastDigest`
+        // was written as if it had. The comparison is the poll's whole job; what
+        // an obstruction vetoes is `update()`'s render, not this line.
         if (digest && digest !== this.lastDigest) await this.update()
       } catch { /* a dashboard that cannot reach its server should say so on load, not shout here */ }
     },

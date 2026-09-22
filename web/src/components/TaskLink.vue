@@ -61,8 +61,20 @@ defineExpose({ open })
               :title="`${id} is not in this view — search for it`">
     {{ label || id }}
   </RouterLink>
+  <!-- The two handlers that hold this link are modifiers on the *key* names and
+       not a bare `@keydown.stop`, and that is the whole fix: a modifier on
+       `enter`/`space` stops only those two keys, where a bare `.stop` would also
+       swallow the card's arrows, tab and every other key the card's own keyboard
+       path may grow. Enter and space are the ones that fire a delegated
+       `keydown` twice -- the link's own activation and the card's `role="button"`
+       handler above it, which `prevent` cannot hold back because it never
+       reaches the card's element. The click path holds the two apart the same
+       way (`.stop` below), so the mouse opens the drawer once and the keyboard
+       now does too. -->
   <button v-else type="button" class="aim-task-link" :aria-label="`Open work item ${id}`"
-          @click.stop="open()">
+          @click.stop="open()"
+          @keydown.enter.stop.prevent="open()"
+          @keydown.space.stop.prevent="open()">
     {{ label || id }}
   </button>
 </template>

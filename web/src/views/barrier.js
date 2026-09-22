@@ -2,7 +2,7 @@
 export default {
   key: 'barrier',
   title: 'Audit & barrier',
-  hint: 'phases, seals, refusals, and the chain all of it is written into',
+  hint: 'the phase, seals, refusals and hash chain of each channel',
   order: 70,
   icon: 'Lock',
   component: () => import('../panes/BarrierPane.vue'),
