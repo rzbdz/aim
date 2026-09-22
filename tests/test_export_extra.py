@@ -47,6 +47,7 @@ Run: python3 tests/test_export_extra.py     (exit code = number of failures)
 """
 import csv
 import datetime as dt
+import io
 import json
 import subprocess
 import sys
@@ -205,6 +206,35 @@ def check_csv_estimate(body):
              if hours.get(r["id"]) is None and r.get("estimate_hours", "") != ""]
     check("a row the record does not estimate is blank, not 0",
           not wrong, f"{len(wrong)} row(s) wrote a number for an absent estimate: {wrong[:3]}")
+
+    # A bare CR is the one character the live board does not have (measured: 0 of
+    # 177 values, `title` and `accept` included) and the reader refuses the whole
+    # file when it meets one unquoted, so no fixture built from the live tree can
+    # reach it. It is manufactured instead. Both routes are asserted, because they
+    # fail differently and the difference is the reason this is here at all:
+    #
+    #   * `csv.DictReader(io.StringIO(text))` is the object route, and the only one
+    #     that reads the field back byte-identical;
+    #   * `splitlines()` -- which is what this repo's own harness uses
+    #     (tests/test_export.py:246) -- splits on the CR and *drops* it, so a
+    #     mangled value there is silent rather than loud. Asserting only that route
+    #     would have written the defect down as a passing expectation.
+    #
+    # `csv.Error` from the first is caught and reported as the finding rather than
+    # left to end the run: measured against the writer as it stood, the exception
+    # came out of the second check and took the file's remaining checks with it.
+    from aimboard.exporters import export_csv
+    cr = export_csv({"T-CR": {"status": "todo", "title": "a\rb"}})
+    try:
+        back = list(csv.DictReader(io.StringIO(cr)))
+        got, rows = (back[0]["title"] if back else None), len(back)
+    except csv.Error as exc:
+        got, rows = f"{type(exc).__name__}: {exc}", 0
+    check("a value carrying a bare carriage return does not stop the reader opening the file",
+          got == "a\rb", f"title read back as {got!r}")
+    check("...and the file still has one row per task, not one more per carriage return",
+          rows == 1,
+          "a bare CR inside an unquoted field is a line break to every reader")
 
 
 def check_json_coverage():

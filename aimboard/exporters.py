@@ -34,6 +34,17 @@ def export_csv(tasks):
     # note forbids (fold.py:56, `not_a_conversion`).
     cols = ["id", "status", "owner", "priority", "estimate_hours", "start", "due",
             "milestone", "blocked_by", "visibility", "tags", "provenance", "title"]
+    # RFC 4180 section 2.6: a field carries a CR, an LF, a `"` or a `,` and it is
+    # enclosed in double quotes; a record is `CRLF`-separated, and a bare CR inside
+    # a *quoted* field is content. The predicate here tested `,` `"` and `\n` and
+    # not `\r`, so a value carrying a carriage return was written bare, and
+    # `csv.DictReader` then refuses the whole file -- "new-line character seen in
+    # unquoted field" -- which is a reader that cannot open any row, not one row
+    # that reads wrong. No row on the live root carries one (measured: 0 of 177,
+    # `title` and `accept` included), so this is the writer being wrong only for an
+    # input the record does not have yet; it is fixed rather than left because
+    # `title` is authored by hand in `plan/*.json` and a raw CR survives JSON
+    # parsing. Quoting it is the whole fix: `"a\rb"` reads back byte-identical.
     lines = [",".join(cols)]
     for tid, t in sorted(tasks.items()):
         row = []
@@ -42,7 +53,7 @@ def export_csv(tasks):
             if isinstance(v, list):
                 v = " ".join(str(x) for x in v)
             v = "" if v is None else str(v)
-            row.append('"' + v.replace('"', '""') + '"' if any(ch in v for ch in ',"\n') else v)
+            row.append('"' + v.replace('"', '""') + '"' if any(ch in v for ch in ',"\r\n') else v)
         lines.append(",".join(row))
     return "\n".join(lines) + "\n"
 
