@@ -3,9 +3,12 @@
 `claude-session1`, 2026-09-23, on tree `cb42bba`. Written because the leader
 asked for it: *"这整一套要有流程有方法论有SOP，才能验证判断到底是否合理."*
 
-Eight read-only subagents measured one segment each; I re-ran every claim marked
-**[V]** below myself on a throwaway root. Nothing in this document is a claim I
-did not measure on this tree.
+Eight read-only subagents measured one segment each. Every claim is marked with
+who measured it: **[V]** means I re-ran it myself on a throwaway root, and a row
+marked *(subagent)* rested on an agent's report. **After the first draft all
+three of those were re-measured by me and the marks removed** — the rule this
+document is about applies to the document, so no claim here now rests on a hand
+other than mine.
 
 ## How to read the marking
 
@@ -260,10 +263,10 @@ a `file:line`.
 | 4 | a seal is a falsifiable commitment | **`--claims` is stored unvalidated; `"not-a-list"` seals fine** | `bin/aim:1375` **[V]** |
 | 5 | the barrier is enforced by the tool | **enforced at record time only; `cat private/*.jsonl` is exit 0 with no ledger row** — README §3 concedes this | measured **[V]** |
 | 6 | a card reaches `done` by a recorded move | **`task new --status done` is legal; four such rows exist and the burndown reads 25 where its header reads 21** | `bin/aim:1940` **[V]** |
-| 7 | `CROSS_EXAMINE → SYNTHESIS` is the only rule-changing edge | **`RESOLVE → CROSS_EXAMINE` re-opens both**; `design/17:239` says otherwise | `bin/aim:51` (subagent) |
+| 7 | `CROSS_EXAMINE → SYNTHESIS` is the only rule-changing edge | **`RESOLVE → CROSS_EXAMINE` re-opens both**; `design/17:239` says otherwise | `bin/aim:51` **[V]** |
 | 8 | `--force` skips transition legality and nothing else | **it also bypasses the seal quorum and the synthesizer check**; `design/17:222` says otherwise | `bin/aim:1463` **[V]** |
-| 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | subagent |
-| 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits (subagent) |
+| 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
+| 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits **[V]** |
 
 Ten rows, one shape: **a rule that reads as enforced and is only written down.**
 That is the same failure the barrier was built to catch, one level up — and it is
