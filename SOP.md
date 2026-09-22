@@ -1211,7 +1211,7 @@ a `file:line`.
 | 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
 | 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits **[V]** |
 | 11 | a `human` is the leader, and only the leader | **every gate in the tool exempts any name that typed `--kind human`, and the mail gate never compares the viewer against a channel's `leader` field at all** — see below, it is the largest single hole | `aimboard/gate.py:159,191` **[V]**, §4.1 |
-| 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns the drafts the board withholds from the same caller — measured 180 vs the board's 107, a 73-draft divergence** | `aimboard/a2a.py:794` **[V]** |
+| 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns the drafts the board withholds from the same caller — measured 182 vs the board's 107, a 75-draft divergence** | `aimboard/a2a.py:794` **[V]** |
 | 13 | the seal hides a participant's reasoning from everyone but the synthesizer | **any self-declared `human` can read the mixed bundle — including one who never sealed and is not a participant** | `bin/aim:1610` **[V]** |
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
@@ -2236,9 +2236,9 @@ said *"Re-derived at HEAD"* and printed the `7def563` numbers — a falsifier ca
 it by re-deriving, and the delta is the finding the section is about, committed
 against the section. Re-derived again **on the working tree** (the phrase "at
 HEAD" is replaced here too: HEAD is a pointer that moves under a reader, and this
-very paragraph is about a number that moved while someone was looking at it),
-**five** rows have moved since `7def563`, and one of them is a whole `action` the
-cross-tab had no row for:
+very paragraph is about a number that moved while someone was looking at it):
+**twelve rows across four actions** have moved since `7def563`, and one of them is
+a whole `action` the cross-tab had no row for:
 
 | `action` | rows | `form` | `unrecorded` | `barrier` |
 |---|---|---|---|---|
@@ -2256,24 +2256,49 @@ cross-tab had no row for:
 | `task claim` | 1 | 0 | 0 | 1 |
 | **total** | **292** | **129** | **2** | **161** |
 
-*(This table was re-derived again as the paragraph above was being written, and
-**six** rows have moved since `7def563` rather than five — `friction` grew by 5
-on one run while six of those seven landed. That is the section's own finding
-happening to the section's own table, one table below the sentence about how
-counts move, which is why the numbers are given as a working-tree measurement and
-the *delta* rather than a total is what the paragraphs below reason from.)*
+*(This note has been rewritten twice, and the sequence is the section's own
+finding happening to the section's own table. It first said "five rows have
+moved"; a re-derivation mid-write made that "six"; the pid trace below makes it
+what it is — **twelve rows over `task list` +2, `say` +2, `search` +3 and
+`friction` +5** — because every one of those three attempts counted *the actions
+whose columns changed* and printed them as *rows*. One table below the sentence
+about how counts move, written in the one currency that sentence says not to
+trust. The numbers above are a working-tree measurement and the *delta* rather
+than a total is what the paragraphs below reason from.)*
 
-The new rows are all this document's own author's, and most of them are not
-divergence-phase refusals at all. `task list` grew by 2, `say` by 2 (a
-`--kind report` refused as *"only meaningful in CROSS_EXAMINE"* and a
-`--kind note` refused as *"channel_say is False"*), `search` by 3 (**a whole
-`action` the table above had no row for**, all three `form`), and `friction` by
-5 (a batch of falsifiers pointed at the wrong lane, refused as non-participants).
-So across the six, the `barrier` column grew by 9 and the `form` column by 5, and
+**The twelve new rows are mostly not mine, and this paragraph said they all
+were.** Traced by session pid against `git show 7def563`, six of the twelve are a
+falsifier's own probes — **and they are the entire `friction` delta**: five
+`friction` rows, four in `hello` and one in `barrier-v0`, every one of them a
+non-participant being refused the friction report — three as `synthesizer-v0`,
+one as `synthesizer-v0` in `barrier-v0`, and one as an unregistered name
+(`unknown agent 'fakeh'`) — plus one `search` (`1239293`). Four carry
+`claude-session1`, i.e. are mine: two `task list` (`1152553`, `1237959`) and two
+`say` (a `--kind report` refused as *"only meaningful in CROSS_EXAMINE"* and a
+`--kind note` refused as *"channel_say is False"*). **The remaining two are
+`search` rows written as agent `human` (`1202338`, `1202351`), and I cannot
+attribute them to a session from the record** — `human` is what `--as human`
+writes, and more than one hand has run it here. They are counted in the table and
+claimed by nobody in this paragraph.
+
+    since 7def563, by pid:   falsifier        friction x5, search x1   (pids 1239855, 1239293, 1240246, 1240248, 1240301, 1240307)
+                             claude-session1  task list x2, say x2
+                             unattributed     search x2 (agent `human`)
+
+So the sentence that stood here — *"the new rows are all this document's own
+author's"* — was false in exactly the way this section is about, and false about
+**the row class whose growth the paragraph above attributes to a batch of
+falsifiers**, i.e. it contradicted the note two paragraphs up in the same
+section. The cause is worth naming because it is the same one three times now:
+the count was taken from a grep, the attribution was not taken at all, and the
+two were written as one sentence.
+
+Across the twelve, the `barrier` column grew by 9 and the `form` column by 3, and
 the honest reading of *"152"* is that it was a working-tree number at one second,
 not a property of the machine. **The number in the sentence is a measurement at
 a tree and a second; the number in the table is too; and a section about how
-counts move printed one without the other.**
+counts move printed one without the other** — and then attributed the movement to
+the wrong hand.
 
 **So of the 152 rows classed `barrier`, 134 are the withholding family and 18
 are something else entirely.** The split, by the reason text the tool itself
@@ -2591,14 +2616,30 @@ stated anywhere as a rule:
    the disagreement is not symmetric.** §4.4 measured it on the live board as
    `rpc \ board = {T-0018, T-0027}` — a delta of two. Re-measured at this tree
    against the fabric directly, `gate.visible_tasks`'s hidden count against
-   `a2a.hidden_count`'s, over the same 180 tasks:
+   `a2a.hidden_count`'s, over the whole store:
 
    | viewer | `gate.visible_tasks` hidden | `a2a.hidden_count` | delta |
    |---|---|---|---|
-   | `a` (participant of nothing) | 73 | **0** | 73 |
-   | `codex` | 49 | **36** | 13 |
-   | `claude-session1` | 32 | **30** | 2 |
+   | `a` (participant of nothing) | **75** | **0** | 75 |
+   | `codex` | **51** | **38** | 13 |
+   | `claude-session1` | **34** | **32** | 2 |
    | `human` | 0 | 0 | 0 |
+
+   *(The four hidden counts here read 73/49/32/0 when this table was written and
+   were re-derived at the tree §4.2 had just been corrected to — 75/51/34/0,
+   against a store that had grown from 180 to 182 cards. **That is the defect this
+   whole section is about, one table away from the table that fixed it:** §4.2
+   was re-derived and this one was not, so for one revision the document carried
+   two adjacent measurements of the same quantity that disagreed by exactly the
+   two channel-less plan rows — `T-0018`/`T-0027` — that the section exists to
+   explain. The disagreement is not confined to the first column either: the
+   `a` row's delta moved with it, 73 → 75, because `a2a.hidden_count` returns
+   `0` for a non-participant at every revision. Only the `codex` and
+   `claude-session1` deltas held at 13 and 2 across the two trees, and they held
+   for a reason worth stating rather than assuming: **both terms grew by the same
+   two cards**, so the difference stayed put while the numbers either side of it
+   moved — which is precisely the stability that let a stale pair survive a
+   reading in §1.4.)*
 
    and end-to-end on a throwaway root with one draft: `GET /api/state?as=c`
    (a registered stranger) → `tasks []`, `withheld_tasks 1`; `POST /rpc?as=c`
