@@ -17,17 +17,26 @@
  * only `OverviewPane` uses it.
  *
  * The fixture below is built so the two authorities cannot be confused for each
- * other: **8 seeds and 3 recorded items, deliberately unequal, and 8 > 5**. Six
- * seeds carry plan-authored `done` and one recorded item carries a real
- * `moved -> done`; two seeds are `doing` and one recorded item is too. So
+ * other: **8 seeds and 3 dated recorded items, deliberately unequal**. Six seeds
+ * carry plan-authored `done` and one recorded item carries a real `moved -> done`;
+ * two seeds are `doing` and one recorded item is too. So
  *
  *   merged board  : 11 dated rows, 7 done
  *   the record    :  3 dated rows, 1 done
  *
- * and every assertion here is that difference or the sentence that states it. The
- * recorded ids start at T-0188+: T-0001..T-0186 are real ids in the live store, and
- * a surface that widens its own reading past the fixture would pull live rows into
- * a count this test believes it controls.
+ * and every assertion here is that difference or the sentence that states it.
+ *
+ * The fixture's ids are `T-9xxx`, and the range is the point rather than a
+ * preference. The first version of this file used `T-0188`..`T-0198`, which is
+ * *inside* the live range: `channels/hello/tasks.jsonl` names a task in the low
+ * `T-01xx` and `T-02xx` hundreds, and the store mints ids sequentially from
+ * `T-0001` in the order cards are created, so `T-9xxx` is the *shape* a live row
+ * cannot occupy -- not a threshold this comment could write down, because any
+ * literal maximum id here would be stale by the next card. The stubbed payload is
+ * what the pane actually reads -- one `/api/state` request, one fixture -- but the
+ * ids are the part of the fixture that has to be *out of reach* rather than merely
+ * stubbed, because a surface that widens its own reading past the fixture would
+ * otherwise pull a live row into a count this test believes it controls.
  */
 import { expect, test } from '@playwright/test'
 
@@ -67,22 +76,22 @@ const STATE = {
   tasks: {
     // 8 seeds: 6 the plan file says are done, 2 it says are in progress. None of
     // them has an event, so nothing has ever moved one.
-    'T-0188': SEED('T-0188', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0189': SEED('T-0189', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0190': SEED('T-0190', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0191': SEED('T-0191', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0192': SEED('T-0192', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0193': SEED('T-0193', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0194': SEED('T-0194', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
-    'T-0195': SEED('T-0195', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9001': SEED('T-9001', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9002': SEED('T-9002', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9003': SEED('T-9003', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9004': SEED('T-9004', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9005': SEED('T-9005', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9006': SEED('T-9006', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9007': SEED('T-9007', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
+    'T-9008': SEED('T-9008', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
     // 3 recorded items, one genuinely completed, one in progress, one in review.
     // They are in M1, the milestone the plan pane's progress clause is about: a
     // milestone that holds *both* universes is the only one where "the merged board
     // would read 7/11 here" is a sentence with a referent. A milestone holding only
     // the record cannot show the difference this file asserts.
-    'T-0196': RECORDED('T-0196', { status: 'done', start: '2026-09-24', due: '2026-09-25', milestone: 'M1', moved: 'done' }),
-    'T-0197': RECORDED('T-0197', { status: 'doing', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
-    'T-0198': RECORDED('T-0198', { status: 'review', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
+    'T-9009': RECORDED('T-9009', { status: 'done', start: '2026-09-24', due: '2026-09-25', milestone: 'M1', moved: 'done' }),
+    'T-9010': RECORDED('T-9010', { status: 'doing', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
+    'T-9011': RECORDED('T-9011', { status: 'review', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
     // M2's own three recorded items, and they carry **no dates on purpose**. The
     // date is what the Gantt counts, and the three tests on that pane are exact
     // counts over `board.dated` (11 dated bar(s), 3 on the record, 8 plan seeds).
@@ -90,9 +99,9 @@ const STATE = {
     // then be asserting different fixtures. An undated item draws no bar and is
     // counted by no dated number; it is still a row the plan pane's arithmetic is
     // over, which is the half of M2 this fixture needs.
-    'T-0199': RECORDED('T-0199', { status: 'done', start: '', due: '', milestone: 'M2', moved: 'done' }),
-    'T-0200': RECORDED('T-0200', { status: 'doing', start: '', due: '', milestone: 'M2' }),
-    'T-0201': RECORDED('T-0201', { status: 'review', start: '', due: '', milestone: 'M2' }),
+    'T-9012': RECORDED('T-9012', { status: 'done', start: '', due: '', milestone: 'M2', moved: 'done' }),
+    'T-9013': RECORDED('T-9013', { status: 'doing', start: '', due: '', milestone: 'M2' }),
+    'T-9014': RECORDED('T-9014', { status: 'review', start: '', due: '', milestone: 'M2' }),
   },
   reports: {
     series: [], throughput: [], blocked: [], median_cycle: null,
@@ -137,8 +146,52 @@ test.beforeEach(async ({ page }) => {
  * mostly translucent was painted as a promise. Counting is done with a small
  * tolerance because every edge is antialiased, which is why the *interior* majority
  * decides the class rather than any single pixel.
+ *
+ * **The chart has to have stopped before any of this means anything.** ECharts
+ * animates a bar in from the axis, so a census taken mid-ramp counts *partially
+ * painted* bars: measured on the settled bundle with this file's fixture, the green
+ * census reports a different chart at each step of the ramp (total 69 -> 2134 ->
+ * 12050 -> 16648 -> 16937, where only from 16937 does the total repeat), and the
+ * earlier readings differ in `bands` and `opaque` too. So `barsOfColour` waits for
+ * the pixel total to repeat three times before it counts anything, and
+ * `barsOfColourRaw` is the single read it then takes. A probe that asserts on the
+ * first non-zero frame reports the frame it happened to sample; this file did that,
+ * and three consecutive runs reporting `bands` 7, 7 and 11 is what it looked like.
  */
-async function barsOfColour(page, [r, g, b]) {
+async function barsOfColour(page, rgb) {
+  // "Settled" is measured on the same pixels the assertion is about -- this
+  // colour's own total -- rather than on a total that a *different* bar could hold
+  // constant while this one is still growing.
+  const read = () => page.evaluate(([r, g, b]) => {
+    const canvas = document.querySelector('canvas')
+    if (!canvas) return { total: 0 }
+    const { data, width, height } = canvas.getContext('2d')
+      .getImageData(0, 0, canvas.width, canvas.height)
+    const near = (i, want) => Math.abs(data[i] - want) <= 8
+    let total = 0
+    for (let i = 0; i < width * height * 4; i += 4) {
+      if (data[i + 3] < 16) continue
+      if (near(i, r) && near(i + 1, g) && near(i + 2, b)) total += 1
+    }
+    return { total }
+  }, rgb)
+  let last = -1
+  let same = 0
+  for (let i = 0; i < 120; i += 1) {
+    const { total } = await read()
+    if (total > 0 && total === last) {
+      same += 1
+      if (same >= 2) break            // three identical reads: the ramp has stopped
+    } else {
+      same = 0
+    }
+    last = total
+    await page.waitForTimeout(100)
+  }
+  return barsOfColourRaw(page, rgb)
+}
+
+async function barsOfColourRaw(page, [r, g, b]) {
   return page.evaluate(([r, g, b]) => {
     const canvas = document.querySelector('canvas')
     if (!canvas) return { runs: [], bands: 0, opaque: 0, translucent: 0, total: 0 }
@@ -239,14 +292,13 @@ test.describe('a plan seed is not work, on the two panes that draw the merge', (
   test('no seed bar is painted as a completed task', async ({ page }) => {
     await page.goto('/#/gantt')
     await expect(page.locator('canvas')).toBeVisible()
-    // The chart draws on mount and again on resize; wait for pixels rather than
-    // for a frame, since a canvas that has not painted has no bars to measure.
-    await expect.poll(async () => (await barsOfColour(page, DONE_GREEN)).total, { timeout: 10_000 })
-      .toBeGreaterThan(0)
-
+    // No gate here: `barsOfColour` settles the chart itself (three identical pixel
+    // totals), so a `poll(total > 0)` in front of it would only be a second, earlier
+    // reading of the same ramp -- and the earlier reading is the one this file used
+    // to assert on.
+    const green = await barsOfColour(page, DONE_GREEN)
     // `done`: six seeds (plan-authored text) and one recorded item that a person
     // actually moved. Only the last may be drawn as an outcome.
-    const green = await barsOfColour(page, DONE_GREEN)
     expect(green.bands).toBe(7)
     expect(green.opaque).toBe(1)
     expect(green.translucent).toBe(6)
@@ -266,21 +318,22 @@ test.describe('a plan seed is not work, on the two panes that draw the merge', (
   test('the tooltip says which authority the status and the dates came from', async ({ page }) => {
     await page.goto('/#/gantt')
     await expect(page.locator('canvas')).toBeVisible()
-    await expect.poll(async () => (await barsOfColour(page, DONE_GREEN)).total, { timeout: 10_000 })
-      .toBeGreaterThan(0)
     const green = await barsOfColour(page, DONE_GREEN)
-    // The rows are sorted by milestone then date, so the seeds (M1, 2026-09-21)
-    // are the first six runs and the recorded item (M2, 2026-09-24) is the last.
-    // Read the *pixels* to find them rather than computing the axis geometry: a
-    // probe that guesses bar positions tests its guess, not the chart.
+    // The bar the tooltip is read from is found in the *pixels*, not from the axis
+    // geometry: a probe that guesses bar positions tests its guess, not the chart.
+    // The fixture puts all six plan-authored `done` seeds and the one recorded item
+    // a person moved into M1, so the green runs are the six promise bars plus the
+    // record the tooltip clause is about -- and the clause is that the *last* one is
+    // the record. Whether it is the last run is the product's ordering, not this
+    // file's assumption.
     const seedTip = await tooltipAt(page, green.runs[0])
-    expect(seedTip).toContain('T-0188')
+    expect(seedTip).toContain('T-9001')
     expect(seedTip).toContain('plan seed, not recorded')
     expect(seedTip).toContain('planned dates')
     // The recorded bar says the opposite, so "names provenance" is not a clause
     // that could be pasted onto every tooltip and still pass.
     const recordTip = await tooltipAt(page, green.runs.at(-1))
-    expect(recordTip).toContain('T-0196')
+    expect(recordTip).toContain('T-9009')
     expect(recordTip).toContain('on the record')
     expect(recordTip).toContain('recorded dates')
   })
@@ -318,9 +371,9 @@ test.describe('a plan seed is not work, on the two panes that draw the merge', (
       digest: 'recorded-vs-seed-only-promises',
       milestones: { M7: { id: 'M7', name: 'Promises only', due: '2026-09-29', accept: 'nothing recorded yet' } },
       tasks: {
-        'T-0188': SEED('T-0188', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
-        'T-0189': SEED('T-0189', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
-        'T-0190': SEED('T-0190', { status: 'doing', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+        'T-9001': SEED('T-9001', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+        'T-9002': SEED('T-9002', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+        'T-9003': SEED('T-9003', { status: 'doing', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
       },
     }
     await page.route('**/api/state**', (route) => route.fulfill({
