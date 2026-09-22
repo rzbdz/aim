@@ -1103,6 +1103,44 @@ chain detects tampering after the fact; and
 the task-actor rules genuinely stop a bystander from submitting another's card.
 Those are the load-bearing mechanisms and they work.
 
+**But a count is not a weight, and these 280 rows are not what I read them as.**
+Every sentence above this one counted refusals. Classifying them by *what they
+actually refused* — reading each row's own `reason` rather than its `class` —
+splits them very differently:
+
+| what was refused | rows | class the tool gave it |
+|---|---|---|
+| the task **draft** gate (a peer's card in a divergence phase) | **132** | all `barrier` |
+| the task **state machine** (an illegal `TASK_FLOW` edge) | **93** | 91 `form`, 2 `unrecorded` |
+| a card id that does not exist | 21 | all `form` |
+| the owner rules on `task move` | 18 | 13 `barrier`, 5 `form` |
+| **the agent-to-agent barrier itself** (read or write across it) | **11** | 6 `form`, 5 `barrier` |
+| the phase machine (an illegal `TRANSITIONS` edge) | 4 | 2 `form`, 2 `barrier` |
+| membership | 1 | `form` |
+
+**So of the 152 rows classed `barrier`, five are the barrier the whole system
+exists for.** The other 147 are the draft gate (132) and the owner/phase rules
+(15) — real rules, and not one of them is about an agent seeing another agent's
+reasoning. The class token and the thing it names are 147 rows apart, which is a
+wider gap than §4.6's 36, in the same direction and for the same reason.
+
+**And the deeper fact, which no count reaches:** `read_others` is `True` only in
+`CROSS_EXAMINE`, `RESOLVE` and `CLOSED`, and **no channel in this repo has ever
+entered one of those phases.** Eight transitions across five channels in two days
+of real use, all of them into `SEALED_DIVERGENT` (5), `COMMIT` (2) or `SYNTHESIS`
+(1). Every barrier refusal in the table above was recorded with the barrier
+*closed*, refusing an act that would have crossed it early.
+
+That is the honest version of "the phase gate is real": **the lock is real, there
+are 280 recorded attempts to turn it, and the door has never been opened.** The
+mechanism this repo spent its effort on has never been exercised on the thing it
+was built for — agent-to-agent contact after a committed position — because the
+run never got past the phase where contact is what the fabric forbids. What the
+280 rows measure is the *pre-barrier* discipline, which is the half of the design
+`design/00` calls contact control. What they cannot measure is contamination
+control, which `design/00` says outright is "not enforceable, and arguably not
+even measurable", and which is the half nobody has a test for.
+
 **What is not real is the layer that makes them mean something.** A quorum that a
 hand-written file satisfies, a claims schema nothing validates, an exemption any
 name can claim, a terminal status a card can be born into, an id space that
