@@ -188,6 +188,25 @@ const tally = computed(() => {
 
 const SCOPE_LABELS = { visible: 'this view', fabric: 'the whole fabric' }
 
+/**
+ * What the *record* half of the headline can say it was folded over.
+ *
+ * `tally.rows` is `board.tasks`, the rows this seat may read, which is exactly
+ * the `visible` scope and only approximately the `fabric` one -- and the
+ * difference is the whole point of the radio. Measured 2026-09-22, this seat
+ * reads 148 of the store's 177 rows and `codex` 128, so a fabric reading whose
+ * record half is folded over 148 prints `63 work item(s) on the record in the
+ * whole fabric` on the same row as a merge clause whose own numbers subtract to
+ * 67: two figures about one store that do not add up, with nothing between them
+ * saying which set the smaller one is. The number is not shrunk to look green --
+ * it is the same 63 -- and it is not dropped; it says which rows it counted. The
+ * merge half is the server's count of the whole store and keeps `the whole
+ * fabric`, which is true of it. When the payload publishes a provenance split
+ * for the fabric scope, both halves can take the store's own figure and this
+ * label can collapse back into `SCOPE_LABELS`.
+ */
+const RECORD_LABELS = { visible: 'this view', fabric: 'this seat can read' }
+
 /** Which scope the headline figures are read in. Both are always on the page. */
 const scopeMode = ref('visible')
 
@@ -246,23 +265,29 @@ const recordedTally = computed(() => {
   const out = { total: 0, done: 0, dropped: 0, terminal: 0, undone: 0, pct: 0,
                 by_status: {}, record: 0, seed: 0, promise_done: 0, merged: tally.value }
   for (const t of rows) {
+    // A promise is counted and then skipped, which is the whole fold.
+    //
+    // This loop used to fall through and add the seed to every total, so the
+    // numbers under `on the record` were the merge's: re-run against the live
+    // payload (`/tmp/scope-*.json`, 2026-09-22) that version printed 86.3% for
+    // `human`, 97.8% for `claude-session1` and 86.6% for `codex` -- measured
+    // identical to `board_scope.visible.finished_pct` in all three, because it
+    // was the same sum -- and carried 72 promises inside a figure labelled `on
+    // the record`. The record-only fold of the same rows reads 75.3%, 95.2% and
+    // 71.7%. The authority word was right and the set under it was wrong, which
+    // is the one shape this page cannot print: `seed` and `promise_done` are
+    // still counted here, over every row, because the merge clause below needs
+    // them to say what the board's own percentage is made of.
+    if (isPromise(t)) {
+      out.seed += 1
+      if (t.status === 'done') out.promise_done += 1
+      continue
+    }
     out.total += 1
     out.by_status[t.status] = (out.by_status[t.status] || 0) + 1
-    if (isPromise(t)) out.seed += 1
-    else out.record += 1
-    if (t.status === 'done') {
-      out.done += 1
-      // The promise half of `done`, counted in the same pass over the same rows
-      // rather than derived from the merge's own `done` minus this fold's. That
-      // subtraction is the same number only while the two folds draw the same
-      // rows: measured on the `codex` scope the merge drops 16 and the record
-      // drops 14, so the difference carries two rows that are neither promises
-      // nor work. Both counters here see every row, so the recorded half is
-      // exactly `out.done - out.promise_done`.
-      if (isPromise(t)) out.promise_done += 1
-    } else if (t.status === 'dropped') {
-      out.dropped += 1
-    }
+    out.record += 1
+    if (t.status === 'done') out.done += 1
+    else if (t.status === 'dropped') out.dropped += 1
     if (board.terminal.includes(t.status)) out.terminal += 1
   }
   out.undone = out.total - out.terminal
@@ -545,7 +570,15 @@ const flowOption = computed(() => {
           label: { formatter: `${f.carries} closed before this window`, fontSize: 10, position: 'insideStartTop' },
           data: [
             { yAxis: f.chartLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
-              label: { formatter: `done ${f.chartLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
+              // `on the board`, because this level is `board_scope.fabric.done`
+              // -- the merged dict, plan seeds included -- and the label read
+              // `done 139` with nothing saying so. Measured 2026-09-22, 72 of
+              // those 139 are promises whose `done` is plan-authored text, so the
+              // level was the page's last unlabelled "done" over the merge. The
+              // record's own figure is in the headline above and is not drawn
+              // here: this axis is the top of the curve, and a level the record
+              // does not reach cannot be read against it.
+              label: { formatter: `done ${f.chartLevels.done} on the board`, fontSize: 10, position: 'insideEndTop' } },
             { yAxis: f.chartLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
               label: { formatter: `undone ${f.chartLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
             { yAxis: f.carries },
@@ -733,7 +766,7 @@ const quietLabel = computed(() => {
             :data-scope="scopeMode">
         <strong>{{ recordedTally.undone }}</strong> undone
         <span class="aim-dim">of <strong>{{ recordedTally.total }}</strong> work item(s) on the record
-          in {{ SCOPE_LABELS[scopeMode] }}</span>
+          in {{ RECORD_LABELS[scopeMode] }}</span>
       </span>
       <span data-record-done :data-merged-done="mergedDone" :data-seeds="recordedTally.seed">
         <strong>{{ recordedTally.done }}</strong> done <span class="aim-dim">on the record</span>
