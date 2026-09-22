@@ -121,20 +121,40 @@ const boardRefreshes = ref(0)
 watch(events, () => { boardRefreshes.value += 1 })
 
 /**
- * How the whole board stands right now: done, dropped, and still undone.
+ * How the board stands, in *two* scopes, folded by the server.
  *
- * This is not derivable from the events above, and that is the point of it being
- * a separate tally. `events` counts *moves*, so a task done before the window
- * opened contributes no event and would be invisible to a figure built from
- * them -- which is exactly the reading the leader was missing: a chart of
- * closes per minute with no line for the work still standing reads as though
- * every minute of it were progress toward nothing.
+ * The leader's KPI is the done/undone accumulation, and the failure this
+ * replaced was subtler than a missing line: the tally was folded here, over
+ * `board.tasks`, which is viewer-scoped. A seat that could open 131 of the 139
+ * done cards therefore read a *smaller* board than the one that exists and had
+ * no way to tell -- the payload already published `withheld_tasks` for exactly
+ * that reason, and a count derived client-side from a gated list is the same
+ * mistake one level down.
  *
- * Terminal means the two statuses that are not outstanding work. `blocked` is
- * deliberately not one of them: a blocked item is unfinished, and counting it
- * as finished is the failure this line exists to make visible.
+ * So both are read from `reports.board_scope`, which the server folds over
+ * `tasks` (visible) and `state["tasks"]` (fabric) and labels. `visible` is the
+ * default for the headline, because a reader looking at a page whose tables are
+ * gated should see the figure that matches what they can check.
+ *
+ * This is not derivable from the events above either, and that is why it is a
+ * separate tally: `events` counts *moves*, so a card closed before the window
+ * opened contributes no event at all. A chart of closes per minute with no line
+ * for the work still standing reads as though every minute were progress
+ * toward nothing.
+ *
+ * `blocked` is deliberately not terminal: a blocked item is unfinished, and
+ * counting it as finished is the failure this line exists to make visible.
+ * `dropped` is excluded from the denominator on the same principle in reverse
+ * -- a card someone deliberately dismissed is neither done nor outstanding.
  */
 const tally = computed(() => {
+  const scope = board.boardScope
+  const pick = scope[scopeMode.value] || scope.visible || scope.fabric || null
+  if (pick) return pick
+  // A server that predates `board_scope`. Falling back to the old client-side
+  // fold keeps the page readable rather than blank, and `stale: true` in the
+  // shell is what says the bundle and the server disagree -- inventing a number
+  // silently is the thing this file stopped doing.
   const out = { undone: 0, done: 0, dropped: 0, total: 0 }
   for (const t of board.tasks) {
     out.total += 1
@@ -146,12 +166,23 @@ const tally = computed(() => {
   return out
 })
 
-/** How much of the board is finished, as a percentage of the work that can be. */
-const finishedPct = computed(() => {
-  const t = tally.value
-  const denominator = t.done + t.undone
-  return denominator ? Math.round((t.done / denominator) * 100) : 0
+const SCOPE_LABELS = { visible: 'this view', fabric: 'the whole fabric' }
+
+/** Which scope the headline figures are read in. Both are always on the page. */
+const scopeMode = ref('visible')
+
+/**
+ * The other scope, so the page can show the number the reader is *not* looking
+ * at without switching. `null` when the payload predates the key.
+ */
+const otherScope = computed(() => {
+  const scope = board.boardScope
+  const other = scopeMode.value === 'visible' ? 'fabric' : 'visible'
+  return scope[other] || null
 })
+
+/** How much of the board is finished, in the selected scope. */
+const finishedPct = computed(() => tally.value.finished_pct ?? 0)
 
 const flow = computed(() => {
   // The window ends at the newest recorded event, not at the clock: a store
@@ -369,13 +400,31 @@ const quietLabel = computed(() => {
     </el-card>
   </div>
 
-  <!-- The numbers above and below are folded over the whole fabric, not over this
-       seat's board: a total that changed with who read it was reported as the
-       project's figure by a consumer that could not tell, so the scope is stated
-       on the page the same way the payload states it. -->
-  <p class="aim-dim" style="font-size:12px; margin:0 0 14px">
-    These counts describe the whole fabric, not this seat's view. The board's cards are gated:
-    {{ board.withheld }} item(s) are withheld from the current view.
+  <!-- Both scopes are on the page, and neither is the "real" one: `visible` is
+       what this seat can open, `fabric` is everything the store holds. A total
+       that changes with who reads it was once reported as the project's figure
+       by a consumer that could not tell, so the reader picks, the page names
+       which one is being read, and the one not being read is still shown
+       underneath rather than hidden behind a toggle nobody presses. -->
+  <div class="aim-filterbar" style="margin:0 0 10px">
+    <span class="aim-dim" style="font-size:12px">
+      Counts are folded by the server in two scopes. The board's cards are gated:
+      <strong>{{ board.withheld }}</strong> of <strong>{{ tally.total + board.withheld }}</strong>
+      item(s) are withheld from this seat.
+    </span>
+    <el-radio-group v-model="scopeMode" size="small" data-filter="scope">
+      <el-radio-button value="visible">this view</el-radio-button>
+      <el-radio-button value="fabric">whole fabric</el-radio-button>
+    </el-radio-group>
+  </div>
+
+  <p v-if="otherScope" class="aim-dim" style="font-size:12px; margin:0 0 10px">
+    In {{ SCOPE_LABELS[scopeMode === 'visible' ? 'fabric' : 'visible'] }}:
+    <strong>{{ otherScope.undone }}</strong> undone,
+    <strong>{{ otherScope.done }}</strong> done,
+    <strong>{{ otherScope.dropped }}</strong> dropped,
+    <strong>{{ otherScope.finished_pct }}%</strong> finished
+    ({{ otherScope.total }} item(s)).
   </p>
 
   <el-card shadow="never" style="margin-bottom:14px">
@@ -398,7 +447,7 @@ const quietLabel = computed(() => {
       <span><strong>{{ tally.done }}</strong> done</span>
       <span><strong>{{ tally.dropped }}</strong> dropped</span>
       <span><strong>{{ finishedPct }}%</strong> of the board finished</span>
-      <span class="aim-dim"><strong>{{ tally.total }}</strong> work item(s) in this view</span>
+      <span class="aim-dim"><strong>{{ tally.total }}</strong> work item(s) in {{ SCOPE_LABELS[scopeMode] }}</span>
       <span><strong>{{ flow.opened }}</strong> opened (items)</span>
       <span><strong>{{ flow.done }}</strong> done (items)</span>
       <span><strong>{{ (flow.opened / windowMinutes * 60).toFixed(1) }}</strong> opened / h</span>

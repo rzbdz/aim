@@ -210,6 +210,25 @@ const navGroups = computed(() => {
     views: group.keys.map((key) => byKey.get(key)).filter(Boolean),
   })).filter((group) => group.views.length)
 })
+
+/**
+ * The one deferral the reader did not cause, and so the one that needs a
+ * different sentence above the pane.
+ *
+ * `deferred` is one flag with two producers (stores/board.js:425-429, 443-450):
+ * an obstruction the reader's own state presents, and a refresh whose fetch
+ * failed. The store refuses to call the second one the record moving -- its
+ * comment at stores/board.js:444-446 says in as many words that doing so "would
+ * be the dashboard inventing an event" -- and the shell must not print the event
+ * the store declined to name. The digest poll failed there, so nothing was
+ * observed to have moved.
+ *
+ * The shell makes no distinction of its own: it compares the store's reason and
+ * renders one of two sentences. If the store rewords that reason this falls back
+ * to the sentence the banner already had, which is the only failure this branch
+ * can have.
+ */
+const deferredByFailure = computed(() => board.deferredReason === 'the server could not be reached')
 </script>
 
 <template>
@@ -290,7 +309,10 @@ const navGroups = computed(() => {
           reader is told what is waiting and given one quiet way to take it now.
         -->
         <div v-if="board.deferred" class="aim-deferred">
-          <span class="aim-dim">
+          <span v-if="deferredByFailure" class="aim-dim">
+            the board could not be read — the record it is showing is the last one it had.
+          </span>
+          <span v-else class="aim-dim">
             newer activity on the record — held back because {{ board.deferredReason }}.
           </span>
           <el-button size="small" text type="primary" @click="board.update({ force: true })">

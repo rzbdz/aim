@@ -5,9 +5,12 @@ serialised. The browser is not trusted to hide what it was sent - a client-side
 filter is a suggestion, and this project has a word for suggestions that are
 enforced somewhere else.
 """
+import ast
+import collections
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 
 from .a2a import ERROR_CODES, NATIVE_ONLY, TASK_STATES, error_reason
 from .const import DIVERGENCE, STATUSES, TERMINAL
@@ -144,6 +147,107 @@ def concept_group(group):
         return out
     return {token: {"label": label, "description": description, "group": group}
             for token, g, label, description in CONCEPTS if g == group}
+
+
+# Where the CLI that owns these vocabularies lives, resolved against this
+# package rather than the process's cwd: a board started from another directory
+# would otherwise publish an empty state machine and look like a build that had
+# lost it. Not `state["root"]` either -- `AIM_ROOT` names the *fabric* (the
+# channels and the plan), and a fabric read from a temp directory is still read
+# by the `aim` beside this file.
+_CLI = Path(__file__).resolve().parent.parent / "bin" / "aim"
+
+
+def _cli_constant(path, *names):
+    """Read constants out of `bin/aim` without importing `bin/aim`.
+
+    The Help pane had to write two vocabularies down because the payload
+    carried neither: the statuses' legal moves and the refusal classes. Both
+    live in the CLI -- `TASK_FLOW` beside the `advance` that enforces it, the
+    `cls` default and its call sites in `die`/`_record_refusal` -- so dropping
+    a second copy into the payload or into the page is the drift T-0214 names,
+    and importing the script to reach them is the module-graph dependency this
+    file already refused for `PHASES` (see the note above `CONCEPTS`).
+
+    So the module is *parsed*, not run: `ast.literal_eval` on the assignment
+    the CLI already made. The load-bearing assumption is that `bin/aim` has no
+    top-level side effect -- measured, not assumed: every statement at its top
+    level is an import, an assignment, a function or class definition, or the
+    `__main__` guard, so no module is loaded and no CLI branch can run.
+
+    A constant that is not there is not invented: the caller publishes the
+    vocabulary empty rather than a guess, which is visible, where a guessed
+    edge is a claim about what the tool will accept.
+    """
+    src = Path(path)
+    if not src.exists():
+        return {name: None for name in names}
+    found = dict.fromkeys(names)
+    for node in ast.parse(src.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in found:
+                try:
+                    found[target.id] = ast.literal_eval(node.value)
+                except ValueError:
+                    # A constant built by an expression is left unreported
+                    # rather than half-read: an empty map here draws no moves,
+                    # which a reader can see, and a partial one would draw a
+                    # table that has silently lost the restriction.
+                    found[target.id] = None
+    return found
+
+
+def task_flow(cli=None):
+    """The task state machine and the statuses, read from the CLI that owns it.
+
+    `const.STATUSES` is already published as `statuses` and is the vocabulary
+    this board folds (a status the tool cannot reach is still worth knowing
+    about); `TASK_STATUSES` is the list `aim task move` will *accept*, and the
+    two were identical on 2026-09-22 (7 values each) -- which is not a
+    guarantee either side is entitled to, so both keys are published rather
+    than one derived from the other. The `next` list is what the refusal
+    actually quotes back: `(allowed: review, blocked, dropped)`.
+    """
+    got = _cli_constant(cli or _CLI, "TASK_FLOW", "TASK_STATUSES")
+    flow = got.get("TASK_FLOW")
+    if not isinstance(flow, dict):
+        flow = {}
+    accepts = got.get("TASK_STATUSES")
+    if not isinstance(accepts, list):
+        accepts = []
+    return {
+        "flow": flow,
+        "accepts": accepts,
+        # A status with no entry in the table is not a status with no moves:
+        # it is a status the tool would refuse as a target and drop the card
+        # into by default. Saying which one it is beats a `v-for` over
+        # `board.statuses` printing "nothing" for a row the CLI does not have.
+        "unconstrained": [s for s in STATUSES if s not in flow],
+    }
+
+
+def refusal_classes(cli="bin/aim"):
+    """Every class a ledger row can carry, with what the class means.
+
+    Two of the three are a *default* rather than a list, so there is nothing in
+    the CLI to import and this is where the vocabulary has to be declared: the
+    set below is the same one `bin/aim` documents ("`class` is
+    `barrier`|`form`|`unrecorded`", README §3) and files rows under, and the
+    meaning of `form` is `a2a.NATIVE_ONLY`'s own sentence, because a class A2A
+    cannot express is the binding's claim to make. Each row says where its
+    class comes from, so a reader can tell a class a site stated from the
+    default that means the site did not.
+    """
+    return [
+        {"class": "barrier", "from": "stated at the site",
+         "where": "enforced by the call that guards the barrier"},
+        {"class": "form", "from": "stated at the site",
+         "where": "a malformed request, rejected before the phase was consulted"},
+        {"class": "unrecorded", "from": "the default in `_record_refusal`",
+         "where": "the refusing site did not state a class"},
+    ]
 
 
 def concepts():
@@ -317,6 +421,48 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
     stuck_rows = [row for row in stuck_all if row["id"] not in withheld_ids]
     reports["stuck"] = stuck_rows
     reports["stuck_withheld"] = len(stuck_all) - len(stuck_rows)
+    # The done/undone accumulation, and the one count on this payload that had
+    # no fabric-wide form. `tasks` is viewer-scoped and is the right thing for a
+    # pane to *draw* -- a card the viewer may not open must not be listed -- but
+    # the figure the leader reads off the report page is "how much of the work
+    # is finished", and a seat that can see 131 of 139 done cards read a
+    # smaller board than the one that exists. Both are true at once, so both
+    # are published, each labelled with the scope it was folded over rather
+    # than left for a consumer to guess: an unlabelled total that changes with
+    # who reads it is precisely the failure `reports_scope` was added for.
+    # Statuses only, never ids -- the same shape as `withheld_tasks`, and for
+    # the same reason.
+    visible_statuses = collections.Counter(t.get("status") for t in tasks.values())
+    fabric_statuses = collections.Counter(t.get("status") for t in state["tasks"].values())
+    # The two universal sets are spelled out rather than read from `const`, for
+    # the reason `concepts` above states: a status the fabric adds later is
+    # then *visible* as a new key in `by_status` instead of being absorbed into
+    # a bucket nobody declared. The consequence is that they are the one thing
+    # here a reader must not extend by guesswork, so they are named in the doc.
+    # `TERMINAL` is every status no longer outstanding, and it holds `dropped`
+    # as well as `done` -- right for "does this card still need attention",
+    # wrong for "is this card finished". Subtracting the one member rather than
+    # retyping `{"done"}` keeps the authority with the constant while saying
+    # which of its members this figure means.
+    done_ids = TERMINAL - {"dropped"}
+    out_scope = {}
+    for label, counts in (("visible", visible_statuses), ("fabric", fabric_statuses)):
+        done = sum(counts.get(s, 0) for s in done_ids)
+        total = sum(counts.values())
+        # `dropped` is dismissed rather than unfinished, so it belongs in
+        # neither figure -- counting it done flatters the board, counting it
+        # undone keeps a card that was deliberately closed open forever.
+        scored = total - counts.get("dropped", 0)
+        out_scope[label] = {
+            "by_status": {s: counts.get(s, 0) for s in sorted(counts)},
+            "total": total,
+            "done": done,
+            "dropped": counts.get("dropped", 0),
+            "undone": scored - done,
+            "scored": scored,
+            "finished_pct": round(100.0 * done / scored, 1) if scored else 0.0,
+        }
+    reports["board_scope"] = out_scope
     # Built once: the payload serves it and the `conversation` digest below hashes
     # the same object, and two calls to a gate is two chances for them to differ.
     conversation = conversation_view(state, viewer)
@@ -331,6 +477,11 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         # project has measured what a second copy costs (design/05, T-0086)
         "statuses": STATUSES,
         "terminal": sorted(TERMINAL),
+        # The two vocabularies the Help pane had to write down because this
+        # payload carried no key for them: the moves between the statuses
+        # above, and the classes a refusal can carry.
+        "task_flow": task_flow(),
+        "refusal_classes": refusal_classes(),
         "root": state["root"],
         "viewer": viewer,
         "viewer_kind": (state["registry"].get(viewer) or {}).get("kind", ""),

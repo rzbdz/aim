@@ -254,16 +254,27 @@ const identifierRows = computed(() =>
   }))
 
 /**
- * The task state machine, cited from `bin/aim:95-102`.
+ * The task state machine, read off the payload.
  *
- * `board.statuses` is the live list of statuses the tool can write and the
- * payload carries no transition table, so the moves are the one thing on this
- * card that cannot be read off the record. They are the tool's own `TASK_FLOW`,
- * quoted, and the statuses they are looked up by come off the payload -- so a
- * vocabulary the build no longer has draws nothing rather than a table of
- * statuses this page invented.
+ * `board.statuses` is the live list of statuses the tool can write, and
+ * `task_flow.flow` is the move table the CLI itself checks -- the same
+ * `TASK_FLOW` that `aim task move` consults before it refuses, which the server
+ * publishes by parsing `bin/aim` for the constant rather than retyping it
+ * (`aimboard/api.py`, `_cli_constant`). Reading it here is the difference
+ * between a page that describes the tool and a page that *is* the tool's own
+ * table: a move the CLI adds next month draws itself, and a move it removes
+ * stops being offered.
+ *
+ * Before this key existed the table below was quoted by hand from
+ * `bin/aim:95-102`, and the note that used to sit here said the moves were "the
+ * one thing on this card that cannot be read off the record". That is no longer
+ * true, and a citation that is no longer needed is a copy waiting to drift --
+ * which is exactly what T-0214 named. The literal is kept only as the fallback
+ * for a server that predates the key, because a blank table on the page that
+ * explains the states is worse than a stale one, and `stale: true` in the shell
+ * already says which of the two the reader has.
  */
-const TASK_FLOW = {
+const FLOW_FALLBACK = {
   backlog: ['ready', 'blocked', 'dropped'],
   ready: ['doing', 'blocked', 'dropped'],
   doing: ['review', 'blocked', 'dropped'],
@@ -272,33 +283,63 @@ const TASK_FLOW = {
   blocked: ['ready', 'doing', 'dropped'],
   dropped: [],
 }
+const TASK_FLOW = computed(() => board.doc?.task_flow?.flow || FLOW_FALLBACK)
 
 /**
- * The refusal classes, from `aimboard/api.py:70-112`.
+ * Which statuses `aim task move` will accept, and which it has no rule for.
  *
- * The three strings are what the barrier's class column and the refusal filter
- * offer, and until this card they were the only tokens on the board with no
- * definition anywhere a reader could reach. Written here rather than derived
- * because the registry that defines them (`concept_group`) is served by the API
- * in another agent's card (T-0214); when that payload key lands these three rows
- * become a read of it, and the class names do not change.
+ * Two facts that look like one. `accepts` is the set the CLI's parser will
+ * take -- a value outside it is a *form* refusal, refused before the phase is
+ * consulted. `unconstrained` is a status in `statuses` with no `flow` entry at
+ * all: today that is empty, and the page says "none" rather than drawing it as
+ * "no legal moves", because those are different claims about the tool and only
+ * one of them is what the record says.
  */
-const REFUSAL_CLASSES = [
-  { class: 'barrier',
+const MOVE_ACCEPTS = computed(() => board.doc?.task_flow?.accepts || [])
+const MOVE_UNCONSTRAINED = computed(() => board.doc?.task_flow?.unconstrained || [])
+
+/**
+ * The refusal classes, read off the payload where the payload has them.
+ *
+ * `refusal_classes` carries `{class, from, where}`: the name, the site that
+ * emits it, and the file it lives in. What it does *not* carry is the
+ * explanation, and that is the part this card owns -- the three paragraphs
+ * below are the page's own reading of what each class means for a person
+ * looking at the barrier, and they are keyed by class name so a class the
+ * server publishes and this page has no paragraph for still gets a row instead
+ * of vanishing. The paragraphs are the reason a reader came to this card; the
+ * vocabulary is the reason the rows are the tool's own.
+ */
+const REFUSAL_PROSE = {
+  barrier: {
     label: 'the barrier',
     how: 'You asked for something the phase withholds — reading a sealed peer, speaking in Resolving, '
       + 'advancing without being the leader. Recorded with the phase it happened in, because the '
       + 'temptation is the evidence.' },
-  { class: 'form',
+  form: {
     label: 'a malformed request',
     how: 'The call was rejected before the phase was consulted: a missing argument, an id that does not '
       + 'exist, a value the verb cannot take. A bug or a typo, not a protocol finding — so it is not '
       + 'evidence about the barrier.' },
-  { class: 'unrecorded',
+  unrecorded: {
     label: 'a class the refusing site did not state',
     how: 'The refusal is real and the reason is missing. A weaker claim than either of the two above, '
       + 'and drawn as one rather than guessed at.' },
-]
+}
+const REFUSAL_CLASSES = computed(() => {
+  const published = board.doc?.refusal_classes
+  const rows = Array.isArray(published) && published.length
+    ? published
+    : Object.keys(REFUSAL_PROSE).map((cls) => ({ class: cls, from: '', where: '' }))
+  return rows.map((row) => ({
+    ...row,
+    ...(REFUSAL_PROSE[row.class] || {
+      label: row.class,
+      how: 'The record names this class and this card has no paragraph for it yet — the name is the '
+        + 'tool\'s, the explanation is missing, and saying so is better than guessing one.',
+    }),
+  }))
+})
 
 /**
  * The verbs a person actually reaches for, with their flags.
@@ -532,9 +573,11 @@ const ACTIONS = computed(() => {
         <tbody>
           <!-- The statuses are the ones this board holds (`statuses` in the
                payload, which is `TASK_STATUSES` in `bin/aim`); the moves beside
-               them are the same file's `TASK_FLOW`, cited rather than invented.
-               A status the tool cannot move has to be visible as one, which is
-               why the two empty rows say so instead of being dropped. -->
+               them are `task_flow.flow` -- the table `aim task move` checks
+               before it refuses, parsed out of the CLI by the server rather
+               than retyped here. A status the tool cannot move has to be
+               visible as one, which is why the two empty rows say so instead of
+               being dropped. -->
           <tr v-for="st in board.statuses" :key="st">
             <td><el-tag size="small" effect="dark" :type="STATUS_TYPE[st] || 'info'">{{ statusLabel(st) }}</el-tag></td>
             <td class="aim-mono aim-dim" style="font-size:11px">{{ st }}</td>
@@ -543,6 +586,9 @@ const ACTIONS = computed(() => {
                 <el-tag v-for="next in TASK_FLOW[st]" :key="next" size="small" effect="plain"
                         style="margin:0 4px 2px 0">{{ statusLabel(next) }}</el-tag>
               </template>
+              <span v-else-if="MOVE_UNCONSTRAINED.includes(st)" class="aim-dim">
+                no rule at all — the tool has no move table entry for this status
+              </span>
               <span v-else class="aim-dim">nothing — this is where a work item stops</span>
             </td>
           </tr>
@@ -552,6 +598,11 @@ const ACTIONS = computed(() => {
         <em>in review</em> going back to <em>in progress</em> is the "changes requested" move, not a
         mistake: the record shows the item moved twice, which is the point of moving it rather than
         editing it.
+        <template v-if="MOVE_ACCEPTS.length">
+          The moves above are drawn from the same table the CLI enforces; a status outside
+          <code class="aim-mono">{{ MOVE_ACCEPTS.join(' ') }}</code> cannot even be named, and is
+          refused as a <em>form</em> error before the phase is consulted.
+        </template>
       </p>
 
       <h4 style="margin:18px 0 6px;font-size:12.5px">Provenance — where a work item actually lives</h4>
@@ -597,12 +648,27 @@ const ACTIONS = computed(() => {
         </thead>
         <tbody>
           <tr v-for="row in REFUSAL_CLASSES" :key="row.class">
-            <td><code class="aim-mono">{{ row.class }}</code></td>
+            <td>
+              <code class="aim-mono">{{ row.class }}</code>
+              <!-- Where the class comes from is the tool's own answer, published
+                   on `refusal_classes`, and it is the difference between a class
+                   a site deliberately stated and one it inherited from a
+                   default. A reader filtering the ledger by class is relying on
+                   that distinction, so it is shown rather than buried. -->
+              <div v-if="row.from" class="aim-dim" style="font-size:10.5px;margin-top:2px">{{ row.from }}</div>
+            </td>
             <td>{{ row.label }}</td>
-            <td class="aim-dim">{{ row.how }}</td>
+            <td class="aim-dim">
+              {{ row.how }}
+              <div v-if="row.where" class="aim-mono" style="font-size:10.5px;margin-top:3px">{{ row.where }}</div>
+            </td>
           </tr>
         </tbody>
       </table>
+      <p class="aim-dim" style="font-size:12px;margin:6px 0 0">
+        A refusal is recorded before anything is written, so the class is the field an audit groups by.
+        The three names are the tool's; the reading beside each is this page's.
+      </p>
     </el-card>
 
     <el-card shadow="never" style="margin-bottom:14px" id="inspecting">

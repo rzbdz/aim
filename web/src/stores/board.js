@@ -368,6 +368,18 @@ export const useBoard = defineStore('board', {
     unacked: (s) => s.doc?.unacked || [],
     drift: (s) => s.doc?.drift || [],
     withheld: (s) => s.doc?.withheld_tasks || 0,
+    /**
+     * The done/undone accumulation, both scopes, as the server folded it.
+     *
+     * `tasks` above is viewer-scoped, so a pane that counts it is counting the
+     * cards this seat may open -- which is the right thing to *draw*, and the
+     * wrong thing to read as the project's figure. `reports.board_scope` holds
+     * both, each labelled, and this getter is the only place the page reaches
+     * for them so no pane invents a third total by re-folding `tasks` itself.
+     * A payload from a server that predates the key yields the empty object,
+     * and every reader must tolerate that rather than assume a shape.
+     */
+    boardScope: (s) => s.doc?.reports?.board_scope || {},
     /** Open blockers, as edges rather than as flags. */
     blockerEdges() {
       const by = Object.fromEntries(this.tasks.map((t) => [t.id, t]))
