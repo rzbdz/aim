@@ -234,16 +234,42 @@ const tile = (page, label) => page.locator('.aim-signal').filter({ hasText: labe
  * a pane opened at a *new* route is always reached by reloading the target route -- which
  * is also what makes a swap of the fixture visible.
  */
+/**
+ * The address for one viewer's pane, as something `page.goto` can be handed.
+ *
+ * `new URL(`/${hash}`, page.url())` is the obvious spelling and it is wrong on the
+ * first call of every test in this file. `page.url()` is the test's own `baseURL`
+ * (`playwright.config.js:19`) until the page has navigated, and `new URL` ignores
+ * the base and returns the input alone when the input is itself absolute -- which
+ * `/`-prefixed is. Measured on a fresh page with that same config: `page.url()`
+ * is `http://127.0.0.1:8777`, the resolved target prints as
+ * `about:/#/chat?needsMe=1`, and `goto` on it lands there, which is a document
+ * that never runs the bundle. The pane then cannot mount and the failure is
+ * reported as "the .aim-chat pane mounted for human (the served bundle loaded)",
+ * which names the bundle rather than the address.
+ *
+ * So the target is the relative form, which Playwright resolves against `baseURL`
+ * itself -- one number, in the one place that already holds it. Measured: `goto(
+ * '/#/chat?needsMe=1')` lands on `http://127.0.0.1:8777/#/chat?needsMe=1` and
+ * `.aim-chat` mounts. The hash is the whole route in hash mode, so nothing here
+ * needs an origin to be correct, which is why the absolute round-trip was a way to
+ * get the base wrong rather than a way to be careful with it.
+ *
+ * It is issued unconditionally rather than behind a "are we already there" test:
+ * the second clause's `?needsMe=1` is a hash query, and comparing two URLs that
+ * carry one is how the guard this replaced went wrong. A `goto` to the route it is
+ * already on costs a same-document navigation, and the `reload` below is what
+ * makes the swapped fixture visible either way.
+ */
 async function showViewer(page, viewer, { receipts = 'fabric', hash = '#/chat?needsMe=1' } = {}) {
   await page.unroute('**/api/state**')
   await page.route('**/api/state**', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify(STATE(viewer, { receipts })),
   }))
-  const target = new URL(`/${hash}`, page.url()).toString()
   const pane = hash.startsWith('#/chat') ? '.aim-chat' : '.aim-attention'
   let mounted = false
   for (let attempt = 0; attempt < 2 && !mounted; attempt += 1) {
-    if (page.url() !== target) await page.goto(target)
+    await page.goto(`/${hash}`)
     await page.reload()
     mounted = await page.locator(pane).first()
       .waitFor({ state: 'visible', timeout: attempt === 0 ? 20_000 : 10_000 })
