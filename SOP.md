@@ -149,6 +149,42 @@ has never once asserted that a decline *succeeds*. That is the **stale** cell of
 the marker table in Part III: the acceptance was recorded against a mock that
 makes it unfalsifiable.
 
+### 1.3.2 The upstream cause: `request-advance` never checks the edge [V]
+
+The button is not wrong about its own contract. It posts the target the *request*
+named, and the request was accepted. Measured on a throwaway root at
+`SEALED_DIVERGENT`, whose only legal edge is `COMMIT` (`bin/aim:46`):
+
+    aim request-advance --as worker --channel ch --to NOT_A_PHASE --reason probe
+      -> rc 0   "request recorded: SEALED_DIVERGENT -> NOT_A_PHASE (awaiting lead)"
+
+`NOT_A_PHASE` is not in `PHASES` at all. The command's whole body
+(`bin/aim:1590-1604`) is a participant check and an append: it never loads
+`TRANSITIONS`, never tests the target against `PHASES`, and has no `--force`
+to override a check it does not make. The contrast is the real verb, run on the
+same root seconds apart:
+
+    aim advance --as lead --channel ch --to NOT_A_PHASE
+      -> rc 2   "aim: unknown phase 'NOT_A_PHASE'"   (ledger: class `form`)
+
+**Two rows, two files, and only one of them is an audit trail.** The refused
+`advance` writes a `refusal` row into `channels/ch/ledger.jsonl`; the accepted
+`request-advance` writes its row into `channels/ch/log.jsonl` as `kind:
+"request"`, and **no refusal row is written anywhere** — the command exits 0 and
+the ledger stays empty. So the malformed ask leaves the same trace as a valid
+one, and the ledger's `barrier`/`form` counts, which the whole of Part IV reads
+as *"the tool refused and said why"*, do not cover this path at all.
+
+That is the whole chain, and every link is a machine that works as written:
+`request-advance` records whatever edge it is handed; `board.phaseRequests`
+renders any request row whose `fromPhase` is the channel's current phase; the
+Overview pane draws an Approve button posting `request.targetPhase`; and
+`advance` then refuses the edge with a form error. **The live board's only
+rendered request is exactly this case** — `channels/hello/log.jsonl` `m0002`,
+author `claude-session1`, `COMMIT -> CROSS_EXAMINE`. Four actors, four correct
+behaviours, one dead button, and the only signal is a refusal the page cannot
+explain.
+
 ## 1.4 The work item
 
 The status graph is **ENFORCED** (`bin/aim:117-125`) with one gap that matters:
