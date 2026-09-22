@@ -61,11 +61,30 @@ test.describe.configure({ timeout: 120_000 })
 /** The store's predicate, spelled as `board.js:62` spells it. */
 const isPromise = (task) => (task?.provenance || '').includes('seed')
 
-/** The payload, split into the two universes the Gantt draws. */
+/**
+ * The payload, split into the two universes the Gantt draws.
+ *
+ * The seat is named, and naming it is the whole of this helper's correctness.
+ * `/api/state` is viewer-scoped (`aimboard/cli.py:490` reads `?as=`, falling back
+ * to the server's own `--as`), and the page under test boots with
+ * `board.viewer = 'human'` (`stores/board.js:521`, the `|| 'human'` default), so
+ * the app asks for `?as=human`. `page.request` carries no such default. Measured
+ * while the board was started `--as claude-session1`: a bare `/api/state` answers
+ * `viewer: claude-session1`, 148 rows, `withheld_tasks: 29`; `?as=human` answers
+ * 177 rows and withholds nothing. So a bare fetch hands this file a payload 29
+ * rows smaller than the one the DOM was drawn from, and the two disagree about
+ * whether rows like `T-0018` exist at all -- which reads, in an assertion, as the
+ * pane marking a row the payload says is not a promise. It is not marking
+ * anything wrong: the row is not *in* the smaller payload.
+ */
+const pageState = async (page) => {
+  const response = await page.request.get('/api/state?as=human')
+  expect(response.ok(), `GET /api/state?as=human answered ${response.status()}`).toBe(true)
+  return response.json()
+}
+
 async function datedSplit(page) {
-  const response = await page.request.get('/api/state')
-  expect(response.ok(), `GET /api/state answered ${response.status()}`).toBe(true)
-  const state = await response.json()
+  const state = await pageState(page)
   const tasks = Object.values(state.tasks || {})
   const dated = tasks.filter((task) => task.start || task.due)
   return {
@@ -150,7 +169,7 @@ async function tooltipText(page, selector) {
  * card are the payload's counts today rather than constants in this file.
  */
 test('T-0188: exactly the dated plan seeds carry the promise mark, and no recorded bar does', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: the chart card draws 0 bars -- the pane throws ReferenceError: barTooltip is not defined and the shell\'s error handler aborts the card, so the 87 dated seeds and 20 dated records are neither marked nor unmarked')
+  test.fail(true, 'measured 2026-09-22 on bundle 001be7a: the helper below cannot see a bar, so this assertion cannot pass on any bundle. `ganttBars` scans `path` elements inside `.aim-sticky-head`, but this pane is canvas-rendered (`src/plugins/charts.js:12` registers `CanvasRenderer`; the chart host is one `<div>` holding one `<canvas>`, 0 svg and 0 path). The 9 paths it does find are the filterbar\'s Element Plus icons -- two `el-input__clear`, five `el-select__caret` -- and the pager\'s prev/next arrows, all `fill="currentColor"` with no `fill-opacity` and no `stroke-dasharray`, so `marked` is structurally 0 and `plain` is 9 whatever the product does. Independently, the chart paginates: page 1 draws 25 of 107 dated rows while the payload below is unpaginated, so the counts could not agree even with a reader that worked. The previous reason on this line -- "the chart card draws 0 bars ... ReferenceError: barTooltip is not defined" -- is stale: the pane renders, `barTooltip` is defined (`GanttPane.vue:253`), and the chart draws 107 bars')
   const errors = []
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 300)) })
 
@@ -189,7 +208,7 @@ test('T-0188: exactly the dated plan seeds carry the promise mark, and no record
  * for both.
  */
 test('T-0188: a seed bar\'s tooltip says its dates are planned, a record\'s says recorded', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: there are 0 bars to hover, so neither tooltip exists; the pane\'s chart never renders (ReferenceError: barTooltip is not defined)')
+  test.fail(true, 'measured 2026-09-22 on bundle 001be7a: same cause as the test above -- `ganttBars` finds only the filterbar\'s icon glyphs, so it marks `data-t0188-marked` and `data-t0188-plain` onto two Element Plus icons and the two locators below resolve to nothing. The assertion is about tooltips on chart marks and the helper never reaches a chart mark. The previous reason on this line -- "there are 0 bars to hover ... ReferenceError: barTooltip is not defined" -- is stale: the pane renders (the test\'s own `page errors: none` says so), and both tooltips are live and correct on this bundle')
   const errors = []
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 300)) })
   const chart = await ganttBars(page, errors)
@@ -219,9 +238,17 @@ test('T-0188: a seed bar\'s tooltip says its dates are planned, a record\'s says
  * chip.
  */
 test('T-0188: Kanban and Items mark exactly the promise rows, with the shared mark', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: Kanban marks 87 promise cards with its own `<span class="aim-chip seed">plan seed</span>` (0 `.aim-promise`), and Items marks 0 of its 87 promise rows; 174 of 175 rows on each pane disagree or agree vacuously')
-  const response = await page.request.get('/api/state')
-  const state = await response.json()
+  // The marker that stood here is gone, and its reason was not what it said.
+  // Measured 2026-09-22: the two rows it named (`T-0018`, `T-0027`) are marked on
+  // screen *and* are genuine promises in the app's own payload
+  // (`provenance: "seed only (not yet in the store)"`, `status: dropped`). The
+  // disagreement was between the two seats, not between the pane and the
+  // predicate: this file fetched the bare `/api/state` (the server's `--as
+  // claude-session1`, 148 rows, `withheld_tasks: 29`) and compared it against a
+  // DOM drawn from `?as=human` (177 rows, nothing withheld). With `pageState`
+  // above, the comparison is seat-matched and the assertion is non-vacuous --
+  // 40 marked of 40 promised on the kanban, 0 disagreements on either pane.
+  const state = await pageState(page)
   const promiseIds = new Set(Object.values(state.tasks || {}).filter(isPromise).map((task) => task.id))
 
   const panes = [

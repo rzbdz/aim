@@ -59,6 +59,48 @@
  * the identifier rows (`:381`). The four unlinked faults the card names by hand --
  * `D5/D6` in the decisions table, `R1..R3` in the risks table, the phase enums in
  * the barrier refusals, and the refusal rows with no anchor -- are all present.
+ *
+ * ---------------------------------------------------------------------------
+ * RE-MEASURED 2026-09-22 on bundle `001be7a` (`GET /api/revision`, `stale:
+ * false`). The verdict table above is history, not current: two of its three
+ * clauses pass today, and the numbers in it are not the numbers the walk now
+ * reports. What the walk reports is 13 unreachable tokens over FOUR routes --
+ * /attention 3 (`T-0001`, `T-0001`, `M1`), /items 2, /kanban 3, /plan 5
+ * (`R1 R2 R3 D5 D6`). /barrier and /help are 0 under this fixture.
+ *
+ * Those 13 split, and the split is the finding:
+ *
+ *   * SIX ARE THE PREDICATE, NOT THE PRODUCT. `T-0001` is drawn as a control on
+ *     all three panes that show it: `TaskLink.vue:74` is a `<button
+ *     class="aim-task-link" aria-label="Open work item T-0001">` and the
+ *     attention and kanban rows are `article[role="button"]` whose `aria-label`
+ *     is `Open task T-0001: …`. The acceptance names `<a>` and `reachable()`
+ *     honours exactly two drawer shapes (`.aim-row-decisions`,
+ *     `[aria-label^="Inspect task"]`), so a control that opens the drawer by
+ *     *any other* name reads as a dead end. The board deliberately chose a
+ *     button over an anchor here -- `ItemsPane.vue:470-473` says why (a native
+ *     anchor would drag the URL onto the hash and the drawer would never open)
+ *     -- so the predicate contradicts a decision the product made on purpose.
+ *
+ *   * SEVEN ARE REAL AND ARE THE CARD'S OWN SUBJECT: `M1` on /attention and
+ *     /kanban (bare interpolations, `OverviewPane.vue:767`, `KanbanPane.vue:453`
+ *     -- note /plan and /items link their milestone cells, so the destination
+ *     exists and two of the four sites just do not use it), and `R1 R2 R3 D5 D6`
+ *     on /plan (`PlanPane.vue:394` is a bare `prop="id"` column and `:408` puts
+ *     the decision id in a collapse header, neither addressable). Those seven
+ *     have no target anywhere in the product except Help's own `#prefix-r` /
+ *     `#prefix-d` rows.
+ *
+ * And the predicate is too broad in the other direction, which is why its count
+ * cannot be read as a defect count: it walks `document.body`, so it sees the
+ * `el-popper` subtrees of the filter dropdowns -- invisible `li`/`div` option
+ * rows that happen to carry Element Plus's generated `el-id-<n>`, which
+ * `atDefinition` accepts as a definition row. Measured on /attention: 0 bad
+ * tokens with the pointer still, 1 with a phase chip hovered. A walk whose
+ * answer depends on where the mouse is has no stable number, and this test's
+ * green (it is `test.fail(true, …)`) says nothing about which of the 13 are
+ * real. The seven above are named so the card is not closed on the strength of
+ * a count that moves.
  */
 import { expect, test } from '@playwright/test'
 
@@ -190,17 +232,19 @@ async function open(page, route, title) {
 test.describe('T-0185: every identifier in the text has a way in', () => {
   test('the walk: no route renders a token with nowhere to go', async ({ page }) => {
     test.fail(true,
-      'T-0185 re-measured 2026-09-22T11:41Z on bundle 59b99a9+dirty (stale false), five runs: three '
-      + 'routes still render a token this walk cannot reach -- /attention "T-0001, T-0001, M1", '
-      + '/items the same three, /gantt the same three of its five. The original measurement below is '
-      + 'kept because it is the card\'s history, and the numbers have moved a long way toward it. '
-      + 'Of the three remaining tokens, T-0001 is not dead: the panes draw it as a control '
-      + '(TaskLink.vue:74 is a `<button class="aim-task-link" aria-label="Open work item T-0001">` '
-      + 'that opens the drawer, and the attention row is an `article[role="button"]` with '
-      + '`aria-label="Open task T-0001: …"`), but `collectTokens` only recognises the drawer shapes '
-      + '`[aria-label^="Inspect task"]` and `.aim-row-decisions`, so the predicate is what cannot see '
-      + 'it. The milestone token M1 is genuinely unlinked and no predicate reaches it -- that is the '
-      + 'real remaining work, and it is pane-side, not this file\'s. '
+      'T-0185 re-measured 2026-09-22 on bundle 001be7a (stale false): 13 unreachable tokens over four '
+      + 'routes, and the split is in this file\'s header. SIX are the predicate, not the product -- '
+      + '`T-0001` is a control on all three panes (TaskLink.vue:74 is a `<button class="aim-task-link" '
+      + 'aria-label="Open work item T-0001">`, and the attention and kanban rows are '
+      + '`article[role="button"]`), but `reachable()` honours only `<a>`, `tr/article/section/li[id]` '
+      + 'and the two drawer shapes, so a drawer control under any other name reads as a dead end. '
+      + 'SEVEN are real and are the card\'s own subject: `M1` bare-interpolated on /attention '
+      + '(OverviewPane.vue:767) and /kanban (KanbanPane.vue:453), and `R1 R2 R3 D5 D6` on /plan '
+      + '(PlanPane.vue:394 is a bare prop column, :408 a collapse header). The count is not stable '
+      + 'enough to close the card on -- it walks `document.body`, so the filter dropdowns\' hidden '
+      + '`el-popper` option rows count as definition rows when Element Plus gives them a generated '
+      + '`el-id-<n>`, and a hovered phase chip adds a token. Measured: 0 bad on /attention with the '
+      + 'pointer still, 1 hovered. '
       + 'ORIGINAL: unlinked tokens per route -- /attention 1, /items 3 (T-0001, M1, M2), /barrier 6 '
       + '(every phase enum in the refusal strip), /help 13, /kanban 3, /gantt 1. /plan links M1/M2 as '
       + 'router links and is clean. Help\'s identifier rows carry no id at all, so even a link to D7 '

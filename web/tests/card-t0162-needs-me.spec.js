@@ -445,17 +445,32 @@ test.describe('T-0162: needs me is the recipient state, not the presence of a ch
   })
 
   test('clicking the Attention receipts signal lands on the same filtered set', async ({ page }) => {
-    // The destination is right -- `/chat?needsMe=1&shape=direct` -- and the set it
-    // lands on is not: measured 08:35Z, `human` landed on `codex ⇄ human` *and*
-    // `claude-session1 ⇄ human`, and the other two viewers each picked up one extra
-    // thread the card excludes.
-    test.fail()
+    // The destination is right, and the set it lands on is the finding.
+    //
+    // This assertion used to demand `shape=direct` unconditionally, and the
+    // product does not emit that for this fixture. `OverviewPane.vue:163-169`
+    // builds the Receipts-owed destination as a ternary on how many threads owe
+    // the reader: one thread gets `thread=<key>` ("it opens on the conversation
+    // rather than the list", `:118`), two or more get `shape=direct`. The fixture
+    // below gives every viewer exactly one owed message on exactly one thread, so
+    // it takes the `thread=` branch by construction -- measured, the landing URLs
+    // are `?needsMe=1&thread=dm:codex ⇄ human` for human and codex and
+    // `?needsMe=1&thread=dm:claude-session1 ⇄ codex` for claude-session1.
+    //
+    // That mattered because `test.fail()` is satisfied by *any* failure: this test
+    // was expected-failing for all three viewers on an assertion the product can
+    // never satisfy for this input, which left it with no power to report the
+    // set question it is named for. The shape assertion now states the contract
+    // the signal actually has -- one of its two destinations -- and the set
+    // assertion below is the one that discriminates.
+    test.fail('measured 2026-09-22 on bundle 001be7a: on the single-thread branch the signal lands on the whole needs-me list, not the thread it names -- `human` gets ["#hello / #r1", "codex ⇄ human"] where the card says ["codex ⇄ human"]. The two multi-thread viewers pass')
     for (const viewer of VIEWERS) {
       await showViewer(page, viewer, { receipts: 'viewer', hash: '#/attention' })
       await page.locator('.aim-signal').filter({ hasText: 'Receipts owed' }).click()
       await page.waitForURL(/#\/chat\?/)
       expect.soft(page.url(), `${viewer}: the signal's destination`).toContain('needsMe=1')
-      expect.soft(page.url(), `${viewer}: the signal's shape`).toContain('shape=direct')
+      expect.soft(page.url(), `${viewer}: the signal's shape`)
+        .toMatch(/[?&](shape=direct|thread=)/)
       await expect(page.locator('.aim-chat-side')).not.toContainText('0 / 0 thread(s)')
       expect.soft(await labels(page), `${viewer}: the set the Attention count lands on`)
         .toEqual([CARD_THREAD[viewer]])
