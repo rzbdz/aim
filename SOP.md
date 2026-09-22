@@ -866,7 +866,7 @@ and push‑ack — and the event vocabulary the document already called a ninth.
 | 8 | **channel kind/lifecycle** | derived | empty → active → dormant | nobody | computed at `aimboard/fabric.py:58`, **dropped by the payload projection** | **PROSE — computed and discarded** |
 | 9 | **obligation** (who owes the leader an action) | none | — | — | 5 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249,263,276,291,313`) | **ABSENT by design, on the record** |
 | 10 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
-| 11 | **event vocabulary** | the `event` field of a task/ledger row | — | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing** | **PROSE — a writer is not a reader** |
+| 11 | **event vocabulary** | the `event` field of a **task** row in `tasks.jsonl` | unenforced; the vocabulary lives in one declared list nothing reads | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing**; the fold has branches for eight names and its stray-name counter (`fold.py:120`) fires only for an event with no `created`, never for an unknown name | **PROSE — and the one writer outside the eight drops silently** |
 
 Measured for #4, on a throwaway root — this is the machine that is *better* than
 its documentation:
@@ -955,12 +955,32 @@ carries `seal`, `phase`, `push`, `refusal`,
 `task_published_during_divergence`, `channel_member_added/removed/noop` and
 `friction` under the same word *event*. And a **card's** writer is already outside
 the eight: `cmd_task_edit` (`bin/aim:2255`, wired `:4613`) emits `"event":
-"edited"` at `:2330`, absent from `TASK_EVENTS`, `aimboard/fold.py` and every
-renderer — the live store shows only the eight because no `task edit` has run,
-which is luck, not mechanism. The event vocabulary is an eleventh machine with no
-enforcer at all, and the claim that "nothing has gone wrong because the copies
-that are read are the ones that write" is wrong for the one store that matters:
-its writer is *not* a copy of its declaration.
+"edited"` at `:2330` into **`tasks.jsonl` itself**, absent from `TASK_EVENTS`,
+`aimboard/fold.py` and every renderer — the live store shows only the eight
+because no `task edit` has run, which is luck, not mechanism.
+
+**And the drop is silent, which is worse than the name being unknown.** Measured
+on a throwaway root: `task edit --priority high` writes the row, prints
+`T-0001: priority normal -> high`, and the fold returns
+**`tasks_unknown_events = 0` with `priority` still `normal`**. Two independent
+silences, and the second is the interesting one — `unknown` (`fold.py:120`) is
+incremented only for an event whose **`created` was never seen**, not for a name
+the fold has no branch for, and every name outside the eight arrives *after* a
+`created` the fold did read. So the fabric has a counter for stray events and
+that counter cannot fire on the one stray event the tool can produce. I added an
+entry named `totally_made_up` to the same store to check the mechanism rather
+than assume it, and it did not move either. The verb reports success, the board
+does not move, and the store's own alarm stays at zero: a rule that exists in
+prose (`TASK_EVENTS`) and in a reading (`unknown`) and in neither machine.
+
+Scanning every literal `"event": "..."` in `bin/aim` and matching it against the
+fold's branches: eighteen names are written *not* into `tasks.jsonl` — `phase`,
+`seal`, `push`, `refusal`, `concession`, `friction`, `room_created`,
+`room_published`, `workspace_cleared`, `channel_member_*`,
+`task_published_during_divergence`, the three `doorbell_*` and `deleted` — and
+those are *ledger* events, correctly outside a task fold. **`edited` is the only
+one written into `tasks.jsonl` that the fold has no branch for.** That is the
+whole defect, and it is one branch.
 
 **Two of the eleven cannot be seen from the page** — and they are not the same
 kind of invisible. Row 8, the channel lifecycle, is computed on every
@@ -1007,12 +1027,17 @@ question "did an `edited` ever land", because no pane would know the name.
 **Two of these are lossy in the direction a reader would not guess.** `channel
 n─n task` loses work silently (§2.1: an id space per channel, merged per root, so
 the second project's copy is gone and the survivor is chosen by `sorted()`). And
-`task 1─n event` is lossy *on the read side only*: the store keeps every kind a
-writer emits, and the one consumer that draws them keeps two (`created`,
-`moved→done`), so the five newest records in the live store appear on no card —
-reported separately as the tail violation. The read-side loss would be worse than
-it looks if a `task edit` had ever run: `edited` (`bin/aim:2330`) is a ninth kind
-and no consumer has heard of it.
+`task 1─n event` is lossy **on the write side too, not only the read side** — the
+stronger version of what this paragraph used to claim. The read side keeps two of
+the kinds (`created`, `moved→done`) so the five newest records in the live store
+appear on no card; that was measured earlier and it is the tail violation. But
+the *fold* — the layer under the renderer — also drops a kind without saying so,
+and unlike the renderer it has a counter that was built to notice: `task edit`
+writes `edited` (`bin/aim:2330`) into `tasks.jsonl`, the fold has no branch for
+it, and `tasks_unknown_events` stays **0** because that counter fires on a
+missing `created` and not on an unknown name (IV-c.1 has the measurement). So
+`task 1─n event` is not an honest one-to-many with a stated consequence: it is a
+relation where **one writer and one reader disagree and neither reports it.**
 
 **The rest are honest one-to-manys with the consequence stated somewhere.** A
 nullable owner is what makes two actor rules short-circuit; a per-channel seal is
