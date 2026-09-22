@@ -1,9 +1,11 @@
 """The command line."""
 import argparse
+import errno
 import json
 import subprocess
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -11,6 +13,7 @@ from .const import LABELS
 from .api import payload as json_state
 from .exporters import export_csv, export_ical, json_payload
 from .fabric import fabric_digest, load_fabric
+from .revision import describe as describe_revision
 from .fold import drift
 from .gate import gate_channel, visible_tasks
 from .page import render_html
@@ -98,6 +101,114 @@ def cmd_export(args):
     else:
         sys.stdout.write(out)
     return 0
+
+
+def canonical_port():
+    """The one port this project's board is served on.
+
+    The leader's instruction, verbatim: "要求基础设施必须绑定一个端口号啊，如果那个
+    端口被占用，就调查杀死他，而不是经常变换使用". A moving port is a movable
+    interface: every probe script, every bookmark, every URL in a report and every
+    peer that learned where the board lives has to be updated by hand, and the
+    hand that forgets is the one that files a finding against the wrong build.
+
+    Set AIM_PORT to override, which is a deliberate act, not a fallback.
+    """
+    raw = os.environ.get("AIM_PORT", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return 8777
+
+
+def port_holder(port):
+    """(pid, cmdline) of the process listening on `port`, or None.
+
+    /proc rather than lsof/ss: this must work in a container with no lsof, and it
+    must not shell out. Only the listening socket is wanted, so a client
+    connected *to* the port is not mistaken for the holder.
+    """
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            f = line.split()
+            if len(f) < 10:
+                continue
+            try:
+                local = int(f[1].split(":")[1], 16)
+            except (IndexError, ValueError):
+                continue
+            if local == port and f[3] == "0A":   # 0A = LISTEN
+                inodes.add(f[9])
+    if not inodes:
+        return None
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            for fd in (entry / "fd").iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target[8:-1] in inodes:
+                    cmd = (entry / "cmdline").read_bytes().replace(b"\0", b" ").strip()
+                    return int(entry.name), cmd.decode("utf-8", "replace")
+        except OSError:
+            continue
+    return None
+
+
+def take_port(host, port, root, verbose=False):
+    """Take the canonical port, replacing our own stale server if it holds it.
+
+    The rule is asymmetric on purpose. A previous `aimboard serve` for this same
+    checkout is ours and is replaced: it holds a port the project declared, it is
+    serving a bundle that may already be stale, and asking a human to hunt it
+    down is how a project ends up with three boards on three ports and no idea
+    which one answered.
+
+    A process that is not ours is not killed. Reporting who holds it and refusing
+    is the honest outcome; killing a stranger's process to take a port is not a
+    convenience this tool should have.
+    """
+    holder = port_holder(port)
+    if not holder:
+        return None
+    pid, cmd = holder
+    # Ownership by working directory, not by the command line. A server started
+    # as `python3 -u bin/aimboard.py serve` names no absolute path, so matching
+    # the root against argv refuses to replace our *own* server -- measured: the
+    # first version of this function did exactly that, and printed "that is not
+    # an aimboard serve for /root/tmp/agent-im" about a server that was.
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        cwd = ""
+    ours = "aimboard" in cmd and (cwd == str(root) or str(root) in cmd)
+    if not ours and not getattr(take_port, "force", False):
+        raise SystemExit(
+            f"aimboard: port {port} is held by pid {pid}: {cmd or '(no cmdline)'}\n"
+            f"         that is not an `aimboard serve` for {root}, so this will not kill it.\n"
+            f"         Free the port, or run with AIM_PORT=<other> if you really mean to move."
+        )
+    import signal
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        raise SystemExit(f"aimboard: could not take port {port} from pid {pid}: {exc}")
+    for _ in range(40):
+        time.sleep(0.1)
+        if not port_holder(port):
+            print(f"aimboard: took port {port} from a stale `aimboard serve` (pid {pid})")
+            return holder
+    os.kill(pid, signal.SIGKILL)
+    time.sleep(0.3)
+    print(f"aimboard: killed pid {pid} which would not release port {port}")
+    return holder
 
 
 def cmd_serve(args):
@@ -360,9 +471,9 @@ def cmd_serve(args):
                 self._send(json.dumps({"ok": False, "rc": 1, "stderr": str(exc)}),
                            "application/json; charset=utf-8")
 
-        def _send(self, body, ctype):
+        def _send(self, body, ctype, status=200):
             raw = body if isinstance(body, bytes) else body.encode("utf-8")
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
@@ -398,6 +509,28 @@ def cmd_serve(args):
                 if path == "/api/digest":
                     self._send(json.dumps({"digest": fabric_digest(root), "generated_at": now_iso()}),
                                "application/json")
+                    return
+                if path == "/api/revision":
+                    self._send(json.dumps(describe_revision(root, web), ensure_ascii=False),
+                               "application/json; charset=utf-8")
+                    return
+                if path.startswith("/api/"):
+                    # An unhandled API path is a 404, never the app.
+                    #
+                    # Measured by a peer agent on its first day: `/api/flow`
+                    # returned index.html with HTTP 200 -- the requested endpoint
+                    # did not exist, and the answer said "fine". A 404 is a fact;
+                    # a 200 carrying HTML is a lie, and the consumer that trusts it
+                    # (an orchestrator polling for a flow series) folds the SPA's
+                    # markup as if it were data. The comment below this used to
+                    # claim the fallback excluded API paths and the code did not;
+                    # that gap is the whole bug.
+                    self._send(json.dumps({
+                        "error": "no such endpoint",
+                        "path": path,
+                        "endpoints": ["/api/state", "/api/digest", "/api/agents",
+                                      "/api/revision", "/api/command (POST, --allow-write)"],
+                    }, ensure_ascii=False), "application/json; charset=utf-8", status=404)
                     return
                 if path == "/api/agents":
                     state = self._state()
@@ -457,7 +590,13 @@ def cmd_serve(args):
             if args.verbose:
                 print(f"aimboard: {self.address_string()} {fmt % a}", file=sys.stderr)
 
-    server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
+    try:
+        server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as exc:
+        if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            raise
+        take_port(args.host, args.port, root)
+        server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
     host, port = server.server_address[0], server.server_address[1]
     print(f"aimboard: serving {root} on http://{host}:{port}/  as {args.viewer or 'the channel leader'}"
           + (f", polling for change every {args.refresh}s and offering a refresh rather than"
@@ -505,7 +644,9 @@ def main(argv=None):
     v = sub.add_parser("serve", help="a local, always-fresh view of the board")
     v.add_argument("--root", default=os.environ.get("AIM_ROOT", "/root/tmp/agent-im"))
     v.add_argument("--host", default="127.0.0.1")
-    v.add_argument("--port", type=int, default=8777)
+    v.add_argument("--port", type=int, default=canonical_port(),
+                   help="canonical port; a stale `aimboard serve` holding it is replaced, "
+                        "not avoided (AIM_PORT to move it deliberately)")
     v.add_argument("--as", dest="viewer", default=None)
     v.add_argument("--channel", action="append", default=None)
     v.add_argument("--lang", default="en", choices=sorted(LABELS))

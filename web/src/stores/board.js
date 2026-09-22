@@ -85,12 +85,33 @@ export function readingInterrupt() {
   return null
 }
 
-function scrollableAncestors(el) {
+/**
+ * Every container the reader has actually scrolled.
+ *
+ * The old version walked up from `document.activeElement`, which silently
+ * assumed the reader was focused inside the thing they were reading. That is
+ * false in the pane that matters most: Chat's history is its own scroller, the
+ * composer is a different element, and clicking `update now` moves focus to that
+ * button -- so the scroller was not an ancestor of the active element and was
+ * never restored. Measured: `.aim-history` at scrollTop 200, one new message
+ * arrives, the reader is thrown to 5948.
+ *
+ * The rule is therefore the element's own state, not the focus path: it is
+ * scrolled, and it is scrolled *on purpose* (an overflow container rather than
+ * one whose content happens to be taller than its box). A `getComputedStyle` per
+ * node is a full style pass, so only elements that are actually scrolled are
+ * asked what they are -- the same guard `readingInterrupt` uses, for the same
+ * reason.
+ */
+function scrolledContainers() {
   const out = []
-  for (let node = el?.parentElement; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node)
-    if (overflowY === 'auto' || overflowY === 'scroll') out.push(node)
+  for (const el of document.querySelectorAll('*')) {
+    if (el.scrollTop <= 0) continue
+    const { overflowY } = getComputedStyle(el)
+    if (overflowY === 'auto' || overflowY === 'scroll') out.push(el)
   }
+  const page = document.scrollingElement
+  if (page) out.push(page)
   return out
 }
 
@@ -103,21 +124,40 @@ function scrollableAncestors(el) {
  * that the board is current. No `location.reload`, because a reload throws away
  * the router state, the open drawer, the draft and the scroll position, and the
  * reader has to find their place again.
+ *
+ * Every deliberate scroller is restored, not only the ones on the focus path:
+ * a reader with the board scrolled to the dependencies and the chat scrolled to
+ * yesterday has two positions, and both are theirs.
  */
 function withReadingPosition(fn) {
   const active = document.activeElement
   const start = active && 'selectionStart' in active ? active.selectionStart : null
   const end = active && 'selectionEnd' in active ? active.selectionEnd : null
-  const scrolled = scrollableAncestors(active)
-    .map((box) => [box, box.scrollTop])
-    .filter(([, top]) => top > 0)
-  const page = document.scrollingElement?.scrollTop || 0
+  // Captured before `fn()`, because replacing the data changes scrollHeight and
+  // the browser clamps every position to the new content while it re-renders.
+  const scrolled = scrolledContainers().map((box) => [box, box.scrollTop, box.scrollLeft])
   const win = [window.scrollX, window.scrollY]
+  const put = () => {
+    for (const [box, top, left] of scrolled) {
+      box.scrollTop = top
+      box.scrollLeft = left
+    }
+    window.scrollTo(win[0], win[1])
+  }
   fn()
   return () => {
-    if (document.scrollingElement) document.scrollingElement.scrollTop = page
-    window.scrollTo(win[0], win[1])
-    for (const [box, top] of scrolled) box.scrollTop = top
+    put()
+    // And again on the next frame.
+    //
+    // A pane that scrolls itself in response to new data -- Chat re-anchors on
+    // the newest message, so that opening a thread lands at the bottom -- does it
+    // in a watcher that runs *after* this restore, because the restore is
+    // synchronous with the data swap and the watcher waits for the render. The
+    // reader's parked position then loses to it by one microtask, which is how a
+    // forced update threw `.aim-history` from 200 to 6154 while this function was
+    // insisting it had put it back. A position that a component may scroll away
+    // again is not restored until the scrolling has stopped.
+    requestAnimationFrame(put)
     if (active && active.isConnected && start !== null && document.activeElement !== active) {
       try {
         active.focus({ preventScroll: true })

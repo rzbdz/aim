@@ -8,6 +8,7 @@ enforced somewhere else.
 from datetime import datetime, timezone
 
 from .const import STATUSES, TERMINAL
+from .revision import default_dist, describe as describe_revision
 from .fold import drift, report_data, task_history, fold_tasks, merge_plan
 from .gate import (conversation_view, gate_channel, may_see_peer_secrets,
                    visible_tasks)
@@ -90,6 +91,10 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         "unacked": state["unacked"],
         "drift": drift(state["seed_tasks"], (state["channels"][0]["tasks_recorded"]
                                              if state["channels"] else {})),
+        # Which program answered: the tree the server runs from, and the
+        # revision the served bundle recorded about itself at build time. They
+        # can differ, and `stale` is that difference -- `design/12` §1.6.
+        "revision": describe_revision(state["root"], default_dist()),
         "register": register or {},
         "agents": {k: {"kind": v.get("kind", ""), "model": v.get("model", "")}
                    for k, v in state["registry"].items()},
