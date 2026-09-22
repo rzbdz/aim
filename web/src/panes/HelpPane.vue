@@ -12,7 +12,26 @@
  * An anchor that moves breaks a link from a page the reader cannot see is
  * broken, so add to this page rather than renaming what is here.
  */
-import { GLOSSARY, CONCEPTS, PHASES, phaseAnchor } from '../concepts'
+import { computed } from 'vue'
+import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASES, phaseAnchor } from '../concepts'
+import { useBoard } from '../stores/board'
+
+const board = useBoard()
+
+/**
+ * The convention from `concepts.js`, joined to the counts in the live record.
+ *
+ * Derived, not written down: if a prefix has nothing behind it right now the row
+ * says zero rather than describing something the reader cannot find.
+ */
+const countOf = {
+  'T-': () => board.tasks.length,
+  M: () => Object.keys(board.milestones || {}).length,
+  D: () => (board.register?.decisions || []).length,
+  R: () => (board.register?.risks || []).length,
+}
+const identifierRows = computed(() =>
+  ID_PREFIXES.map((entry) => ({ ...entry, count: countOf[entry.prefix]?.() ?? 0 })))
 </script>
 
 <template>
@@ -70,6 +89,38 @@ import { GLOSSARY, CONCEPTS, PHASES, phaseAnchor } from '../concepts'
             <td>
               <span v-if="phase.next">{{ phase.next }}</span>
               <span v-else class="aim-dim">—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px">
+      <template #header><span>Identifiers — what a bare M3 or R7 means</span></template>
+      <p class="aim-dim" style="font-size:12.5px;margin-top:0">
+        Single letters are drawn on the board, the plan and the dependency lists. They are a naming
+        convention held in the plan files rather than a vocabulary the tool defines, so each row says who
+        is the authority for it and how many exist in the record right now.
+      </p>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:74px">prefix</th>
+            <th style="width:130px">names</th>
+            <th style="width:92px">right now</th>
+            <th>where it comes from, and what it is for</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in identifierRows" :key="row.prefix">
+            <td><code class="aim-mono"><strong>{{ row.prefix }}</strong></code></td>
+            <td>{{ row.kind }}</td>
+            <td class="aim-dim">{{ row.count }}</td>
+            <td>
+              <p style="margin:0 0 5px">
+                <code class="aim-mono aim-dim" style="font-size:11.5px">{{ row.where }}</code>
+              </p>
+              <p style="margin:0" class="aim-dim">{{ row.detail }}</p>
             </td>
           </tr>
         </tbody>

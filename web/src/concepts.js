@@ -265,7 +265,7 @@ export const CONCEPTS = [
       + 'opens: what it is, its acceptance condition, what it is waiting on, what has been recorded about it, '
       + 'and the actions available to you right now. A seed card offers to record it; a review offers accept, '
       + 'request changes, or reject.',
-      'The drawer does not write anything itself. It runs the same `aim` command you would run in a terminal, '
+      'The drawer does not write anything itself. It runs the same aim command you would run in a terminal, '
       + 'as the identity the server declares, so a refusal here is the same refusal, with the same text, and it '
       + 'lands in the same ledger.',
     ],
@@ -273,5 +273,48 @@ export const CONCEPTS = [
       { to: '/kanban', label: 'Board — work by status' },
       { to: '/reports', label: 'Reports — what is waiting on what' },
     ],
+  },
+]
+
+/**
+ * The single letters, and where they come from.
+ *
+ * `M3`, `D7` and `R4` are drawn all over the plan and dependency screens as if
+ * they were words. They are not the tool's vocabulary: `bin/aim` mints work-item
+ * ids and takes whatever the plan files call everything else, so this table
+ * states the convention the plan follows and says which file is the authority.
+ * The counts are read from the live record, never written here -- a page that
+ * lists a prefix the board does not hold is the same defect as an enum in a
+ * label.
+ */
+export const ID_PREFIXES = [
+  {
+    prefix: 'T-',
+    kind: 'a work item',
+    where: 'minted by aim task new; the store is the authority',
+    detail: 'The handle you quote to talk about work: comments, blockers and everything that points at an '
+      + 'item name it by this id, and clicking one opens the same drawer from any page.',
+  },
+  {
+    prefix: 'M',
+    kind: 'a milestone',
+    where: 'written by hand in plan/plan.json',
+    detail: 'A milestone groups work items and carries an acceptance condition of its own. Clicking one '
+      + 'filters the work list to exactly the items that belong to it, so a milestone is a way in rather '
+      + 'than a heading.',
+  },
+  {
+    prefix: 'D',
+    kind: 'a decision',
+    where: 'written by hand in plan/risks.json',
+    detail: 'What was settled, and the reason it was settled that way. This is what you cite when someone '
+      + 'proposes re-opening a question that already has an answer.',
+  },
+  {
+    prefix: 'R',
+    kind: 'a risk',
+    where: 'written by hand in plan/risks.json',
+    detail: 'An open risk with an owner and a kill_if — the observation that would retire it. A risk '
+      + 'without one is a worry, not a tracked thing.',
   },
 ]
