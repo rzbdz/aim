@@ -1463,6 +1463,52 @@ the earlier draft pointed there. (§4.3 is the plan-file dedup, which has nothin
 to do with the visibility predicate; the divergence is in the next paragraph of
 this section.)
 
+**And there is a second divergence, in the opposite direction from the one below
+— and it hides a card from its own author.** The three definitions do not agree
+on a draft that nobody owns. `bin/aim:_visible_to` (`:1782-1784`) has an explicit
+unowned short-circuit — `if not task.get("owner"): return True`, commented
+*"Unowned: nobody's position to protect"* — and neither of the other two has it.
+Reproduced on a throwaway root, channel `ch`, one participant `alpha`, phase
+`SEALED_DIVERGENT`; `alpha` creates a card and then looks for it:
+
+    aim task list --as alpha --channel ch
+      -> T-0001  backlog  (unclaimed)  normal   alpha's own unowned card  [draft]
+
+    gate.visible_tasks(state, "alpha")   -> visible 0, hidden 1
+    gate.visible_tasks(state, "lead")    -> visible 1, hidden 0
+    a2a.list_tasks(viewer="alpha")       -> []
+    a2a.list_tasks(viewer="lead")        -> ["T-0001"]
+
+Two mechanisms, and both are in the tree as written. **First, the two folds
+disagree about `created_by`.** `bin/aim`'s own fold sets it from the event's
+actor (`:1699`, `"created_by": e.get("actor", "")`); `aimboard/fold.fold_tasks`
+never sets the key at all, so the board's card reads `created_by: None` — which
+is why every `viewer not in (owner, created_by)` test is `""`-and-`None` for an
+unowned card, i.e. false for everyone. `bin/aim:1700-1703` **documents this
+difference in a comment** and calls it "a measurement rather than an oversight",
+which is true of the difference and not of its consequence: on the two surfaces a
+human actually reads, the writer of an unowned draft cannot see what they wrote.
+**Second, the unowned exemption was written once.** `_visible_to` explains it at
+length — it is the leader's rule, quoted from the leader — and neither
+`gate.visible_tasks` (`:52-74`) nor `a2a.task_visible` (`:761`) carries it; both
+go straight from the phase test to the owner/creator union.
+
+**Measured live, the cost is easier to see than the mechanism.** Four of the 31
+cards the board hides from `claude-session1` are cards `claude-session1` typed:
+`T-0246`, `T-0247`, `T-0248` and `T-0249`. Split by cause:
+
+    T-0246/47/48   folded owner = 'codex'   created_by = None   (store created-actor: claude-session1)
+    T-0249         folded owner = ''        created_by = None   (store created-actor: claude-session1)
+
+So three of the four are the `created_by` drop — `codex` claimed them, and the
+author's half of the union is the half that went missing — and the fourth is both
+the drop and the absent unowned short-circuit. One sentence covers all four and
+it is the same sentence: **on the board, the union `owner or created_by` has only
+ever had one term.** That is not the triplication §4.4 is about — it is a *fourth*
+thing: one of the three copies contains an exemption the other two never got, and
+one of the three inputs the union reads is never populated at all, so the cost
+lands on the author rather than on a stranger.
+
 **The divergence this section missed runs the other way, and a falsifier found
 it with the same tool (§4.2's).** Two `plan/plan.json` rows — `T-0018`, `T-0027`,
 both `owner: codex`, `visibility: draft`, `status: dropped`, carrying **no

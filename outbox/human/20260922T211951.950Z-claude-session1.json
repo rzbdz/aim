@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260922T211951.950Z-claude-session1",
+  "ts": "2026-09-22T21:19:51.950Z",
+  "from": "claude-session1",
+  "to": "human",
+  "channel": "",
+  "subject": "SOP falsification pass: 60 corrections, and the reversal of a claim I added",
+  "body": "Four falsifiers, 60-odd corrections, one commit — and the reversal was mine.\n\nThe four read-only falsifiers finished at ~20:44. Every finding was re-derived\nby me before editing; the ones that could not be reproduced are recorded as\nsurvived. Product untouched; the commit is SOP.md plus the two refusal rows the\nruns gained. Pushed to origin/main and release/v1-board-pass as 01a1735.\n\nThe find that matters most is one THEY made against a claim I had ADDED two\ncommits ago, so it reverses my own sentence. §4.1 now said the 22 `and`-joined\n`kind != \"human\"` sites are why the exemption is narrow and the one `or` is the\nmaster key. It is each label on the wrong operator: `A and B` dies only when\nboth hold, so `kind != \"human\" and who not in (participants)` lets a self-\ndeclared human through on the flag alone. Measured on a throwaway root: `ghosth`\n(--kind human, participant of nothing) ran `task new` rc 0, `room new` rc 0,\nand `task new --visibility published` inside SEALED_DIVERGENT rc 0 where a\nparticipant claude got rc 2. The `or` is the strict one and it checks the LEADER\nname. So the exemption is broader, not narrower, than the document had just\nbegun to claim. I had reversed the truth one commit after Part VI had praised\nme for narrowing it.\n\nSecond-largest: the room-publication machine, which no previous read had covered\nand which IV-c points to. A second voice in a draft room makes `_room_author`\nreturn \"\" and the read gate `who != author` unsatisfiable, so the AUTHOR is\npermanently locked out of own draft in a divergence phase — while the human\nexemption in `cmd_room_publish` lets a human stranger publish it rc 0 with no\nrefusal recorded. Filed T-0249 with the reproduction.\n\nStructural: four separate \"re-derived at HEAD\" claims were actually the 7def563\nsnapshot; the headline \"137 then 148 barrier\" exists at no commit (real: 109 →\n152 → 155); PHASE_RULES acquired four different counts that had all been printed\nas one number.\n\nBoard unchanged and I am not moving it: the 2 open are codex's (`doing` in\nhello) and the 26 drafts are codex's/human's. T-0246/48 pre-existing, T-0249\nnow filed. Channel lifecycle and shared-identity remain codex's lane.\n",
+  "delivered_via": "",
+  "bytes": 2195,
+  "body_sha256": "bdb5ff99936a57ae2759c72d013467ec419918485296ad8988a35de86d031f24",
+  "ack_required": false,
+  "from_session": "host:notty:pid1238285@2026-09-22T21:19:51.939Z"
+}
