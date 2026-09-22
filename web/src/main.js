@@ -63,6 +63,32 @@ function anchorId(fromRouter) {
 }
 
 /**
+ * How long a scroll action may keep asking the renderer for frames, in ms.
+ *
+ * A count of frames is not a bound. `requestAnimationFrame` is a promise the
+ * renderer does not always keep: a busy one calls back late (at 20x CPU throttle
+ * a frame here measured ~320ms, so ten frames of "reset the pane" is 3.2s), and
+ * a hidden tab does not call back at all, which turns a wait for frames into a
+ * wait forever. Wall-clock is the thing that runs out.
+ */
+const ANCHOR_WAIT_MS = 1500
+const PANE_RESET_WAIT_MS = 200
+
+/**
+ * The next frame, or the deadline, whichever arrives first.
+ *
+ * The frame stays the fast path -- it is what keeps a write in the same paint as
+ * the mount it is written for -- and the timer is the ceiling that makes the
+ * wait bounded rather than frame-shaped.
+ */
+function frameOrDeadline(deadline) {
+  return new Promise((next) => {
+    const timer = setTimeout(next, Math.max(0, deadline - performance.now()))
+    requestAnimationFrame(() => { clearTimeout(timer); next() })
+  })
+}
+
+/**
  * Move the reading pane to an anchor, so a link to a row lands on that row.
  *
  * `vue-router`'s scroll handling is about the window, and the window does not
@@ -77,26 +103,41 @@ function anchorId(fromRouter) {
  * on the first frame after navigation the row does not exist yet, and an anchor
  * that works only when the chunk is already cached is an anchor that works on
  * the second click.
+ *
+ * The retry is a *background* action and the router is answered now. Vue Router
+ * awaits a promise returned from `scrollBehavior` before it commits the
+ * navigation, so a retry that was returned here made every anchor navigation
+ * wait on frames -- measured at 20x CPU throttle, a frame on this board took
+ * ~320ms and thirty of them is ten seconds of a reader watching a URL not
+ * change. Nothing about landing on a row needs the navigation held open for it.
  */
-async function scrollToAnchor(hash, epoch) {
+function scrollToAnchor(hash, epoch) {
   const id = anchorId(hash)
   if (!id) return false
-  let scroller = null
-  let target = null
-  for (let frame = 0; frame < 30 && (!scroller || !target); frame += 1) {
-    scroller = document.querySelector('.aim-main')
-    target = document.getElementById(id)
-    if (!scroller || !target) await new Promise((next) => requestAnimationFrame(next))
+  const put = () => {
+    const scroller = document.querySelector('.aim-main')
+    const target = document.getElementById(id)
+    if (!scroller || !target) return false
+    const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    // `scrollIntoView` would move the window too, and the window is not what the
+    // reader is looking through. The offset leaves the whole row visible rather
+    // than clipped against the pane's top edge.
+    scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 12), behavior: 'auto' })
+    return true
   }
-  if (!scroller || !target) return false
-  // A newer navigation supersedes this one: an anchor that lands after the reader
-  // has asked for something else is the reader being moved by a page they left.
-  if (epoch !== scrollEpoch) return false
-  const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-  // `scrollIntoView` would move the window too, and the window is not what the
-  // reader is looking through. The offset leaves the whole row visible rather
-  // than clipped against the pane's top edge.
-  scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 12), behavior: 'auto' })
+  const deadline = performance.now() + ANCHOR_WAIT_MS
+  const tick = async () => {
+    for (let frame = 0; frame < 30; frame += 1) {
+      // A newer navigation supersedes this one: an anchor that lands after the
+      // reader has asked for something else is the reader being moved by a page
+      // they left.
+      if (epoch !== scrollEpoch) return
+      if (put()) return
+      if (performance.now() >= deadline) return
+      await frameOrDeadline(deadline)
+    }
+  }
+  tick()
   return false
 }
 
@@ -123,6 +164,10 @@ async function scrollToAnchor(hash, epoch) {
  * instant the reader scrolls. This is the same rule `readingInterrupt` in the
  * store states, for the same reason -- nothing here scrolls under the reader's
  * hands.
+ *
+ * Ten frames is also not a length of time: on a renderer slow enough to matter,
+ * ten frames outlives the navigation that started it. The wall-clock ceiling ends
+ * the writes whatever the renderer is doing.
  */
 function resetReadingPane(epoch) {
   // Deliberately not awaited by the caller. `vue-router` awaits a promise
@@ -131,12 +176,14 @@ function resetReadingPane(epoch) {
   // be reset out of -- the exact thing this function exists to prevent. The loop
   // is started and left to run; the router gets its answer now.
   const reader = watchingForReaderScroll()
+  const deadline = performance.now() + PANE_RESET_WAIT_MS
   const tick = async () => {
     for (let frame = 0; frame < 10; frame += 1) {
       if (epoch !== scrollEpoch || reader.moved()) break
       const scroller = document.querySelector('.aim-main')
       if (scroller) scroller.scrollTop = 0
-      await new Promise((next) => requestAnimationFrame(next))
+      if (performance.now() >= deadline) break
+      await frameOrDeadline(deadline)
     }
     reader.done()
   }

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, ref } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { isOverdue } from '../theme'
@@ -13,9 +13,45 @@ const board = useBoard()
 // The shell owns the drawer; this pane only says what to open. See useTaskDrawer.
 const drawer = ctx.service('taskDrawer')
 const { filters, activeCount, clear } = useQueryFilters({
-  q: '', owner: '', milestone: '', tag: [], priority: '', onlyLate: false,
+  q: '', owner: '', milestone: '', tag: [], priority: '', onlyLate: false, unassigned: false,
 })
 const compact = ref(false)
+
+/**
+ * The same predicate Items draws, and the same one the filter reads, for the same
+ * reason `isOverdue` lives in the store: a card that says "unassigned" and a
+ * filter that claims to show unassigned rows have to be one question asked once.
+ */
+const unowned = (t) => (t.owner || '') === ''
+
+/**
+ * Whether this dashboard could actually run `aim task claim` for the viewer.
+ *
+ * `board.canWrite`/`board.writer` are the write path's own declarations
+ * (`aimboard/cli.py:503` refuses the POST without `--allow-write`, `:594` is the
+ * only place `write.as` is set), and the figure is drawn for one seat only: the
+ * seat the server writes as. `design/11` section 2 -- "a read can borrow a view; a
+ * write cannot borrow a name" -- so a control naming `board.writer` may only be
+ * offered to the viewer whose own kind is that writer's.
+ *
+ * Measured, and it is the seat rather than a role that decides this: the live
+ * board is `write {enabled: true, as: "human"}` while it reads as `viewer:
+ * "claude-session1"`. A participant is the common case, and the tool would run a
+ * claim drawing the participant's own name -- `cmd_task_claim` asks only that the
+ * actor be a participant of the channel (`bin/aim:1747`) -- while the record still
+ * says the leader took the card. This pane must draw exactly the figure the
+ * work-items list and the attention queue draw; two surfaces disagreeing about who
+ * may claim is the second implementation this task is about.
+ */
+const claimable = (t) => board.canWrite && board.writer
+  && (board.doc?.viewer_kind || '') === 'human'
+
+/** The item's own channel: `aim task claim` checks membership in the one it names. */
+function claimCommand(t) {
+  const channel = t.channel || t.context_id || ''
+  if (!channel) return ''
+  return `aim task claim --as ${board.writer} --channel ${channel} --id ${t.id}`
+}
 
 const visible = (t) => {
   const search = filters.q.toLowerCase()
@@ -25,6 +61,7 @@ const visible = (t) => {
   if ((filters.tag || []).length && !(filters.tag || []).every((tag) => (t.tags || []).includes(tag))) return false
   if (filters.priority && t.priority !== filters.priority) return false
   if (filters.onlyLate && !isOverdue(t.due, t.status, board.terminal)) return false
+  if (filters.unassigned && !unowned(t)) return false
   return true
 }
 
@@ -63,11 +100,31 @@ async function onMoved(evt, status) {
   if (!id || !to || to === from) return
   const task = board.tasks.find((item) => item.id === id)
   const channel = task?.channel || task?.context_id || board.channels[0]?.id || 'hello'
-  const command = `aim task move --as ${board.writer || board.viewer} --channel ${channel} --id ${id} --to ${to}`
+  // `board.writer`, never `board.viewer`: a write is the server's identity to
+  // assert (design/06 R1), and the two differ on the live board -- it reads as
+  // `claude-session1` while it writes as `human`. `|| board.viewer` was the
+  // fallback for an empty writer, which the same server never produces: it
+  // declares `write.as` exactly when `--allow-write` is set.
+  const command = `aim task move --as ${board.writer} --channel ${channel} --id ${id} --to ${to}`
   await ElMessageBox.alert(command, `${id} — the dashboard does not write`, {
     confirmButtonText: 'copy the command', showCancelButton: true, cancelButtonText: 'close',
     customClass: 'aim-mono',
   }).then(() => navigator.clipboard?.writeText(command)).catch(() => {})
+}
+
+/**
+ * Copy the claim command, exactly as the card shows it.
+ *
+ * The board does not claim the item: it hands the reader the one command that
+ * does, which is the same discipline the refused drag above keeps. The clipboard
+ * is a convenience, so a refusal to write it is swallowed -- the string is on the
+ * card either way, and the message is the same whether or not the copy landed.
+ */
+async function copyClaim(event, task) {
+  const command = claimCommand(task)
+  event?.currentTarget?.blur?.()
+  await navigator.clipboard?.writeText(command).catch(() => {})
+  ElMessage({ message: `copied: ${command}`, duration: 2000, customClass: 'aim-mono' })
 }
 
 const shipped = computed(() => Object.values(cols.value).flat().length)
@@ -97,6 +154,7 @@ function openTask(task) {
       <el-option v-for="priority in board.priorities" :key="priority" :value="priority" :label="priority" />
     </el-select>
     <el-checkbox v-model="filters.onlyLate" size="small">overdue only</el-checkbox>
+    <el-checkbox v-model="filters.unassigned" size="small" data-filter="unassigned">unassigned only</el-checkbox>
     <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
     <span class="aim-filter-count">{{ shipped }} of {{ board.tasks.length }}</span>
     <el-checkbox v-model="compact" size="small">compact</el-checkbox>
@@ -125,6 +183,18 @@ function openTask(task) {
             <span v-if="t.estimate" class="aim-id">{{ t.estimate }}d</span>
           </div>
           <span class="aim-title">{{ t.title }}</span>
+          <!-- Unowned is drawn in words, on the card, where "nobody has taken
+               this" is the reader's first question: an avatar with no name beside
+               it is the blank cell this replaces. -->
+          <div v-if="unowned(t)" class="aim-unowned">
+            <el-tag size="small" type="warning" effect="plain" data-unassigned
+                    title="No owner on the record: nobody has taken this work item.">unassigned</el-tag>
+            <el-button v-if="claimable(t)" size="small" text type="primary" class="aim-claim"
+                       :aria-label="`Copy the command that takes ${t.id}: ${claimCommand(t)}`"
+                       :data-claim-command="claimCommand(t)" :data-claim-id="t.id"
+                       :data-claim-as="board.writer" :data-claim-channel="t.channel || t.context_id || ''"
+                       @click.stop="copyClaim($event, t)">{{ claimCommand(t) }}</el-button>
+          </div>
           <template v-if="!compact">
             <div v-if="t.accept" class="aim-accept">
               <el-icon style="margin-top:2px"><Aim /></el-icon><span>{{ t.accept }}</span>

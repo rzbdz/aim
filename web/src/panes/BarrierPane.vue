@@ -1,11 +1,13 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, inject, reactive, ref, watch } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
-import { PHASES, phaseLabel } from '../concepts'
+import { PHASES, phaseConcept, phaseLabel } from '../concepts'
 import PhaseChip from '../components/PhaseChip.vue'
 
+const ctx = inject('ctx')
 const board = useBoard()
+const api = ctx.service('api')
 const { filters, activeCount, clear } = useQueryFilters({
   channel: '', q: '', agent: '', refusalClass: '', phase: '',
 })
@@ -40,6 +42,136 @@ watch(shown, (id) => {
 }, { immediate: true })
 
 /**
+ * The move this channel is waiting on, named rather than inferred.
+ *
+ * `PHASES[].next` is the lifecycle's forward edge and not "the first edge in
+ * `TRANSITIONS`" -- the two differ at CROSS_EXAMINE, where the machine also
+ * offers a re-seal back to SYNTHESIS. The one the leader is *asked* for is the
+ * forward one, so that is the one the page offers, and the argv below is built
+ * from this function rather than typed twice: a control whose printed command is
+ * not the command it posts is the defect, so both read `advanceArgv`.
+ *
+ * Null when the phase has no forward edge (CLOSED) or when the build cannot name
+ * the phase at all (`phaseConcept` returns `next: null` for an unknown key).
+ */
+const nextPhase = (ch) => phaseConcept(ch?.phase).next || ''
+
+/**
+ * What crossing that edge changes, from the machine's own table.
+ *
+ * `unlocks` is the honest half of a phase move and it is why the barrier exists:
+ * SYNTHESIS -> CROSS_EXAMINE is the edge that *ends independence*, and the three
+ * before it change no permission at all. A leader deciding whether to press the
+ * button should not have to read `concepts.js` to find that out.
+ *
+ * Only the *forward* edge is read. At CROSS_EXAMINE the machine also offers a
+ * re-seal back to SYNTHESIS, and the map below holds both; the card draws the
+ * one `nextPhase` names. Offering the re-seal here would mean deciding on the
+ * leader's behalf that the round should be restarted, which is a different
+ * decision from advancing it.
+ */
+function unlocks(ch) {
+  const to = nextPhase(ch)
+  const edge = PHASES.find((p) => p.key === ch?.phase)
+  if (!to || !edge) return ''
+  return TRANSITION_UNLOCKS[`${edge.key}->${to}`] || ''
+}
+
+/**
+ * The argv the button runs, in the order `bin/aim advance --help` prints.
+ *
+ * `--as` is the channel's *leader*, because that is the identity the tool
+ * requires (`require_leader`, `bin/aim:731`) and the one the page is showing the
+ * control to. See `canAdvance`: the control is drawn only when that is also the
+ * identity the server writes as, so the printed command and the posted command
+ * are the same command and not two claims.
+ */
+function advanceArgv(ch) {
+  const to = nextPhase(ch)
+  if (!ch?.id || !to) return null
+  return ['advance', '--as', ch.leader, '--channel', ch.id, '--to', to]
+}
+const advanceText = (ch) => {
+  const argv = advanceArgv(ch)
+  return argv ? `aim ${argv.join(' ')}` : ''
+}
+
+/**
+ * Whose move this is, and whether this dashboard can make it.
+ *
+ * Three conditions, each of which alone has produced a control that lies:
+ *
+ *  * the *reading seat* is the channel's leader (`board.viewer`). Measured on
+ *    the live board: it reads as `viewer: "claude-session1"` while it writes as
+ *    `write.as: "human"`, so gating on the writer alone draws the leader's
+ *    control for every participant who looks at the page;
+ *  * the server was started with `--allow-write` (`board.canWrite`), because
+ *    otherwise `POST /api/command` answers `rc 126` before a subprocess exists
+ *    (`aimboard/cli.py:503`) and the button can only ever fail;
+ *  * the server writes as the leader (`board.writer === ch.leader`), because the
+ *    endpoint drops any `--as` in argv and appends its own (`aimboard/cli.py`
+ *    `do_POST`), so a writer who is not the leader would run a *different*
+ *    command from the one printed on the card.
+ *
+ * A leader who fails the second or third condition is not a non-leader and is
+ * not shown nothing -- they are told the move is theirs and that this dashboard
+ * cannot carry it. What is never drawn is a control.
+ */
+const isLeader = (ch) => Boolean(ch?.leader) && ch.leader === board.viewer
+const canAdvance = (ch) => Boolean(advanceArgv(ch)) && isLeader(ch)
+  && board.canWrite && board.writer === ch.leader
+
+const busy = ref('')
+const refusal = reactive({ channel: '', text: '' })
+
+/**
+ * Run the move through the one write path (`api.command` -> `POST /api/command`).
+ *
+ * The dashboard does not advance a phase itself: it hands the argv to `bin/aim`
+ * as the identity the server declares, so a refusal here is the tool's own text --
+ * "cannot enter SYNTHESIS before every participant has sealed", say -- printed
+ * verbatim rather than paraphrased, and recorded in the same ledger as a refusal
+ * typed in a terminal.
+ */
+async function advance(ch) {
+  const argv = advanceArgv(ch)
+  if (!argv || !canAdvance(ch)) return
+  busy.value = ch.id
+  refusal.channel = ch.id
+  refusal.text = ''
+  const response = await api.command(argv)
+  busy.value = ''
+  if (response.rc !== 0) {
+    refusal.text = (response.stderr || response.stdout || `aim exited ${response.rc}`).trim()
+    return
+  }
+  refusal.text = ''
+  await board.load()
+}
+
+/**
+ * Which seal rows the reader has opened.
+ *
+ * Keyed by channel *and* agent: `el-tabs` keeps every pane in the DOM, and the
+ * same agent seals in more than one channel (`claude-session1` seals in three
+ * here), so an agent-keyed set would open a row in a pane the reader is not
+ * looking at -- the same "three panes match the locator" shape the refusal
+ * table's `:visible` scoping exists to correct.
+ *
+ * A `Set` of open keys rather than an `expanded` flag on the payload: the
+ * payload is the server's, and mutating it would put reader state into the
+ * record the page is auditing.
+ */
+const openSeals = reactive(new Set())
+const sealKey = (ch, row) => `${ch.id}\u0000${row.agent}`
+const sealOpen = (ch, row) => openSeals.has(sealKey(ch, row))
+function toggleSeal(ch, row) {
+  const key = sealKey(ch, row)
+  if (openSeals.has(key)) openSeals.delete(key)
+  else openSeals.add(key)
+}
+
+/**
  * The rows a refusal table draws, asked for a named channel rather than for "the
  * current one".
  *
@@ -72,22 +204,101 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
   .map(([file, s]) => ({ file, ...s })))
 </script>
 
+<script>
+/**
+ * `unlocks` per lifecycle edge, read from `concepts.js` `TRANSITIONS` at module
+ * load rather than re-typed here. A second copy of "what this move changes" is a
+ * second answer to the question the leader is deciding with, and this project has
+ * already measured what a second copy costs.
+ */
+import { TRANSITIONS } from '../concepts'
+const TRANSITION_UNLOCKS = Object.fromEntries(
+  TRANSITIONS.map((edge) => [`${edge.from}->${edge.to}`, edge.unlocks]),
+)
+export default { name: 'BarrierPane' }
+</script>
+
 <template>
   <el-tabs :model-value="shown" @update:model-value="(id) => { filters.channel = id }"
            v-if="channels.length">
     <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id"
                    :label="`#${ch.id} — ${phaseLabel(ch.phase)}`">
-      <el-descriptions :column="3" border size="small" style="margin-bottom:14px">
-        <el-descriptions-item label="topic" :span="2">{{ ch.topic }}</el-descriptions-item>
-        <el-descriptions-item label="leader">{{ ch.leader }}</el-descriptions-item>
-        <el-descriptions-item label="phase">
-          <PhaseChip :phase="ch.phase" effect="dark" link /> round {{ ch.round }}
-        </el-descriptions-item>
-        <el-descriptions-item label="participants">{{ (ch.participants || []).join(', ') }}</el-descriptions-item>
-        <el-descriptions-item label="work items in the store">{{ ch.tasks_recorded }}</el-descriptions-item>
-        <el-descriptions-item label="refusals recorded">{{ (ch.refusals || []).length }}</el-descriptions-item>
-        <el-descriptions-item label="concessions">{{ ch.concessions }}</el-descriptions-item>
-      </el-descriptions>
+      <!--
+        The barrier card, first, because this page is about a phase and a phase is
+        the one thing on it a person can move.
+
+        It replaces the `el-descriptions` block that used to open the pane. Those
+        twelve cells were a *report* -- topic, leader, round, participants, work
+        items, refusals, concessions -- 166px of the reader's first screen spent
+        on facts that are all one line each, and none of them an action. It also
+        drops one line the old table had: "phase history — only the leader moves
+        it", which was a statement of who *may* move the phase drawn *above*
+        nothing that moves it. The claim did not go away, it changed tense: it is
+        now either the argv below or the sentence that says whose move this is.
+      -->
+      <el-card shadow="never" class="aim-leader-card" body-style="padding:12px" style="margin-bottom:14px">
+        <template #header>
+          <div class="aim-leader-head">
+            <span class="aim-leader-kind">the barrier</span>
+            <span class="aim-leader-topic">{{ ch.topic || '(this channel records no topic)' }}</span>
+          </div>
+        </template>
+        <div class="aim-leader-line"
+             style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <PhaseChip :phase="ch.phase" effect="dark" link />
+          <span class="aim-dim">{{ phaseConcept(ch.phase).summary }}</span>
+          <span style="flex:1" />
+          <span class="aim-dim aim-leader-facts" style="font-size:11.5px">
+            leader {{ ch.leader }} · round {{ ch.round }} ·
+            {{ (ch.participants || []).length }} participant(s) ·
+            {{ ch.tasks_recorded }} work item(s) ·
+            {{ (ch.refusals || []).length }} refusal(s) ·
+            {{ ch.concessions }} concession(s)
+          </span>
+        </div>
+        <div v-if="canAdvance(ch)" class="aim-leader-advance"
+             style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+          <div class="aim-leader-next" style="font-size:12.5px">
+            <span class="aim-dim">the move this phase opens: </span>
+            <!--
+              The label, not the enum. `boards.spec.js` asserts that no raw phase
+              key is drawn as text inside `.aim-main` -- measured failing here the
+              first time this was written, because `→ CROSS_EXAMINE` is a raw key
+              with no tooltip behind it. The enum the tool needs is in the argv
+              below, which is a command rather than a label, and the chip beside
+              it carries the full value on hover.
+            -->
+            <b>→ {{ phaseLabel(nextPhase(ch)) }}</b>
+            <span v-if="unlocks(ch)" class="aim-dim"> — {{ unlocks(ch) }}</span>
+          </div>
+          <span style="flex:1" />
+          <!-- The command is on the card, not only in the click handler: a reader
+               can read what the button will run, and a test can assert the whole
+               argv rather than the presence of a button. -->
+          <div class="aim-leader-argv aim-mono" style="word-break:break-word">{{ advanceText(ch) }}</div>
+          <el-button class="aim-advance" size="small" type="primary"
+                     :loading="busy === ch.id" @click="advance(ch)">
+            run it
+          </el-button>
+        </div>
+        <!--
+          A leader whose dashboard cannot carry the move is told so, in words and
+          without an argv: printing a command the button cannot post would be the
+          same lie in the other direction.
+        -->
+        <p v-else-if="isLeader(ch) && advanceArgv(ch)" class="aim-dim" style="font-size:12px;margin:0">
+          this move is yours, and this dashboard cannot make it: it is read-only, or it writes as
+          <span class="aim-mono">{{ board.writer || '(nobody)' }}</span> and the tool requires
+          <span class="aim-mono">{{ ch.leader }}</span>.
+        </p>
+        <p v-else-if="!nextPhase(ch)" class="aim-dim" style="font-size:12px;margin:0">
+          {{ phaseConcept(ch.phase).consequence }}
+        </p>
+        <el-alert v-if="refusal.channel === ch.id && refusal.text" type="error" :closable="false" show-icon
+                  style="margin-top:8px" title="the tool refused this move">
+          <pre class="aim-mono" style="white-space:pre-wrap;margin:0">{{ refusal.text }}</pre>
+        </el-alert>
+      </el-card>
 
       <el-card shadow="never" style="margin-bottom:14px">
         <template #header>the chain — every file the record is made of</template>
@@ -113,27 +324,52 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
         </el-alert>
       </el-card>
 
+      <!--
+        One row per seal, and the claims behind an expansion.
+
+        The claims used to be a table column printed in full. Measured on
+        127.0.0.1:8777/#/barrier, viewer `human`, 1440x1000: this one card held
+        3931px of the scroller's 5400px -- 73% of the page -- because
+        `barrier-v0`'s two seals carry twelve claims between them, each rendered
+        as a claim body plus a `confidence … would change my mind: …` line in a
+        380px column. The table now carries one row per seal (agent, sealed,
+        claims, at, digest) and the claims appear only when their row is opened,
+        which is what a reader who wants the digest wants, in that order.
+      -->
       <el-card shadow="never" style="margin-bottom:14px">
         <template #header>seals — a digest each participant committed to before reading the peer's</template>
-        <el-table :data="ch.sealed" size="small">
+        <el-table :data="ch.sealed" size="small" class="aim-seal-table">
           <el-table-column prop="agent" label="agent" width="180" />
           <el-table-column label="sealed" width="100">
             <template #default="{ row }">
               <el-tag size="small" :type="row.sealed ? 'success' : 'warning'" effect="dark">{{ row.sealed ? 'yes' : 'not yet' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="claims_count" label="claims" width="90" />
+          <el-table-column label="claims" width="180">
+            <template #default="{ row }">
+              <el-button v-if="(row.claims || []).length" class="aim-seal-toggle" size="small" text type="primary"
+                         :aria-expanded="String(sealOpen(ch, row))" @click="toggleSeal(ch, row)">
+                {{ row.claims_count }} claim(s) {{ sealOpen(ch, row) ? '▾' : '▸' }}
+              </el-button>
+              <span v-else class="aim-dim">{{ row.claims_count }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="ts" label="at" width="200" />
           <el-table-column label="digest" min-width="200">
             <template #default="{ row }"><span class="aim-mono aim-dim">{{ (row.digest || '').slice(0, 24) }}…</span></template>
           </el-table-column>
-          <el-table-column label="claims" min-width="380">
+          <!-- The claims stay a column, so the expansion opens the row it belongs
+               to; a second table under the seal table would be a second thing to
+               scroll and could not be `:visible`-scoped by row. -->
+          <el-table-column label="" min-width="380">
             <template #default="{ row }">
-              <el-tag v-if="row.withheld" type="info" size="small" effect="plain">withheld while the channel is sealed</el-tag>
-              <div v-for="c in row.claims || []" :key="c.id" style="font-size:12px;margin-top:4px">
-                <b>{{ c.id }}</b> {{ c.claim }}
-                <div class="aim-dim">confidence {{ c.confidence }} · would change my mind: {{ c.kill_if }}</div>
-              </div>
+              <template v-if="sealOpen(ch, row)">
+                <el-tag v-if="row.withheld" type="info" size="small" effect="plain">withheld while the channel is sealed</el-tag>
+                <div v-for="c in row.claims || []" :key="c.id" class="aim-claim" style="font-size:12px;margin-top:4px">
+                  <b>{{ c.id }}</b> {{ c.claim }}
+                  <div class="aim-dim">confidence {{ c.confidence }} · would change my mind: {{ c.kill_if }}</div>
+                </div>
+              </template>
             </template>
           </el-table-column>
         </el-table>
@@ -143,24 +379,43 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
         <template #header>
           <div class="aim-filterbar">
             <span>refusals — {{ refusalsOf(ch).length }} of {{ (ch.refusals || []).length }} record(s)</span>
-            <el-input v-model="filters.q" placeholder="search action or reason" clearable />
-            <el-select v-model="filters.agent" placeholder="agent" clearable>
-              <el-option v-for="agent in refusalAgentsOf(ch)" :key="agent" :value="agent" :label="agent" />
-            </el-select>
-            <el-select v-model="filters.refusalClass" placeholder="class" clearable>
-              <el-option value="barrier" label="barrier" />
-              <el-option value="form" label="form" />
-            </el-select>
-            <!-- The list is the dictionary's, not a copy: a filter that offers a
-                 phase the tool cannot reach is a filter that can only return nothing. -->
-            <el-select v-model="filters.phase" placeholder="phase" clearable>
-              <el-option v-for="phase in PHASES" :key="phase.key" :value="phase.key"
-                         :label="`${phase.label} (${phase.key})`" />
-            </el-select>
-            <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
+            <template v-if="(ch.refusals || []).length">
+              <el-input v-model="filters.q" placeholder="search action or reason" clearable />
+              <el-select v-model="filters.agent" placeholder="agent" clearable>
+                <el-option v-for="agent in refusalAgentsOf(ch)" :key="agent" :value="agent" :label="agent" />
+              </el-select>
+              <el-select v-model="filters.refusalClass" placeholder="class" clearable>
+                <el-option value="barrier" label="barrier" />
+                <el-option value="form" label="form" />
+              </el-select>
+              <!-- The list is the dictionary's, not a copy: a filter that offers a
+                   phase the tool cannot reach is a filter that can only return nothing. -->
+              <el-select v-model="filters.phase" placeholder="phase" clearable>
+                <el-option v-for="phase in PHASES" :key="phase.key" :value="phase.key"
+                           :label="`${phase.label} (${phase.key})`" />
+              </el-select>
+              <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
+            </template>
           </div>
         </template>
-        <el-table :data="refusalsOf(ch)" size="small" class="aim-refusal-table">
+        <!--
+          An empty section is one line, and offers no filters.
+
+          Measured before this, `#dev` and `s2-scratch2` (2 seals, 0 refusals):
+          the refusal card was 497px, of which the table body ("No Data") was 109
+          and three selects plus a search box were another ~180 -- controls over a
+          list the record cannot fill. The header keeps the counting sentence in
+          both branches, because "0 of 0 record(s)" and "no refusal matches these
+          filters" are different facts and the reader can only tell them apart if
+          the number is still on the page.
+        -->
+        <p v-if="!(ch.refusals || []).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
+          nothing has been refused in this channel — no one has yet wanted something the phase forbids.
+        </p>
+        <p v-else-if="!refusalsOf(ch).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
+          no refusal matches these filters.
+        </p>
+        <el-table v-else :data="refusalsOf(ch)" size="small" class="aim-refusal-table">
           <el-table-column prop="ts" label="at" width="200" />
           <el-table-column prop="agent" label="agent" width="160" />
           <el-table-column prop="action" label="attempted" min-width="240" />
@@ -176,11 +431,10 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
           </el-table-column>
           <el-table-column prop="reason" label="reason" min-width="320" />
         </el-table>
-        <el-empty v-if="!refusalsOf(ch).length" description="no refusal matches these filters" />
       </el-card>
 
       <el-card shadow="never">
-        <template #header>phase history — only the leader moves it</template>
+        <template #header>phase history — every move, and who made it</template>
         <el-timeline>
           <el-timeline-item v-for="(h, i) in ch.history" :key="i" :timestamp="h.at" placement="top">
             <PhaseChip :phase="h.phase" effect="dark" link />

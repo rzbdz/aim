@@ -40,11 +40,20 @@
  * threshold in the middle is the smallest claim that separates the two palettes
  * without pinning an exact hex.
  *
- * The expected failures are annotated with `test.fail()` and carry the measured
- * values in their messages. `test.fail()` is not a weakening of the assertion:
- * if a control is added, the test that flips the palette starts passing, which
- * Playwright reports as an *unexpected pass* -- the annotation has to be removed
- * deliberately, and the flip cannot happen silently.
+ * The three clause tests were annotated with `test.fail()` and carried the
+ * measured values in their messages. `test.fail()` was not a weakening of the
+ * assertion: adding a control makes the flip test pass, which Playwright reports
+ * as an *unexpected pass*, so the annotation had to be removed deliberately and
+ * the flip could not happen silently. It was removed on 2026-09-22 with the fix,
+ * and the assertions below are unchanged from the red revision.
+ *
+ * Fixed and re-measured 2026-09-22 on the rebuilt bundle, at 1280x720:
+ *
+ *   one theme candidate in the shell: `button.el-button("switch the board to the
+ *   dark palette | dark palette")`, class `aim-theme-toggle`
+ *   --el-bg-color #fff -> #141414, --aim-accent #0369a1 -> #38bdf8, then back
+ *   localStorage aim-palette "light" -> "dark", and a reload with "dark" stored
+ *   opens dark (the default with nothing stored stays light)
  */
 import { expect, test } from '@playwright/test'
 
@@ -246,12 +255,13 @@ test('T-0175 baseline: the live default palette is light', async ({ page }) => {
 /**
  * Clause 1 of the acceptance: a control in the shell flips light and dark.
  *
- * Measured: the shell renders 37 clickable controls and none of them names the
- * palette, so there is nothing to flip -- see the thrown message for the exact
- * neighbourhood. `test.fail()` records that as a fact instead of a red suite.
+ * Measured on the red revision: the shell rendered 37 clickable controls and
+ * none of them named the palette, so there was nothing to flip. The shell now
+ * renders one -- `button.el-button("switch the board to the dark palette")` in
+ * `.aim-header`, the only candidate the search finds -- and it is what this test
+ * presses, in both directions.
  */
 test('T-0175: a control in the shell flips light and dark', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle e3824c5+dirty: no shell control names or flips the palette')
   await openShell(page)
   const { index, candidate, before } = await clickToDark(page)
   const dark = await readTheme(page)
@@ -275,7 +285,6 @@ test('T-0175: a control in the shell flips light and dark', async ({ page }) => 
  * a Vue ref comes back light.
  */
 test('T-0175: the choice survives a reload', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle e3824c5+dirty: no control to set the choice, so nothing can survive')
   await openShell(page)
   await clickToDark(page)
   await page.reload()
@@ -292,7 +301,6 @@ test('T-0175: the choice survives a reload', async ({ page }) => {
  * so the failure message reports what exists rather than only what is missing.
  */
 test('T-0175: the choice is reflected in the URL or a stored preference', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle e3824c5+dirty: no stored preference and no URL flag records a palette')
   await openShell(page)
   const baseline = await readTheme(page)
   const storageBefore = await storedPreference(page)

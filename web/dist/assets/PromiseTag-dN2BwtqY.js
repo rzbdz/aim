@@ -1,0 +1,1 @@
+import{J as e,w as t}from"./charts-D7R3Eilb.js";var n=[`title`],r={__name:`PromiseTag`,props:{title:{type:String,default:``}},setup(r){return(i,a)=>(e(),t(`span`,{class:`aim-chip seed aim-promise`,title:r.title||`Planned, not recorded: there is no work item here to move, so it is not counted as work.`},` planned `,8,n))}};export{r as t};

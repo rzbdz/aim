@@ -1,0 +1,326 @@
+/**
+ * T-0188: the Gantt and the Plan pane count plan seeds as work.
+ *
+ * The measurement this file turns into assertions, taken on the live board on
+ * 2026-09-22 (payload 159 tasks: 87 `seed only (not yet in the store)` + 72
+ * `store only`):
+ *
+ *   #/gantt header, rendered:      timeline — 102 of 102 dated item(s), ...
+ *   of those 102 dated rows:       87 seeds, 15 recorded
+ *   bars painted the `done` green: 44, of which 42 were seeds with no events
+ *   #/plan milestones:             124 items counted, 43 of the 45 counted "done"
+ *                                  were seeds; M7 read 100% 2/2 with zero recorded
+ *
+ * A seed has **no events at all** -- its `status` and its dates are
+ * `plan/plan.json`'s text -- so both numbers are statements about the plan file
+ * rendered where a statement about work is expected. `board.recorded()` exists and
+ * only `OverviewPane` uses it.
+ *
+ * The fixture below is built so the two authorities cannot be confused for each
+ * other: **8 seeds and 3 recorded items, deliberately unequal, and 8 > 5**. Six
+ * seeds carry plan-authored `done` and one recorded item carries a real
+ * `moved -> done`; two seeds are `doing` and one recorded item is too. So
+ *
+ *   merged board  : 11 dated rows, 7 done
+ *   the record    :  3 dated rows, 1 done
+ *
+ * and every assertion here is that difference or the sentence that states it. The
+ * recorded ids start at T-0188+: T-0001..T-0186 are real ids in the live store, and
+ * a surface that widens its own reading past the fixture would pull live rows into
+ * a count this test believes it controls.
+ */
+import { expect, test } from '@playwright/test'
+
+const SEED_PROV = 'seed only (not yet in the store)'
+
+const SEED = (id, { status, start, due, milestone = 'M1' }) => ({
+  id, title: `${id} plan row`, owner: 'codex', status, priority: 'normal', milestone,
+  tags: [], start, due, accept: `acceptance for ${id}`, blocked_by: [], visibility: 'published',
+  provenance: SEED_PROV, events: [], comments: [], estimate: 2,
+})
+
+/** A recorded item: it exists in the store, and a person moved it. */
+const RECORDED = (id, { status, start, due, milestone = 'M2', moved = null }) => ({
+  ...SEED(id, { status, start, due, milestone }),
+  provenance: 'store only',
+  created_at: '2026-09-24T00:00:00.000Z',
+  prev_status: status === 'done' ? 'doing' : null,
+  events: moved
+    ? [{ at: '2026-09-24T01:00:00.000Z', event: 'created', to: 'doing' },
+       { at: '2026-09-24T02:00:00.000Z', event: 'moved', from: 'doing', to: moved }]
+    : [{ at: '2026-09-24T01:00:00.000Z', event: 'created', to: 'doing' }],
+})
+
+const STATE = {
+  digest: 'recorded-vs-seed-fixture',
+  generated_at: '2026-09-22T00:00:00.000Z',
+  as_of: '2026-09-22',
+  statuses: ['backlog', 'ready', 'doing', 'review', 'blocked', 'done', 'dropped'],
+  terminal: ['done', 'dropped'],
+  phase: 'RESOLVE',
+  milestones: {
+    M1: { id: 'M1', name: 'Planned work', due: '2026-09-26', accept: 'the promise turns into items' },
+    M2: { id: 'M2', name: 'Recorded work', due: '2026-09-28', accept: 'the items were actually done' },
+  },
+  agents: { human: { kind: 'human', model: '' }, codex: { kind: 'agent', model: '' } },
+  register: {},
+  tasks: {
+    // 8 seeds: 6 the plan file says are done, 2 it says are in progress. None of
+    // them has an event, so nothing has ever moved one.
+    'T-0188': SEED('T-0188', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0189': SEED('T-0189', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0190': SEED('T-0190', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0191': SEED('T-0191', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0192': SEED('T-0192', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0193': SEED('T-0193', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0194': SEED('T-0194', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
+    'T-0195': SEED('T-0195', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
+    // 3 recorded items: one genuinely completed, one in progress, one in review.
+    'T-0196': RECORDED('T-0196', { status: 'done', start: '2026-09-24', due: '2026-09-25', moved: 'done' }),
+    'T-0197': RECORDED('T-0197', { status: 'doing', start: '2026-09-24', due: '2026-09-25' }),
+    'T-0198': RECORDED('T-0198', { status: 'review', start: '2026-09-24', due: '2026-09-25' }),
+  },
+  reports: {
+    series: [], throughput: [], blocked: [], median_cycle: null,
+    recorded: 3, seed_only: 8, with_history: 1,
+  },
+  conversation: { channels: [], rooms: [], mail: [] },
+  channels: [],
+  unacked: [],
+  drift: [],
+  withheld_tasks: 0,
+  write: { enabled: false, as: '' },
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/state**', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(STATE),
+  }))
+  await page.route('**/api/digest**', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ digest: STATE.digest }),
+  }))
+  await page.setViewportSize({ width: 1440, height: 1000 })
+})
+
+/**
+ * The bars, found in the canvas rather than guessed at from the axis geometry.
+ *
+ * `#/gantt` draws into a `<canvas>`, so there is no DOM node per bar and no
+ * `data-` hook this test could reach without the pane exporting one. The pixels are
+ * the rendering, so the pixels are what gets read: for one status colour, group the
+ * matching pixels into runs of consecutive rows (one run per bar), then classify
+ * each run by the alpha its *interior* carries.
+ *
+ * The classification is the assertion, and it is the card's own distinction:
+ *
+ *   a recorded bar is `color(status)` at full alpha
+ *   a promise is the same hue at 32% -- `fill-opacity="0.32"` plus a dashed 1px
+ *   border, which is what ECharts writes for `borderType: [3, 3]`
+ *
+ * A run whose pixel count is mostly opaque was painted as an outcome; a run that is
+ * mostly translucent was painted as a promise. Counting is done with a small
+ * tolerance because every edge is antialiased, which is why the *interior* majority
+ * decides the class rather than any single pixel.
+ */
+async function barsOfColour(page, [r, g, b]) {
+  return page.evaluate(([r, g, b]) => {
+    const canvas = document.querySelector('canvas')
+    if (!canvas) return { runs: [], bands: 0, opaque: 0, translucent: 0, total: 0 }
+    const dpr = window.devicePixelRatio || 1
+    const box = canvas.getBoundingClientRect()
+    const { data, width, height } = canvas.getContext('2d')
+      .getImageData(0, 0, canvas.width, canvas.height)
+    const near = (i, want) => Math.abs(data[i] - want) <= 8
+    const rows = new Map()   // y -> { opaque, translucent, x0, x1 }
+    let total = 0
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const i = (y * width + x) * 4
+        if (data[i + 3] < 16) continue
+        if (!near(i, r) || !near(i + 1, g) || !near(i + 2, b)) continue
+        total += 1
+        const row = rows.get(y) || { opaque: 0, translucent: 0, x0: x, x1: x }
+        // A seed is the same hue at 32%; the gap between 32% and fully opaque is
+        // wide enough that antialiased edges cannot cross it in either direction.
+        if (data[i + 3] >= 200) row.opaque += 1
+        else if (data[i + 3] <= 120) row.translucent += 1
+        row.x0 = Math.min(row.x0, x); row.x1 = Math.max(row.x1, x)
+        rows.set(y, row)
+      }
+    }
+    // One bar per run of consecutive rows. A gap of more than 2px is the space
+    // between two rows of the gantt, not a break inside one bar.
+    const ys = [...rows.keys()].sort((a, b) => a - b)
+    const runs = []
+    for (const y of ys) {
+      const last = runs.at(-1)
+      if (last && y - last.y1 <= 2) {
+        const row = rows.get(y)
+        last.y1 = y
+        last.opaque += row.opaque
+        last.translucent += row.translucent
+        last.x0 = Math.min(last.x0, row.x0)
+        last.x1 = Math.max(last.x1, row.x1)
+      } else {
+        const row = rows.get(y)
+        runs.push({ y0: y, y1: y, opaque: row.opaque, translucent: row.translucent, x0: row.x0, x1: row.x1 })
+      }
+    }
+    return {
+      total,
+      bands: runs.length,
+      opaque: runs.filter((run) => run.opaque > run.translucent).length,
+      translucent: runs.filter((run) => run.translucent >= run.opaque).length,
+      runs: runs.map((run) => ({
+        ...run,
+        x: box.left + ((run.x0 + run.x1) / 2) / dpr,
+        y: box.top + ((run.y0 + run.y1) / 2) / dpr,
+      })),
+    }
+  }, [r, g, b])
+}
+
+const DONE_GREEN = [52, 211, 153]     // theme.js STATUS_COLOR.done
+const DOING_AMBER = [245, 158, 11]    // theme.js STATUS_COLOR.doing
+
+/** The ECharts tooltip, which is the only rendered text a canvas bar has. */
+const TOOLTIP = '.echarts-host div[style*="z-index: 9999999"]'
+
+async function tooltipAt(page, point) {
+  await page.mouse.move(point.x, point.y)
+  const tip = page.locator(TOOLTIP).first()
+  await expect(tip).toBeVisible()
+  return tip.innerText()
+}
+
+test.describe('a plan seed is not work, on the two panes that draw the merge', () => {
+  test('the Gantt header counts the record, and names both universes', async ({ page }) => {
+    await page.goto('/#/gantt')
+    const head = page.locator('.aim-sticky-head .el-card__header')
+    await expect(head).toBeVisible()
+
+    // Eleven dated rows are drawn -- this pane deliberately draws the merge, and
+    // hiding eight of them would hide the plan. What changed is which authority
+    // each number is about.
+    await expect(head.locator('[data-drawn]')).toHaveAttribute('data-recorded', '3')
+    await expect(head.locator('[data-drawn]')).toHaveAttribute('data-seeds', '8')
+    await expect(head.locator('[data-drawn]')).toHaveAttribute('data-drawn', '11')
+
+    // The rendered sentence says it in words, so a reader who never sees an
+    // attribute still learns which half is which.
+    await expect(head).toContainText('of 11 dated bar(s)')
+    await expect(head).toContainText('3 on the record')
+    await expect(head).toContainText('8 plan seeds')
+
+    // The falsification: the old header read `11 of 11 dated item(s)` over the
+    // merge, which is the number a pane that reads `board.tasks` produces. If the
+    // fix is reverted this is what comes back, so the test asserts the difference
+    // rather than the presence of a word.
+    await expect(head).not.toContainText('11 of 11')
+    await expect(head).not.toContainText('3 of 3 dated item(s)')
+  })
+
+  test('no seed bar is painted as a completed task', async ({ page }) => {
+    await page.goto('/#/gantt')
+    await expect(page.locator('canvas')).toBeVisible()
+    // The chart draws on mount and again on resize; wait for pixels rather than
+    // for a frame, since a canvas that has not painted has no bars to measure.
+    await expect.poll(async () => (await barsOfColour(page, DONE_GREEN)).total, { timeout: 10_000 })
+      .toBeGreaterThan(0)
+
+    // `done`: six seeds (plan-authored text) and one recorded item that a person
+    // actually moved. Only the last may be drawn as an outcome.
+    const green = await barsOfColour(page, DONE_GREEN)
+    expect(green.bands).toBe(7)
+    expect(green.opaque).toBe(1)
+    expect(green.translucent).toBe(6)
+
+    // `doing`: two seeds and one recorded item, same split, a second status, so a
+    // fix that special-cased `done` alone fails here.
+    const amber = await barsOfColour(page, DOING_AMBER)
+    expect(amber.bands).toBe(3)
+    expect(amber.opaque).toBe(1)
+    expect(amber.translucent).toBe(2)
+
+    // And the legend decodes the mark, because a reader who has not hovered
+    // anything has to be able to read the one non-status fill on the chart.
+    await expect(page.locator('.aim-sticky-head .aim-filterbar .aim-chip.seed')).toHaveText('plan seed')
+  })
+
+  test('the tooltip says which authority the status and the dates came from', async ({ page }) => {
+    await page.goto('/#/gantt')
+    await expect(page.locator('canvas')).toBeVisible()
+    await expect.poll(async () => (await barsOfColour(page, DONE_GREEN)).total, { timeout: 10_000 })
+      .toBeGreaterThan(0)
+    const green = await barsOfColour(page, DONE_GREEN)
+    // The rows are sorted by milestone then date, so the seeds (M1, 2026-09-21)
+    // are the first six runs and the recorded item (M2, 2026-09-24) is the last.
+    // Read the *pixels* to find them rather than computing the axis geometry: a
+    // probe that guesses bar positions tests its guess, not the chart.
+    const seedTip = await tooltipAt(page, green.runs[0])
+    expect(seedTip).toContain('T-0188')
+    expect(seedTip).toContain('plan seed, not recorded')
+    expect(seedTip).toContain('planned dates')
+    // The recorded bar says the opposite, so "names provenance" is not a clause
+    // that could be pasted onto every tooltip and still pass.
+    const recordTip = await tooltipAt(page, green.runs.at(-1))
+    expect(recordTip).toContain('T-0196')
+    expect(recordTip).toContain('on the record')
+    expect(recordTip).toContain('recorded dates')
+  })
+
+  test('the Plan pane computes milestone progress over the record, and says so', async ({ page }) => {
+    await page.goto('/#/plan')
+    const head = page.locator('.el-card__header', { hasText: 'milestones (' })
+    await expect(head).toBeVisible()
+    // The sentence names the authority, which is the card's own condition for
+    // shipping the fix at all.
+    await expect(head).toContainText('progress counts the record')
+
+    const planned = page.locator('.el-table__row', { hasText: 'Planned work' })
+    // Three recorded items in M1, one of them moved to done. The merged board
+    // would read 7/11 here -- six of them seeds.
+    await expect(planned).toContainText('1/3 recorded')
+    await expect(planned.locator('.el-progress__text')).toHaveText('33%')
+    await expect(planned).toContainText('8 planned')
+    await expect(planned).not.toContainText('7/11')
+
+    // A milestone whose items are all promises is a milestone with no recorded
+    // work, and it must not be shown as progress either. M2 holds only recorded
+    // items here, so the second assertion is the other direction: a milestone with
+    // real completions still reads as complete.
+    const recorded = page.locator('.el-table__row', { hasText: 'Recorded work' })
+    await expect(recorded).toContainText('1/3 recorded')
+    await expect(recorded).toContainText('0 planned')
+  })
+
+  test('a milestone made only of promises reads as no recorded work at all', async ({ page }) => {
+    // The card's own example was `M7 100% 2/2` with zero recorded items. This is
+    // that milestone: every item a seed, and the plan file calls one of them done.
+    const onlyPromises = {
+      ...STATE,
+      digest: 'recorded-vs-seed-only-promises',
+      milestones: { M7: { id: 'M7', name: 'Promises only', due: '2026-09-29', accept: 'nothing recorded yet' } },
+      tasks: {
+        'T-0188': SEED('T-0188', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+        'T-0189': SEED('T-0189', { status: 'done', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+        'T-0190': SEED('T-0190', { status: 'doing', start: '2026-09-21', due: '2026-09-22', milestone: 'M7' }),
+      },
+    }
+    await page.route('**/api/state**', (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify(onlyPromises),
+    }))
+    await page.route('**/api/digest**', (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ digest: onlyPromises.digest }),
+    }))
+    await page.goto('/#/plan')
+    const row = page.locator('.el-table__row', { hasText: 'Promises only' })
+    await expect(row).toBeVisible()
+    await expect(row.locator('.el-progress__text')).toHaveText('0%')
+    await expect(row).toContainText('0/0 recorded')
+    await expect(row).toContainText('3 planned')
+    // The defect's exact rendering, asserted absent rather than merely unmentioned.
+    await expect(row).not.toContainText('2/3')
+    await expect(row).not.toContainText('67%')
+  })
+})

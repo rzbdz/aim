@@ -79,17 +79,146 @@ const attentionTasks = computed(() => board.recorded
   })
   .slice(0, 8))
 
+/** A receipt announces itself in its subject: `RECEIPT for <msg_id>`. */
 const receiptRe = /^RECEIPT for\s+/
+/**
+ * The message a receipt names, which is the whole point of the receipt.
+ *
+ * Measured 2026-09-22 over the live payload: 53 of 53 receipts yield an id from
+ * the subject, and all 53 ids are present as `msg_id` in `conversation.mail`, so
+ * the subject is the id and not a paraphrase of one.
+ */
+const receiptedId = (row) => (row.subject || '').replace(receiptRe, '').trim()
+
+/**
+ * Every receipt the payload holds, grouped by the conversation it arrived in.
+ *
+ * The number a reader is shown has to be a property of the record, not of the
+ * five rows this card draws. The expression this replaces counted
+ * `conversationRows.slice(-5).filter(isReceipt)`, so the number was `min(5, n)`
+ * of the window. Measured against the bundle on 8777 (its
+ * `dist/assets/OverviewPane-*.js` holds `slice(-5)` and `receipts arrived`) with
+ * a fixture of seven receipts spread over three minutes and fifteen ordinary
+ * rows after them: the card said nothing about receipts at all, five raw rows
+ * only. With the same fifteen rows removed the card said "5 receipts arrived",
+ * and with one ordinary row after the burst it did not collapse and drew a raw
+ * `RECEIPT for ...` row. On the live payload -- 197 flattened rows, 53 receipts
+ * -- the five newest rows hold 0 receipts, so no receipt row is drawn. Seven
+ * arrived and the page said nothing, then five, then one: one record, three
+ * answers, because the number was a property of the window.
+ *
+ * Grouped by conversation (`threadKey`, the key the row's own link uses) because
+ * that is the question a row can answer -- "this thread received N receipts" --
+ * and because the group's newest receipt is then the row the count can sit on.
+ * This derivation belongs in the store beside `conversationRows`, one rule asked
+ * once, and it is here only because `board.receiptGroups` does not exist yet;
+ * measured, `grep -r RECEIPT web/src` names this file and nothing else, so there
+ * is no second consumer to drift from today.
+ */
+const receiptGroups = computed(() => {
+  const byKey = new Map()
+  for (const row of board.conversationRows) {
+    if (!receiptRe.test(row.subject || '')) continue
+    const key = threadKey(row)
+    let group = byKey.get(key)
+    if (!group) {
+      group = { key, shape: row.shape, scope: row.scope, size: 0, latest: row, receipts: [] }
+      byKey.set(key, group)
+    }
+    group.size += 1
+    group.receipts.push({ id: receiptedId(row), from: row.from, ts: row.ts, msg_id: row.msg_id || '' })
+    // `>`, not `>=`: on a tie the earlier row stays, and `conversationRows` is
+    // ascending by `ts`, so the earliest row of a tie is the one already held.
+    if (String(row.ts ?? '') > String(group.latest.ts ?? '')) group.latest = row
+  }
+  // Newest first, by the same rule that picked `latest`: a stable descending
+  // sort, so rows on an equal `ts` keep payload order and the head of this list
+  // is the row `latest` points at. A plain `reverse()` was not that rule -- it
+  // put the *last* row of a tie first, so a group whose receipts share a `ts`
+  // opened its panel on a line that was not the row's own newest (measured: two
+  // receipts at one `ts` -> `latest` the first, panel headed by the second).
+  // `??`/`String` because the store's own comparator (`a.ts < b.ts`, board.js:348)
+  // orders a numeric `ts` against a string instead of throwing; comparing two
+  // strings here keeps this sort and `latest` the same rule for every type the
+  // payload can carry, rather than for the string one it always carries today.
+  for (const group of byKey.values()) {
+    group.receipts.sort((a, b) => (String(a.ts ?? '') < String(b.ts ?? '') ? 1
+      : String(a.ts ?? '') > String(b.ts ?? '') ? -1 : 0))
+  }
+  return byKey
+})
+
+/**
+ * The five newest rows, with a conversation's receipts collapsed into one.
+ *
+ * Three things changed:
+ *
+ *  * the count is `group.size`, taken over the whole payload, so it cannot move
+ *    when the window moves;
+ *  * the row that survives is the group's **newest** receipt. The old row was
+ *    the newest receipt *inside the window* -- `slice(-5).reverse()` puts the
+ *    newest first, so `receipts[0]` was that row and the collapse kept it, which
+ *    is why the card was right about the date in a 394ms burst. It stopped being
+ *    right the moment a newer receipt fell out of the five: measured, a group
+ *    running 00:00…00:03 loses its row entirely once five ordinary rows follow
+ *    it. The date was a property of the window, like the count.
+ *  * the row carries the list it counts, so "7 receipts arrived" is a way in
+ *    rather than a number with nothing behind it.
+ *
+ * The collapse is still partial in the way it was measured -- a conversation
+ * that received more than one receipt is drawn **once**, by its newest receipt,
+ * with the count of all of them, and no member of the group is drawn beside it.
+ * What did not change is the identity the old expression rested on: `filter`
+ * over the window returns a new array of the *same* row objects, so
+ * `row === group.latest` matches the one row it should. That identity was
+ * measured (`rows 5, receipts 5, identity match: true, result rows: 1`), and the
+ * result measured here is the shape this keeps.
+ *
+ * The identity is load-bearing and it rests on `board.conversationRows` being
+ * one cached getter: both `receiptGroups` and this computed read it, and Pinia
+ * answers the second read with the same objects. If that ever becomes a
+ * function that builds fresh rows per call -- `board.conversationRows()` -- then
+ * no receipt row matches its group's `latest`, every one of them is skipped, and
+ * the card silently draws nothing for that conversation. The collapse's own
+ * failure mode is that quiet: `web/tests/receipts.spec.js` asserts the counted
+ * row exists (`TAIL_BURST` -> one row), which is what would catch it.
+ *
+ * The probe caught the first draft of this drawing the older receipts of a
+ * counted group as raw `RECEIPT for ...` rows underneath the count -- a group
+ * of seven showed one collapsed row plus four raw subjects in the same window.
+ * A group's count stands for its members or it does not.
+ *
+ * A conversation whose newest receipt is older than the window draws no row --
+ * there is no row to draw it on. That is the same silence the old expression
+ * produced in that case (measured: fifteen ordinary rows after a burst of seven
+ * -> no receipt row), and it is why the count belongs to a row and not to the
+ * card: the card is a window, the number is the record.
+ */
 const recentConversations = computed(() => {
-  const rows = board.conversationRows.slice(-5).reverse()
-  const receipts = rows.filter((row) => receiptRe.test(row.subject || ''))
-  if (receipts.length <= 1) return rows
-  const first = receipts[0]
+  const groups = receiptGroups.value
+  const rows = []
+  for (const row of board.conversationRows.slice(-5).reverse()) {
+    // Only a receipt row can be absorbed into its group's count. A group is
+    // keyed by conversation, and an ordinary message in that same conversation
+    // is not one of the members the count stands for: the first draft of this
+    // dropped them (`group` matches on the pair, not on the receipt), which the
+    // probe caught immediately -- three ordinary rows in a receipted
+    // conversation vanished from a card that drew one row instead of four.
+    if (!receiptRe.test(row.subject || '')) {
+      rows.push(row)
+      continue
+    }
+    const group = groups.get(threadKey(row))
+    // `size <= 1` keeps one receipt drawn as the row it is, subject and all.
+    if (!group || group.size <= 1) {
+      rows.push(row)
+      continue
+    }
+    if (row !== group.latest) continue
+    rows.push({ ...row, receiptCount: group.size, receipts: group.receipts,
+                subject: `${group.size} receipts arrived` })
+  }
   return rows
-    .filter((row) => !receiptRe.test(row.subject || '') || row === first)
-    .map((row) => row === first
-      ? { ...row, receiptCount: receipts.length, subject: `${receipts.length} receipts arrived` }
-      : row)
 })
 const upcomingMilestones = computed(() => Object.values(board.milestones)
   .map((milestone) => {
@@ -306,7 +435,51 @@ async function rejectPhase(request, reason) {
                  class="aim-attention-row">
           <strong>{{ message.from }}</strong>
           <span>{{ message.scope }}</span>
-          <RouterLink :to="{ path: '/chat', query: { thread: threadKey(message) } }" class="aim-row-link">
+          <!-- A row that counts N receipts is a way into the N.
+               Before this, "7 receipts arrived" was a number with nothing behind
+               it: the row's link was the surviving receipt's own -- `threadKey`
+               of the newest receipt of the window, so it landed on the busy
+               conversation the receipts arrived in, not on the messages they
+               receipted. The rows in the panel are the `receipts` list the count
+               was taken from -- the number and the list are one read of the
+               record -- and each id is a `msg_id` in that payload (measured: 53
+               of 53 live receipt ids are present as `msg_id`), so what the panel
+               names is an address the record can answer. -->
+          <!-- The width is capped against the viewport rather than fixed at 420, and
+               the panel is allowed to flip to the left when there is no room on
+               the right: measured on the built bundle at a 390px viewport, a
+               fixed 420px panel at `placement="right"` rendered at x 367..726 --
+               336px of it off a 390px screen -- and a capped 384px panel still
+               rendered at x 367..726, i.e. the cap alone does not move it. The
+               `.el-popper` stays in the DOM when closed (`persistent` is
+               Element Plus's default for `el-popover`), so flipping beats
+               growing: `top`/`bottom` would leave the panel 384px tall inside a
+               900px window. `width` takes a CSS length and `style.css` is
+               another task's file right now. -->
+          <el-popover v-if="message.receiptCount" placement="right" :width="'min(420px, 92vw)'"
+                      :fallback-placements="['left', 'bottom']" trigger="click">
+            <template #reference>
+              <!-- A `button`, not a link: opening this reads the group, it does not
+                   navigate. `style.css` is another task's file right now, so the
+                   button chrome is neutralised here rather than by adding a rule
+                   next to `.aim-task-link`, which is the same reset. -->
+              <button type="button" class="aim-row-link"
+                      style="background:none;border:0;padding:0;font:inherit;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                {{ preview(message).slice(0, 72) }} · show them
+              </button>
+            </template>
+            <p class="aim-dim" style="font-size:12px;margin:0 0 8px">
+              {{ message.receiptCount }} receipts arrived in {{ message.scope }},
+              newest first. Each line names the message that was receipted.
+            </p>
+            <div v-for="receipt in message.receipts" :key="receipt.msg_id || `${receipt.id}:${receipt.ts}`"
+                 style="display:flex;gap:10px;align-items:baseline;border-top:1px solid var(--aim-line-soft);padding:5px 0">
+              <span class="aim-mono">{{ (receipt.ts || '').slice(0, 16).replace('T', ' ') }}</span>
+              <strong>{{ receipt.from }}</strong>
+              <span class="aim-mono">{{ receipt.id }}</span>
+            </div>
+          </el-popover>
+          <RouterLink v-else :to="{ path: '/chat', query: { thread: threadKey(message) } }" class="aim-row-link">
             {{ preview(message).slice(0, 72) }}
           </RouterLink>
           <el-tag size="small" effect="plain">{{ message.shape }}</el-tag>

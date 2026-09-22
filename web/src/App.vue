@@ -1,6 +1,8 @@
 <script setup>
-import { computed, inject, onErrorCaptured, watch } from 'vue'
+import { computed, inject, onErrorCaptured, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElAside, ElDrawer } from 'element-plus'
+import { useColorMode, useMediaQuery } from '@vueuse/core'
 import { useBoard } from './stores/board'
 import { phaseConcept } from './concepts'
 import OwnerAvatar from './components/OwnerAvatar.vue'
@@ -10,6 +12,63 @@ import TaskDecisionDrawer from './components/TaskDecisionDrawer.vue'
 const ctx = inject('ctx')
 const board = useBoard()
 const route = useRoute()
+
+/**
+ * The sidebar is a column when there is room and a drawer when there is not.
+ *
+ * Measured 2026-09-22 at 390x844, bundle 59c319b+dirty: `<el-aside width="216px">`
+ * was a permanent column, `.el-main` was left 174px of 390 (45%), and the header
+ * row -- a phase chip, a summary, "as of", an avatar, a 190px select and a button,
+ * which cannot fit in 174px -- spilled past it to a `documentElement.scrollWidth`
+ * of 623. That is why the same number appeared on nine unrelated routes: what
+ * widened the page was the shell, not the pane.
+ *
+ * The two numbers here and the `@media (max-width: 900px)` block in style.css
+ * have to agree; one breakpoint, expressed twice because CSS and JS cannot share
+ * a constant here. The nav itself is written once -- `<component :is>` swaps the
+ * wrapper (a column, or a drawer over the page), so the two cannot drift.
+ */
+const navNarrow = useMediaQuery('(max-width: 900px)')
+const navOpen = ref(false)
+const navShell = computed(() => (navNarrow.value
+  ? {
+      is: ElDrawer,
+      props: {
+        modelValue: navOpen.value,
+        'onUpdate:modelValue': (open) => { navOpen.value = open },
+        direction: 'ltr',
+        size: '264px',
+        title: 'navigation',
+        bodyClass: 'aim-nav',
+        class: 'aim-nav-drawer',
+      },
+    }
+  : { is: ElAside, props: { width: '216px', class: 'aim-aside aim-nav' } }))
+
+/**
+ * The palette is one class on <html> and a preference that outlives the tab.
+ *
+ * Every colour on the board is already a token in style.css -- light values on
+ * `:root`, the dark ones verbatim under `html.dark` -- and Element Plus scopes
+ * its own dark variables to that same class, so the whole feature is the class
+ * plus somewhere to remember the choice. VueUse's `useColorMode` owns both: it
+ * is the standard implementation (20k+ stars) of exactly this, it writes the
+ * choice to localStorage, and it keeps the class on <html> in sync with it.
+ *
+ * `initialValue: 'light'` rather than the default `'auto'` is deliberate: the
+ * card's default is light, and a reader on a dark desktop has not asked this
+ * board to be dark. The handler below sets 'light'/'dark' explicitly, so the
+ * stored value is the choice the reader made and not a note that the operating
+ * system happens to agree with it.
+ */
+const palette = useColorMode({
+  storageKey: 'aim-palette',
+  initialValue: 'light',
+  modes: { dark: 'dark', light: '' },
+})
+const dark = computed(() => palette.value === 'dark')
+const togglePalette = () => { palette.value = dark.value ? 'light' : 'dark' }
+
 /**
  * The shell mounts the one drawer, so a task opened from a report row, a blocker
  * id or a milestone row is the same drawer as a card, and the pane the reader
@@ -35,6 +94,15 @@ const drawerTask = computed(() => {
  * not close what the reader is looking at.
  */
 watch(() => route.path, () => taskDrawer.close())
+
+/**
+ * The nav drawer closes itself the same way: a reader who picks a page has left
+ * it, and on a 390px screen a drawer that stays open covers the page they just
+ * asked for. Clicking the item the reader is already on fires no navigation, so
+ * the menu's own `select` closes that case too.
+ */
+watch(() => route.path, () => { navOpen.value = false })
+watch(navNarrow, () => { navOpen.value = false })
 
 /**
  * A render error must not be able to brick the page.
@@ -93,7 +161,9 @@ const navGroups = computed(() => {
 
 <template>
   <el-container class="aim-shell">
-    <el-aside width="216px" class="aim-aside">
+    <!-- One nav, two wrappers: the column when there is room, the drawer when
+         there is not. See `navShell` above. -->
+    <component :is="navShell.is" v-bind="navShell.props">
       <div class="aim-brand">
         <h1><span class="aim-mark">aim</span> board</h1>
         <div class="aim-sub">
@@ -101,7 +171,7 @@ const navGroups = computed(() => {
           <div>{{ counts.open }} open · {{ counts.late }} late · {{ counts.blocked }} blocked</div>
         </div>
       </div>
-      <el-menu :default-active="route.path" router>
+      <el-menu :default-active="route.path" router @select="navOpen = false">
         <el-menu-item-group v-for="group in navGroups" :key="group.title" :title="group.title">
           <el-menu-item v-for="v in group.views" :key="v.key" :index="`/${v.key}`">
             <el-icon><component :is="v.icon || 'Grid'" /></el-icon>
@@ -117,10 +187,18 @@ const navGroups = computed(() => {
           <el-button size="small" tag="a" href="/board.ics">ical</el-button>
         </el-button-group>
       </div>
-    </el-aside>
+    </component>
 
     <el-container>
       <el-header height="auto" class="aim-header">
+        <!-- The drawer's handle, and only where there is a drawer: an aside that
+             hides itself with no way back is a missing nav, not a drawer. The
+             name is the one T-0160 searches for. -->
+        <el-button v-if="navNarrow" class="aim-nav-toggle" size="small" text
+                   :aria-label="navOpen ? 'close the navigation menu' : 'open the navigation menu'"
+                   :aria-expanded="navOpen" @click="navOpen = !navOpen">
+          <el-icon><Menu /></el-icon>
+        </el-button>
         <!-- The chip is the same component the audit page uses: one place knows
              what a phase is called, and one place knows that a tooltip around a
              link must not eat the key that activates it. -->
@@ -132,10 +210,18 @@ const navGroups = computed(() => {
         <span style="flex:1" />
         <span class="aim-dim" style="font-size:11px">as of {{ stamp }}</span>
         <OwnerAvatar :id="board.viewer" :size="20" />
-        <el-select :model-value="board.viewer" size="small" style="width:190px" @change="board.setViewer"
+        <el-select :model-value="board.viewer" size="small" class="aim-viewer" @change="board.setViewer"
                    placeholder="whose view">
           <el-option v-for="(a, id) in board.agents" :key="id" :value="id" :label="`${id} · ${a.kind}`" />
         </el-select>
+        <!-- Named, and the label says what the press will do rather than what the
+             current palette is; `aria-pressed` carries the state. -->
+        <el-button class="aim-theme-toggle" size="small" text
+                   :aria-label="dark ? 'switch the board to the light palette' : 'switch the board to the dark palette'"
+                   :aria-pressed="dark" :title="dark ? 'light palette' : 'dark palette'"
+                   @click="togglePalette">
+          <el-icon><Sunny v-if="dark" /><Moon v-else /></el-icon>
+        </el-button>
         <el-button size="small" :loading="board.loading" @click="board.load()">
           <el-icon><Refresh /></el-icon>
         </el-button>

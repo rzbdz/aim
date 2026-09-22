@@ -11,13 +11,99 @@
  * Anchors are stable and are what the phase chips link to (`#phase-resolve`).
  * An anchor that moves breaks a link from a page the reader cannot see is
  * broken, so add to this page rather than renaming what is here.
+ *
+ * It also opens with a contents and a map of the panes, both generated from what
+ * the shell already declares. Measured before either existed (T-0186, 1440x1000
+ * on the live board): 4184px of page inside a 951px `.aim-main`, the identifier
+ * table 2372px below the pane top, the glossary 2892px, and not one in-page link
+ * -- and the nine panes' purpose sentences, which the shell draws on arrival
+ * (`App.vue:138`), appeared nowhere on the page whose own promise is "this page
+ * explains what the dashboard is showing". Both summaries are *reads*, not
+ * copies: the contents from the five cards below, the pane directory from
+ * `ctx.views`.
  */
-import { computed } from 'vue'
+import { computed, inject, ref } from 'vue'
 import PhaseChip from '../components/PhaseChip.vue'
 import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASE_ACCESS, PHASES, TRANSITIONS, phaseAnchor } from '../concepts'
 import { useBoard } from '../stores/board'
 
 const board = useBoard()
+const ctx = inject('ctx')
+
+/**
+ * The scroller is named, not looked up.
+ *
+ * `main.js:81-101` resolves a fragment against `.aim-main` because
+ * `vue-router`'s scroll handling is about the window and this shell's window
+ * never scrolls. The contents has to move the same element, so it is handed the
+ * same selector: an `ElAnchor` left on its default container would write into
+ * `document.documentElement` and move nothing, which is the exact failure
+ * `main.js:66-79` was written to fix.
+ */
+const scroller = '.aim-main'
+
+/**
+ * The pane directory, straight off the shell's own registrations.
+ *
+ * `views/index.js` globs `web/src/views/*.js`, and every registration carries the
+ * pane's `title` and its `hint` -- the one-line purpose the shell draws when the
+ * reader arrives. The card that filed this measured that Help contained none of
+ * "Kanban", "Gantt" or "Conversations"; those words were only in the sidebar,
+ * which names tools rather than purposes. The purposes already existed. Writing
+ * them here a second time is the drift this project keeps measuring
+ * (`concepts.js:1-19` says the same thing about the phase vocabulary), so they
+ * are read.
+ *
+ * Sidebar order and sidebar groups, not `order`: the shell's nav puts
+ * Conversations between the panes it groups as "Work", and the grouping is part
+ * of the answer to "what am I looking at". A key the shell no longer registers is
+ * dropped rather than drawn as a dead row.
+ */
+const navGroups = computed(() => {
+  const byKey = new Map((ctx?.views || []).map((view) => [view.key, view]))
+  return [
+    { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
+    { title: 'Conversation', keys: ['chat'] },
+    { title: 'Insight', keys: ['reports'] },
+    { title: 'Governance', keys: ['barrier', 'plan'] },
+    { title: 'Reference', keys: ['help'] },
+  ].map((group) => ({ title: group.title, panes: group.keys.map((key) => byKey.get(key)).filter(Boolean) }))
+    .filter((group) => group.panes.length)
+})
+
+/**
+ * Which section the contents says the reader is in, for the first paint.
+ *
+ * `ElAnchor` works this out itself on mount, but only for an href that is a real
+ * selector, and the shell's whole hash is `#/help#phase-resolve` -- one string
+ * with two `#` in it. So the id is read the way `main.js:57-63` reads it, with
+ * the last `#` as the separator, and handed over as `currentAnchor`. Without it a
+ * deep link opens with nothing marked, which reads as "you are nowhere" on
+ * exactly the arrival every phase chip in the product links to.
+ */
+const initial = ref('')
+{
+  const raw = String(window.location.hash || '').replace(/^#/, '')
+  const cut = raw.lastIndexOf('#')
+  const fragment = cut === -1 ? '' : decodeURIComponent(raw.slice(cut + 1))
+  if (fragment && document.getElementById(fragment)) initial.value = fragment
+}
+
+/**
+ * The contents is built from this list, and the cards below carry these ids.
+ *
+ * Two lists in one page is how a contents comes to link to a section that was
+ * renamed -- so the hrefs here are `phaseAnchor(entry.id)` against ids that the
+ * `v-for`s below consume.
+ */
+const SECTIONS = [
+  { id: 'panes', title: 'The panes — what each page is for' },
+  { id: 'concepts', title: 'Why this is shaped the way it is' },
+  { id: 'phases', title: 'Phases — where a channel is and what that lets you do' },
+  { id: 'machine', title: 'The state machine — how a channel moves' },
+  { id: 'identifiers', title: 'Identifiers — what a bare M3 or R7 means' },
+  { id: 'glossary', title: 'Glossary' },
+]
 
 /**
  * The convention from `concepts.js`, joined to the counts in the live record.
@@ -121,6 +207,34 @@ const identifierRows = computed(() =>
     }
     return { ...entry, count }
   }))
+
+/**
+ * The transition table's caption, read off `TRANSITIONS` rather than written out.
+ *
+ * Both sentences used to spell out two phase names in prose ("Synthesising →
+ * Cross-examining", "Sealed, Committed and Synthesising"): a second copy of the
+ * dictionary, in the one direction that cannot be caught, because prose does not
+ * fail when the dictionary changes. They are now the chips' own labels, and the
+ * anchored rows they point at are read from the list, so a renamed phase renames
+ * its sentence.
+ *
+ * `el-tag` rather than `PhaseChip` for the enum beside it: a chip inside a `p`
+ * wraps an `el-tooltip` around a `<span>`, and a tooltip's trigger keys swallow
+ * the keys of whatever it wraps (components/PhaseChip.vue:30-40). Nothing here is
+ * a control, so a tag is the honest element.
+ */
+const edgeTo = (key) => TRANSITIONS.find((edge) => edge.from === key && edge.to === 'CROSS_EXAMINE')
+const rowAt = (key) => (key ? `#${phaseAnchor(key)}` : '')
+const labelOf = (rows) => rows.map((row) => phaseLabel(row.key)).join(', ')
+/**
+ * The cells the raw enums sit in, keyed by the enum.
+ *
+ * `phase.next` is the protocol value of the phase a reader goes to next, and the
+ * protocol-value column of the row above is the same string -- so this is the
+ * one lookup that puts the English word beside the enum without writing the
+ * mapping a third time.
+ */
+const phaseByKey = Object.fromEntries(PHASES.map((phase) => [phase.key, phase]))
 </script>
 
 <template>

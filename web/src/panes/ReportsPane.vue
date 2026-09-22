@@ -56,8 +56,17 @@ const blockerOptions = computed(() => [...new Set((board.report.blocked || [])
     </el-card>
   </div>
 
+  <!-- The numbers above and below are folded over the whole fabric, not over this
+       seat's board: a total that changed with who read it was reported as the
+       project's figure by a consumer that could not tell, so the scope is stated
+       on the page the same way the payload states it. -->
+  <p class="aim-dim" style="font-size:12px; margin:0 0 14px">
+    These counts describe the whole fabric, not this seat's view. The board's cards are gated:
+    {{ board.withheld }} item(s) are withheld from the current view.
+  </p>
+
   <el-card shadow="never" style="margin-bottom:14px">
-    <template #header>burndown — remaining work per day, folded from the store</template>
+    <template #header>burndown — remaining work per day, folded from the whole store</template>
     <el-alert v-if="burndownEmpty" type="info" :closable="false" show-icon style="margin-bottom:10px"
               title="flat at zero because nothing is recorded in the store yet: this chart is drawn from events, and a plan seed has none" />
     <VChart :option="option" autoresize style="height:320px" />
@@ -66,7 +75,7 @@ const blockerOptions = computed(() => [...new Set((board.report.blocked || [])
   <el-card shadow="never">
     <template #header>
       <div class="aim-filterbar">
-        <span>what is waiting on what — {{ blockedRows.length }} of {{ (board.report.blocked || []).length }} blocker row(s)</span>
+        <span>what is waiting on what — {{ blockedRows.length }} of {{ (board.report.blocked || []).length }} blocker row(s){{ board.report.blocked_withheld ? ` (${board.report.blocked_withheld} withheld from this view)` : '' }}</span>
         <el-input v-model="filters.q" placeholder="search blocked item" clearable />
         <el-select v-model="filters.owner" placeholder="owner" clearable>
           <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />

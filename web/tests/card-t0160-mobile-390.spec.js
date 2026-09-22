@@ -36,11 +36,19 @@
  *   .el-main is squeezed to 174px (x=216)
  *   no control in the shell has an accessible name matching /menu|nav|sidebar/
  *
- * Both clauses fail on every route, so each test carries `test.fail()` with the
- * measured reason. `test.fail()` is not a weakened assertion: if a media query
- * makes the aside a drawer later, the test that would have measured that starts
- * passing, which Playwright reports as an *unexpected pass* -- the annotation has
- * to be removed deliberately, and the fix cannot land silently.
+ * Both clauses failed on every route then, and each test carried a `test.fail()`
+ * with that reason. Annotating rather than weakening was the point: when the fix
+ * landed, every annotated test reported an *unexpected pass*, and the annotations
+ * were deleted deliberately.
+ *
+ * Fixed 2026-09-22, re-measured on the rebuilt bundle, all nine routes, 390x844:
+ *
+ *   documentElement.scrollWidth 390 == clientWidth 390  (all routes)
+ *   .el-main is 390px of 390 (share 1.00); the aside is not in flow
+ *   the header wraps; a shell control is named "open/close the navigation menu"
+ *
+ * The assertions below are unchanged from the red revision; only the annotations
+ * that said "this is broken today" are gone.
  *
  * Every number is read off the live board at the real viewport, because the
  * card's acceptance is about the live shell and its real content. The nav is
@@ -119,11 +127,10 @@ function overflowMessage(m, route) {
 
 for (const route of ROUTES) {
   test(`T-0160 ${route.name} (${route.hash}) at 390x844: no page-level horizontal overflow`, async ({ page }) => {
-    test.fail(true, 'measured 2026-09-22 on bundle 59c319b+dirty: every route is 623px wide at a 390px viewport')
     await page.goto(`/${route.hash}`)
     // Wait on the shell, never on `.aim-aside` being *visible*: a fix that makes
     // the aside a hidden drawer would time out on that wait and be swallowed by
-    // `test.fail()` instead of reported as the unexpected pass it is.
+    // an expected failure instead of reported as the defect it is.
     await page.waitForSelector('.aim-shell', { state: 'visible' })
     await page.waitForTimeout(300)
     const m = await measure(page)
@@ -140,7 +147,6 @@ for (const route of ROUTES) {
   })
 
   test(`T-0160 ${route.name} (${route.hash}) at 390x844: the sidebar is a drawer, not a squeezing column`, async ({ page }) => {
-    test.fail(true, 'measured 2026-09-22 on bundle 59c319b+dirty: the aside is a fixed 216px column squeezing .el-main to 174px, with no drawer handle')
     await page.goto(`/${route.hash}`)
     await page.waitForSelector('.aim-shell', { state: 'visible' })
     await page.waitForTimeout(300)

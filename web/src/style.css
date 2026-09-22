@@ -69,26 +69,38 @@ body {
    board with forty siren-coloured labels on it is unreadable. */
 .el-tag { --el-tag-bg-color: transparent; border-radius: 5px; font-size: 11px; }
 .aim-shell { height: 100vh; }
+/* A flex item's automatic minimum size is its content's, so the column that
+   holds the header and the reading pane must be allowed to go narrower than
+   what is inside it, or the shell widens the document instead of the pane
+   scrolling. Measured at 390x844 before this rule: the header's own overflow
+   set documentElement.scrollWidth to 623 on every route. */
+.aim-shell > .el-container { min-width: 0; }
 
 /* ---------------------------------------------------------------- shell */
-.aim-aside { border-right: 1px solid var(--aim-line); display: flex; flex-direction: column; }
+.aim-aside { border-right: 1px solid var(--aim-line); }
+/* The nav is the same markup in the desktop column and in the mobile drawer
+   (`.el-drawer__body` carries this class there), so everything below styles
+   `.aim-nav` and not the wrapper it happens to be sitting in. */
+.aim-nav { display: flex; flex-direction: column; }
 .aim-brand { padding: 16px 18px 12px; }
 .aim-brand h1 { font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px; letter-spacing: .01em; }
 .aim-mark { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, var(--aim-mark-from), var(--aim-mark-to));
             display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--aim-mark-ink); }
 .aim-brand .aim-sub { font-size: 11px; color: var(--aim-dim); margin-top: 8px; line-height: 1.7; word-break: break-all; }
-.aim-aside .el-menu { border-right: 0; }
-.aim-aside .el-menu-item-group__title {
+.aim-nav .el-menu { border-right: 0; }
+.aim-nav .el-menu-item-group__title {
   font-size: 10px;
   color: var(--aim-dim);
   text-transform: uppercase;
   letter-spacing: .09em;
   padding: 14px 14px 5px;
 }
-.aim-aside .el-menu-item { height: 38px; line-height: 38px; font-size: 12.5px; margin: 1px 8px; border-radius: 8px; }
-.aim-aside .el-menu-item.is-active { background: rgb(var(--aim-accent-rgb) / .12); color: var(--aim-accent); }
+.aim-nav .el-menu-item { height: 38px; line-height: 38px; font-size: 12.5px; margin: 1px 8px; border-radius: 8px; }
+.aim-nav .el-menu-item.is-active { background: rgb(var(--aim-accent-rgb) / .12); color: var(--aim-accent); }
 .aim-links { margin-top: auto; padding: 12px 14px 16px; border-top: 1px solid var(--aim-line-soft); font-size: 11.5px; }
 .aim-header { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--aim-line); }
+.aim-viewer { width: 190px; }
+.aim-nav-toggle, .aim-theme-toggle { padding: 0 6px; }
 .aim-main { padding: 18px 22px 64px; overflow: auto; }
 .aim-main-conversation { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 18px; }
 .aim-main-conversation > .el-alert,
@@ -304,3 +316,36 @@ body {
 .aim-signal-clear { opacity: .55; cursor: default; }
 .aim-blocker-link { padding: 0 5px; height: auto; }
 .aim-drift-card .aim-attention-row { grid-template-columns: 90px 110px 80px minmax(0, 1fr) 80px minmax(0, 1fr); }
+
+/* ------------------------------------------------------- narrow shell, 900px */
+/* 390x844 is the size this has to work at -- an iPhone 12/13/14 in logical
+   pixels -- and 900px is where a 216px column plus a reading pane worth reading
+   stops fitting. That number lives in App.vue too (`useMediaQuery`), because the
+   wrapper is swapped in script and the layout adjusted in CSS; they are one
+   measurement written twice, not two opinions.
+
+   This block sits at the end of the file on purpose: it overrides the shell
+   rules wherever they were declared above, so the order of the sections above
+   cannot change what a reader on a phone sees. */
+@media (max-width: 900px) {
+  /* The header is a row of a phase chip, a summary, a date, an avatar, a select
+     and two buttons. At 390px it cannot fit on one line, and unwrapped it did
+     not wrap -- it spilled, and the overflow of that one row set
+     documentElement.scrollWidth to 623 on all nine routes (measured 2026-09-22).
+     Wrapped, the floor is the widest single item, which fits. */
+  .aim-header { flex-wrap: wrap; row-gap: 6px; padding: 10px 14px; }
+  .aim-viewer { flex: 1 1 132px; width: auto; min-width: 0; }
+  .aim-main { padding: 14px 14px 56px; }
+
+  /* The drawer holds the same nav; only what Element Plus adds for a padded
+     column has to go, since the brand and the menu bring their own spacing. */
+  .aim-nav-drawer .el-drawer__body { padding: 0; }
+  .aim-brand { padding: 4px 18px 12px; }
+
+  /* A table is the one thing on a page that cannot wrap by itself: without this
+     a three-column table sets its own min-content width and the *pane* scrolls
+     sideways, so the sentence explaining the table leaves the screen with it.
+     The table keeps its own scrollbar instead. */
+  .aim-help-table { display: block; overflow-x: auto; }
+  .aim-help-table th, .aim-help-table td { padding: 7px 8px; }
+}
