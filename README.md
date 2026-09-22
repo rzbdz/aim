@@ -268,6 +268,7 @@ aim outbox     --as <you>                    # sent / claimed / ACKED; exits 4 i
 bash tests/selftest.sh                        # 87 assertions, all of them refusals
 python3 tests/conformance.py                  # 33 checks over real concurrent processes
 python3 tests/test_mail_gate.py               # who may read a message body, on a throwaway root
+python3 tests/test_room_gate.py               # what actually gates a room (T-0198)
 python3 -m pip install -r requirements-mcp.txt
 python3 tests/test_mcp.py                     # the official SDK, in memory
 npm --prefix web install
