@@ -11,7 +11,7 @@ const drawer = ctx.service('taskDrawer')
 // `per` is the family's key, shared with Items and Kanban, so a reader who sets a
 // page size on one list finds it on the next (T-0161 clause 1).
 const { filters, activeCount, clear } = useQueryFilters({
-  q: '', owner: '', status: '', milestone: 'all', tag: '', onlyLate: false, per: '25',
+  q: '', owner: '', status: '', milestone: 'all', tag: [], onlyLate: false, per: '25',
 })
 
 /**
@@ -281,7 +281,12 @@ const matches = (task) => {
   if (filters.owner && task.owner !== filters.owner) return false
   if (filters.status && task.status !== filters.status) return false
   if (filters.milestone !== 'all' && task.milestone !== filters.milestone) return false
-  if (filters.tag && !(task.tags || []).includes(filters.tag)) return false
+  // T-0166: every selected tag has to be on the item. This surface held a single
+  // value (`tag: ''` and `includes(filters.tag)`), so a second pick *replaced*
+  // the first and `?tag=alpha&tag=beta` showed the union -- measured on the bundle
+  // this replaces. Items and Kanban were already `.every(...)`; the three surfaces
+  // now share one rule, which is what the card asks for.
+  if (filters.tag.length && !filters.tag.every((tag) => (task.tags || []).includes(tag))) return false
   if (filters.onlyLate && !isOverdue(task.due, task.status, board.terminal)) return false
   return true
 }
@@ -598,7 +603,7 @@ const undatedOpen = ref(false)
           <el-option value="all" label="every milestone" />
           <el-option v-for="m in milestones" :key="m" :value="m" :label="m" />
         </el-select>
-        <el-select v-model="filters.tag" size="small" placeholder="tag" clearable>
+        <el-select v-model="filters.tag" size="small" placeholder="tag" multiple collapse-tags clearable>
           <el-option v-for="tag in board.tags" :key="tag" :value="tag" :label="tag" />
         </el-select>
         <!-- The list's bound, and the reader's: the same `per` key Items and Kanban

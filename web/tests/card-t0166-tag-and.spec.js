@@ -13,26 +13,33 @@ import { expect, test } from '@playwright/test'
  *    single tag value; tests cover two tags on each tag-filtering surface"
  *
  * The three surfaces that carry a tag filter are Items, Gantt and Kanban
- * (`web/src/panes/*.vue`, `useQueryFilters({...})` with a `tag` key). Kanban is
- * already multi-select and AND (`KanbanPane.vue:16,54,143`, `boards.spec.js`
- * "a multi-tag filter is an AND, and it survives the URL"); Items and Gantt
- * still hold a single value (`ItemsPane.vue:13,88,260`, `GanttPane.vue:11,43,147`).
- * So one file, one clause set per surface, and the verdict is per surface.
+ * (`web/src/panes/*.vue`, `useQueryFilters({...})` with a `tag` key). So one
+ * file, one clause set per surface, and the verdict is per surface.
  *
- * Measured 2026-09-22 against the served bundle, one run:
+ * VERDICT, re-measured 2026-09-22T11:50Z against bundle 9e6116d47ac1+dirty
+ * (`/api/revision` stale false): all three surfaces pass. The measurement below
+ * is kept as the card's history; each line says what the defect was and where it
+ * went.
  *
- *   kanban  PASS  -- both tags restore, and the cards narrow to the AND (T-A1)
- *   items   FAIL  -- one tag narrowed to [T-A1, T-A2]; the second tag replaced
- *                    the first, so the AND step showed [T-A1, T-B1], the two
- *                    items that carry *either* tag, where the card says [T-A1]
- *   gantt   FAIL  -- one tag narrowed to `2 of 4 dated item(s)`; the second
- *                    replaced it, so the AND step stayed `2 of 4`, where the
- *                    card says `1 of 4`
+ *   kanban  PASS  -- was already multi-select and AND; unchanged.
+ *   items   PASS  -- was `tag: ''` with `includes(filters.tag)`, so a second pick
+ *                    *replaced* the first and the AND step showed [T-A1, T-B1],
+ *                    the two items carrying *either* tag. `ItemsPane.vue` holds
+ *                    `tag: []` with `.every(...)` now.
+ *   gantt   PASS  -- the same defect, plus a second one this file could not see
+ *                    while it was red: `GanttPane.vue` also held a single value,
+ *                    and its header had been rewritten by T-0188 from
+ *                    `timeline — 2 of 4 dated item(s)` to a sentence that states
+ *                    the filter count apart from the board's own split. So this
+ *                    file's `ganttCount` was throwing `gantt header did not name a
+ *                    count` on its first assertion, which is a copy change and not
+ *                    a filter defect. The instrument reads the sentence the pane
+ *                    renders now; see it for the shape.
  *
- * The two red tests carry `test.fail()` so the suite stays green while the
- * measurement is recorded rather than hidden, per the brief. They are expected
- * to turn "unexpectedly passing" the day Items and Gantt are rebuilt with a
- * multi-select tag filter, and that is the signal, not a flake.
+ * Both `test.fail()` markers are gone, on the JSON reporter's own evidence
+ * (`expectedStatus: 'passed'` / `status: 'passed'`), and no assertion in this file
+ * was relaxed: the clause set is the one that was written when the card was
+ * filed, and the header pattern now captures the same two numbers it always did.
  *
  * This file drives the *served* board -- the bundle a reader actually loads --
  * and stubs `/api/state` with `page.route` so the tag combination under test is
@@ -176,10 +183,23 @@ function urlTags(page) {
 /** Items: one table row per work item, the id in the first cell. */
 const itemIds = (page) => page.locator('.el-table__body tr td:first-child').allInnerTexts()
 
-/** Gantt: the header count is the only DOM readout of the filtered rows. */
+/** Gantt: the header count is the only DOM readout of the filtered rows.
+ *
+ *  The pattern is the sentence the pane actually renders, not the one this file
+ *  was written against. `GanttPane.vue`'s header used to read
+ *  `timeline — 2 of 4 dated item(s)`; it now states the filter count apart from
+ *  the board's own split (`timeline — 2 shown; of 4 dated bar(s), 0 on the
+ *  record and 4 plan seeds (promises, not work), …`), because T-0188 found the
+ *  old sentence counting one universe and describing another. Measured on the
+ *  served bundle 2026-09-22: the old pattern threw
+ *  `gantt header did not name a count` on the very first assertion, so this
+ *  instrument was reporting the pane's copy change rather than a filter defect.
+ *  Only the two numbers this file is about are captured -- what is *shown* and
+ *  the *denominator* -- and the trailing halves are not asserted here.
+ */
 async function ganttCount(page) {
   const text = await page.locator('.aim-filterbar > span').first().innerText()
-  const m = text.match(/timeline\s*—\s*(\d+)\s*of\s*(\d+)\s+dated item/)
+  const m = text.match(/timeline\s*—\s*(\d+)\s+shown;\s*of\s+(\d+)\s+dated bar/)
   if (!m) throw new Error(`gantt header did not name a count: ${JSON.stringify(text)}`)
   return [Number(m[1]), Number(m[2])]
 }
@@ -225,9 +245,12 @@ async function assertSurface(page, { hash, placeholder, shown, all, one, and }) 
 
 test.describe('T-0166 tag filters: two tags are an AND on every surface', () => {
   test('items', async ({ page }) => {
-    // Red as measured (see the file docstring): the second tag replaces the
-    // first instead of narrowing, so the AND step shows ['T-A1','T-B1'].
-    test.fail()
+    // Measured green on the served bundle 2026-09-22 (bundle 9e6116d47ac1+dirty,
+    // /api/revision stale false): Items carries a `multiple` tag select and
+    // `filters.tag.every(...)`, so the AND step shows T-A1. The two `test.fail()`
+    // markers this file opened with are gone for the reason Playwright reports
+    // for any annotated test whose body now passes -- "Expected to fail, but
+    // passed" -- and no assertion below was touched to get there.
     await stub(page, STATE)
     await assertSurface(page, {
       hash: '#/items', placeholder: 'tag', shown: itemIds, all: ALL, one: ONE_TAG, and: AND,
@@ -235,9 +258,6 @@ test.describe('T-0166 tag filters: two tags are an AND on every surface', () => 
   })
 
   test('gantt', async ({ page }) => {
-    // Red as measured (see the file docstring): the second tag replaces the
-    // first, so the header stays `2 of 4 dated item(s)` where the card says 1.
-    test.fail()
     await stub(page, STATE)
     await assertSurface(page, {
       hash: '#/gantt', placeholder: 'tag', shown: ganttCount, all: [4, 4], one: [2, 4], and: [1, 4],
