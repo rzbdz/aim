@@ -1,5 +1,6 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { isPromise, useBoard } from '../stores/board'
@@ -9,6 +10,7 @@ import StatusTag from '../components/StatusTag.vue'
 import OwnerAvatar from '../components/OwnerAvatar.vue'
 import TaskLink from '../components/TaskLink.vue'
 import PromiseTag from '../components/PromiseTag.vue'
+import { listQuery } from '../composables/useTaskDrawer'
 
 const ctx = inject('ctx')
 const board = useBoard()
@@ -450,7 +452,16 @@ function openTask(task) {
             <span v-if="t.due" :class="{ 'aim-late': isOverdue(t.due, t.status, board.terminal) }">
               {{ t.due.slice(5) }}{{ isOverdue(t.due, t.status, board.terminal) ? ' late' : '' }}
             </span>
-            <span v-if="t.milestone">{{ t.milestone }}</span>
+            <!-- The milestone is a way into the work it is made of, the same link
+                 the plan and items panes draw (`PlanPane.vue:354`,
+                 `ItemsPane.vue:583`). Measured 2026-09-22: `M1` here was bare text
+                 in the card's meta row, so the one place a card says which
+                 milestone it belongs to was the one place that could not be
+                 followed. `@click.stop` because the card itself is draggable and
+                 opens the drawer on click -- a link that also starts a drag is the
+                 bug this pane already fixed once for `TaskLink`. -->
+            <RouterLink v-if="t.milestone" :to="{ path: '/items', query: listQuery('milestone', t.milestone) }"
+                        class="aim-task-link" @click.stop>{{ t.milestone }}</RouterLink>
             <template v-for="b in t.blocked_by || []" :key="b">
               <!-- T-0203: the state is a word before it is a hue. The lock is the
                    decoration and says nothing on its own -- with author colours

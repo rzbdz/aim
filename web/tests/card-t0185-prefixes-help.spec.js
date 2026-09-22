@@ -61,46 +61,58 @@
  * the barrier refusals, and the refusal rows with no anchor -- are all present.
  *
  * ---------------------------------------------------------------------------
- * RE-MEASURED 2026-09-22 on bundle `001be7a` (`GET /api/revision`, `stale:
- * false`). The verdict table above is history, not current: two of its three
- * clauses pass today, and the numbers in it are not the numbers the walk now
- * reports. What the walk reports is 13 unreachable tokens over FOUR routes --
- * /attention 3 (`T-0001`, `T-0001`, `M1`), /items 2, /kanban 3, /plan 5
- * (`R1 R2 R3 D5 D6`). /barrier and /help are 0 under this fixture.
+ * RE-MEASURED 2026-09-22 on bundle `24da731` (`GET /api/revision`, `stale:
+ * false`). **All three clauses pass.** The verdict table above is history. The
+ * numbers below are the ones the walk actually reported, and the sequence
+ * matters, because the first number was wrong in both directions at once.
  *
- * Those 13 split, and the split is the finding:
+ * The walk as originally written reported 13 unreachable tokens over four routes
+ * -- /attention 3 (`T-0001`, `T-0001`, `M1`), /items 2, /kanban 3, /plan 5
+ * (`R1 R2 R3 D5 D6`). The split is what mattered:
  *
- *   * SIX ARE THE PREDICATE, NOT THE PRODUCT. `T-0001` is drawn as a control on
+ *   * SIX WERE THE PREDICATE, NOT THE PRODUCT. `T-0001` is drawn as a control on
  *     all three panes that show it: `TaskLink.vue:74` is a `<button
  *     class="aim-task-link" aria-label="Open work item T-0001">` and the
  *     attention and kanban rows are `article[role="button"]` whose `aria-label`
  *     is `Open task T-0001: …`. The acceptance names `<a>` and `reachable()`
- *     honours exactly two drawer shapes (`.aim-row-decisions`,
+ *     honoured exactly two drawer shapes (`.aim-row-decisions`,
  *     `[aria-label^="Inspect task"]`), so a control that opens the drawer by
- *     *any other* name reads as a dead end. The board deliberately chose a
- *     button over an anchor here -- `ItemsPane.vue:470-473` says why (a native
- *     anchor would drag the URL onto the hash and the drawer would never open)
- *     -- so the predicate contradicts a decision the product made on purpose.
+ *     *any other* name read as a dead end. The board deliberately chose a button
+ *     over an anchor here -- `ItemsPane.vue:470-473` says why (a native anchor
+ *     would drag the URL onto the hash and the drawer would never open) -- so the
+ *     old predicate contradicted a decision the product made on purpose. Fixed in
+ *     `collectTokens`, not in the pane.
  *
- *   * SEVEN ARE REAL AND ARE THE CARD'S OWN SUBJECT: `M1` on /attention and
- *     /kanban (bare interpolations, `OverviewPane.vue:767`, `KanbanPane.vue:453`
- *     -- note /plan and /items link their milestone cells, so the destination
- *     exists and two of the four sites just do not use it), and `R1 R2 R3 D5 D6`
- *     on /plan (`PlanPane.vue:394` is a bare `prop="id"` column and `:408` puts
- *     the decision id in a collapse header, neither addressable). Those seven
- *     have no target anywhere in the product except Help's own `#prefix-r` /
- *     `#prefix-d` rows.
+ *   * SEVEN WERE REAL AND WERE THE CARD'S OWN SUBJECT, and are fixed in the panes:
+ *     `M1` on /attention and /kanban (bare interpolations) now links to
+ *     `/items?milestone=…`, the same destination `PlanPane.vue:354` and
+ *     `ItemsPane.vue:583` already built; and `R1 R2 R3` and `D5 D6` on /plan now
+ *     link to the Help rows that define the prefixes (`#prefix-r`, `#prefix-d`,
+ *     `HelpPane.vue:816`). A milestone is a way into the work it is made of; a
+ *     risk or a decision id has no view to land on, so its honest destination is
+ *     the definition.
  *
- * And the predicate is too broad in the other direction, which is why its count
- * cannot be read as a defect count: it walks `document.body`, so it sees the
+ * And the count was too broad in the other direction, which is why it could not
+ * be read as a defect count: the walk ran over `document.body`, so it saw the
  * `el-popper` subtrees of the filter dropdowns -- invisible `li`/`div` option
- * rows that happen to carry Element Plus's generated `el-id-<n>`, which
- * `atDefinition` accepts as a definition row. Measured on /attention: 0 bad
- * tokens with the pointer still, 1 with a phase chip hovered. A walk whose
- * answer depends on where the mouse is has no stable number, and this test's
- * green (it is `test.fail(true, …)`) says nothing about which of the 13 are
- * real. The seven above are named so the card is not closed on the strength of
- * a count that moves.
+ * rows carrying Element Plus's generated `el-id-<n>`, which `atDefinition`
+ * accepted as a definition row. Measured on /attention: 0 bad tokens with the
+ * pointer still, 1 with a phase chip hovered. A walk whose answer depends on
+ * where the mouse is has no stable number. It now reads `.aim-main`, which is the
+ * pane the card is about.
+ *
+ * What the walk still does NOT see, stated so its green is not read as coverage:
+ * an identifier in prose --
+ *
+ *   `M4`     in a risk's "what would close it" cell      (`/plan`, risks card)
+ *   `D7`, `T-0086` in a decision's `because` sentence    (`/plan`, decisions card)
+ *
+ * -- and `#/help#prefix-r`, a router path that also carries a fragment, which is
+ * `linked` but has no `fragment` by this file's reading (the fragment is the
+ * *second* `#`; `main.js` splits on the last one, this helper looks only at the
+ * first). Both are recorded rather than asserted: they are a different clause of a
+ * card that is about the vocabulary's entry points, and widening the predicate to
+ * cover prose would make every mention of an id in a sentence a failure.
  */
 import { expect, test } from '@playwright/test'
 
@@ -168,11 +180,42 @@ const ROUTES = [
  * Read in the page, by walking text nodes -- a token inside a link and the same
  * token inside a `<b>` are different facts, and `innerText` cannot tell them
  * apart.
+ *
+ * Three corrections made 2026-09-22 after the walk was measured against the
+ * actual product rather than against this file's idea of it. Each one changed
+ * what the test counts, in both directions:
+ *
+ *  * **Scoped to `.aim-main`, not `document.body`.** The body includes every
+ *    `el-popper` subtree, and the filter dropdowns' *hidden* option rows are
+ *    inside them carrying Element Plus's generated `el-id-<n>` ids -- which
+ *    `atDefinition` accepted as a definition row. So an option row the reader
+ *    can never see certified a token as having a way in, and the walk's answer
+ *    also moved with the pointer: measured 0 bad tokens on /attention with the
+ *    mouse still and 1 with a phase chip hovered. The pane is what the card is
+ *    about, and the pane is `.aim-main`.
+ *
+ *  * **A drawer control is a control, not a pinned attribute string.** The
+ *    predicate honoured exactly `[aria-label^="Inspect task"]` and
+ *    `.aim-row-decisions`, while the product draws its drawer entry points as
+ *    `TaskLink.vue:74`'s `<button class="aim-task-link" aria-label="Open work
+ *    item T-0001">` and as `article[role="button"][aria-label="Open task T-0001:
+ *    …"]` (OverviewPane, KanbanPane). The board chose a button over an anchor
+ *    deliberately -- `ItemsPane.vue:470-473`: a native anchor would drag the URL
+ *    onto the hash and the drawer would never open -- so the old predicate
+ *    contradicted a decision the product made on purpose and counted six live
+ *    controls as dead ends. `[aria-label^="Open "]` is the pattern the product
+ *    actually uses and is written that way rather than as three literals.
+ *
+ *  * **`atDefinition` ignores generated ids.** A row whose id is `el-id-7` is
+ *    Element Plus's, not a definition anyone can link to; only an id this
+ *    project authors is a destination.
  */
 const collectTokens = (page, phases) => page.evaluate((phaseNames) => {
   const TOKEN = new RegExp(`\\b(?:[TMDR]-?\\d+|${phaseNames.join('|')})\\b`, 'g')
   const out = []
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  const main = document.querySelector('.aim-main')
+  if (!main) return out
+  const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT)
   let node
   while ((node = walker.nextNode())) {
     TOKEN.lastIndex = 0
@@ -183,6 +226,7 @@ const collectTokens = (page, phases) => page.evaluate((phaseNames) => {
       const href = anchor?.getAttribute('href') || ''
       // `#/items?milestone=M1` is a router link; `#phase-commit` is an anchor.
       const fragment = href.startsWith('#') && !href.startsWith('#/') ? href.slice(1) : ''
+      const definition = el?.closest('tr[id], article[id], section[id], li[id]')
       out.push({
         token: match[0],
         linked: Boolean(anchor),
@@ -190,10 +234,11 @@ const collectTokens = (page, phases) => page.evaluate((phaseNames) => {
         // An anchor whose id is in the DOM is a way in; one whose id is not is a
         // link that cannot arrive.
         resolves: fragment ? Boolean(document.getElementById(fragment)) : null,
-        // The definition row: an id on the row itself is the thing a link would
-        // land on, so a token on it has a way in even though it is not a link.
-        atDefinition: Boolean(el?.closest('tr[id], article[id], section[id], li[id]')),
-        inDrawer: Boolean(el?.closest('.aim-row-decisions, [aria-label^="Inspect task"]')),
+        // The definition row: an id this project authored on the row itself is
+        // the thing a link would land on. `el-id-*` is Element Plus's own and is
+        // not a destination.
+        atDefinition: Boolean(definition) && !/^el-id-/.test(definition.getAttribute('id') || ''),
+        inDrawer: Boolean(el?.closest('.aim-row-decisions, button.aim-task-link, [role="button"][aria-label^="Open "]')),
       })
     }
   }
@@ -231,24 +276,35 @@ async function open(page, route, title) {
 
 test.describe('T-0185: every identifier in the text has a way in', () => {
   test('the walk: no route renders a token with nowhere to go', async ({ page }) => {
-    test.fail(true,
-      'T-0185 re-measured 2026-09-22 on bundle 001be7a (stale false): 13 unreachable tokens over four '
-      + 'routes, and the split is in this file\'s header. SIX are the predicate, not the product -- '
-      + '`T-0001` is a control on all three panes (TaskLink.vue:74 is a `<button class="aim-task-link" '
-      + 'aria-label="Open work item T-0001">`, and the attention and kanban rows are '
-      + '`article[role="button"]`), but `reachable()` honours only `<a>`, `tr/article/section/li[id]` '
-      + 'and the two drawer shapes, so a drawer control under any other name reads as a dead end. '
-      + 'SEVEN are real and are the card\'s own subject: `M1` bare-interpolated on /attention '
-      + '(OverviewPane.vue:767) and /kanban (KanbanPane.vue:453), and `R1 R2 R3 D5 D6` on /plan '
-      + '(PlanPane.vue:394 is a bare prop column, :408 a collapse header). The count is not stable '
-      + 'enough to close the card on -- it walks `document.body`, so the filter dropdowns\' hidden '
-      + '`el-popper` option rows count as definition rows when Element Plus gives them a generated '
-      + '`el-id-<n>`, and a hovered phase chip adds a token. Measured: 0 bad on /attention with the '
-      + 'pointer still, 1 hovered. '
-      + 'ORIGINAL: unlinked tokens per route -- /attention 1, /items 3 (T-0001, M1, M2), /barrier 6 '
-      + '(every phase enum in the refusal strip), /help 13, /kanban 3, /gantt 1. /plan links M1/M2 as '
-      + 'router links and is clean. Help\'s identifier rows carry no id at all, so even a link to D7 '
-      + 'or R1 would have nothing to land on.')
+    // The marker that stood here is gone, and so are two of the three reasons it
+    // gave. Measured 2026-09-22, on bundle `24da731`:
+    //
+    //  * SIX of its 13 tokens were the predicate, not the product -- every
+    //    `T-0001` on /attention, /items and /kanban is drawn as a control
+    //    (`TaskLink.vue:74`'s `<button class="aim-task-link" aria-label="Open work
+    //    item T-0001">`, and `article[role="button"]` on the other two). The
+    //    predicate now recognises those shapes; see `collectTokens` above.
+    //  * SEVEN were real, and are fixed in the panes: `M1` on /attention
+    //    (`OverviewPane.vue:765`) and /kanban (`KanbanPane.vue:461`) now link to
+    //    `/items?milestone=M1` -- the same destination `PlanPane.vue:354` and
+    //    `ItemsPane.vue:583` already built -- and `R1 R2 R3` and `D5 D6` on /plan
+    //    now link to the Help rows that define the prefixes
+    //    (`#prefix-r`, `#prefix-d`, `HelpPane.vue:816`). A milestone is a way into
+    //    the work it is made of; a risk or a decision id has no view to land on, so
+    //    its honest destination is the definition.
+    //
+    // The count is stable now because the walk reads `.aim-main` rather than
+    // `document.body` -- the drift was element-plus's hidden `el-popper` option
+    // rows, which carried generated `el-id-<n>` ids and were counted as definition
+    // rows, so the answer moved with the pointer (0 bad on /attention still, 1
+    // hovered).
+    //
+    // What this test still does NOT see, stated so it is not read as coverage:
+    // prose ids inside a cell or a paragraph -- `M4` in a risk's worth column and
+    // `D7`/`T-0086` in a decision's `because` sentence, three occurrences on /plan
+    // -- and `#/help#prefix-r`, a router path that also carries a fragment, which is
+    // `linked` but has no `fragment` by this file's reading. Both are recorded
+    // rather than asserted; see the file header.
     const failures = []
     for (const [route, title] of ROUTES) {
       await open(page, route, title)

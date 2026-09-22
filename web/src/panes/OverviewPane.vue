@@ -16,6 +16,7 @@ import { PRIORITY_TYPE, STATUS_TYPE, isOverdue } from '../theme'
 import PhaseApprovalCard from '../components/PhaseApprovalCard.vue'
 import PromiseTag from '../components/PromiseTag.vue'
 import TaskLink from '../components/TaskLink.vue'
+import { listQuery } from '../composables/useTaskDrawer'
 
 const ctx = inject('ctx')
 const drawer = ctx.service('taskDrawer')
@@ -764,7 +765,17 @@ async function rejectPhase(request, reason) {
       <template #header><span>Next milestones</span><RouterLink to="/plan">full plan</RouterLink></template>
       <el-empty v-if="!upcomingMilestones.length" description="no unfinished milestone with recorded items" :image-size="70" />
       <article v-for="milestone in upcomingMilestones" :key="milestone.id" class="aim-attention-row">
-        <span class="aim-mono">{{ milestone.id }}</span>
+        <!-- The id is a way into the work it is made of, which is the pattern the
+             plan and items panes already draw (`PlanPane.vue:354`,
+             `ItemsPane.vue:583`) and the one this row was missing: measured
+             2026-09-22, `M1` here was a bare `<span class="aim-mono">` with no
+             anchor, no router link and no drawer control, so the page that
+             explains what a milestone is (`#/plan`) was reachable and this
+             occurrence did not reach it. `listQuery` is the same query key the
+             other two panes build, so all three land on the same filtered list
+             rather than three spellings of one filter. -->
+        <RouterLink :to="{ path: '/items', query: listQuery('milestone', milestone.id) }"
+                    class="aim-task-link">{{ milestone.id }}</RouterLink>
         <strong>{{ milestone.name }}</strong>
         <span>{{ milestone.due || 'no date' }}</span>
         <el-progress :percentage="milestone.pct" :stroke-width="8" />

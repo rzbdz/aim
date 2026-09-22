@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { listQuery } from '../composables/useTaskDrawer'
@@ -391,7 +392,21 @@ const argvLine = (action) => {
     <el-card shadow="never">
       <template #header>risks ({{ visibleRisks.length }})</template>
       <el-table :data="visibleRisks" size="small">
-        <el-table-column prop="id" label="id" width="66" />
+        <el-table-column label="id" width="66">
+          <template #default="{ row }">
+            <!-- The risk id, linked to the row that explains the prefix. Measured
+                 2026-09-22: this was a bare `prop="id"` column, so `R1` was the one
+                 identifier on the page with no way in -- no route filters risks,
+                 no drawer takes one, and the only addressable thing that exists is
+                 `#prefix-r` on Help (`HelpPane.vue:816`). A link to the definition
+                 is the honest destination when there is no view to land on; the
+                 alternative, a risk drawer, is a card of its own and is not
+                 pretended here. The `#` inside a `to` path is the shape
+                 `PhaseChip.vue` already uses and `main.js` reads back: in hash mode
+                 the route is in the fragment too, so it splits on the *last* `#`. -->
+            <RouterLink to="/help#prefix-r" class="aim-task-link">{{ row.id }}</RouterLink>
+          </template>
+        </el-table-column>
         <el-table-column prop="risk" label="risk" min-width="300" />
         <el-table-column prop="likelihood" label="likelihood" width="100" />
         <el-table-column prop="impact" label="impact" width="90" />
@@ -405,7 +420,14 @@ const argvLine = (action) => {
       <template #header>decisions ({{ visibleDecisions.length }})</template>
       <el-collapse>
         <el-collapse-item v-for="d in visibleDecisions" :key="d.id" :name="d.id">
-          <template #title><b style="margin-right:8px">{{ d.id }}</b> {{ d.decision }}</template>
+          <!-- The id links to the row that explains the prefix, and the collapse
+               keeps its own click: `@click.stop` on the link so following the
+               definition does not also expand the decision the reader was leaving.
+               Measured 2026-09-22, the same finding as the risks column above --
+               `D5`/`D6` were bold text in this header with the only destination
+               being `#prefix-d` (`HelpPane.vue:816`). -->
+          <template #title><RouterLink to="/help#prefix-d" class="aim-task-link"
+                                       style="margin-right:8px" @click.stop>{{ d.id }}</RouterLink>{{ d.decision }}</template>
           <p class="aim-dim">because {{ d.because }}</p>
           <!-- T-0211: the control and its argv are one object, and the argv is the
                server's to publish — a verb rebuilt in a template is a second copy of
