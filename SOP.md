@@ -443,7 +443,7 @@ a `file:line`.
 | 8 | `--force` skips transition legality and nothing else | **it also bypasses the seal quorum and the synthesizer check**; `design/17:222` says otherwise | `bin/aim:1463` **[V]** |
 | 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
 | 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits **[V]** |
-| 11 | a `human` is the leader, and only the leader | **every gate in the tool exempts any name that typed `--kind human`** — see below, it is the largest single hole | `bin/aim:2126` **[V]** |
+| 11 | a `human` is the leader, and only the leader | **every gate in the tool exempts any name that typed `--kind human`, and the mail gate never compares the viewer against a channel's `leader` field at all** — see below, it is the largest single hole | `aimboard/gate.py:159,191` **[V]**, §4.1 |
 | 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns 70 drafts the board withholds from the same caller** | `aimboard/a2a.py:797` **[V]** |
 | 13 | the seal hides a participant's reasoning from everyone but the synthesizer | **any self-declared `human` can read the mixed bundle — including one who never sealed and is not a participant** | `bin/aim:1610` **[V]** |
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
@@ -464,11 +464,72 @@ registered `--kind human` (not the leader, not a participant, never sealed) and
 | the same command as `beta`, a claude peer | `REFUSED: only the synthesizer ('synth') may read mixed inputs` |
 
 The refusal for `beta` is the barrier working. The tool has no equivalent for
-`outsider`, because `bin/aim:1610` reads `if who != m.get("synthesizer") and kind
-!= "human"` — the same `kind != "human"` shape as `bin/aim:2126`, and as the
-read gate at `aimboard/gate.py:24` and the mail gate at `:159`. Live evidence on
-the real fabric: `human` reads **237** mail rows where `codex` reads 200 and
-`claude-session1` reads 175.
+`outsider`, because `bin/aim:1610` reads, in one condition:
+
+    if who != m.get("synthesizer") and kind != "human":
+
+— the same `kind != "human"` shape as `bin/aim:2126`, and as the read gate at
+`aimboard/gate.py:24` and the mail gate at `aimboard/gate.py:159`.
+
+**And the mail gate is the widest one, because mail is not addressed to a
+channel.** `gate.conversation_view` does not ask whether the viewer leads
+anything, and it never reads a channel's `leader` field at all — `grep -n leader
+aimboard/gate.py` returns four lines and the only *comparison* is `:159`:
+
+    kind = (state["registry"].get(viewer) or {}).get("kind", "")
+    is_leader = kind == "human"
+    …
+    if not is_leader and viewer not in (sender, to):   # :191
+        withheld += 1
+
+So the exempt set is not the closed set of leaders of live channels. The live
+registry holds five registered agents and exactly one typed `human`; the seat
+named `human` is factually the leader of all five channels
+(`barrier-v0`, `dev`, `hello`, `s2-scratch`, `s2-scratch2`), which is why the
+hole has cost nothing so far. **Nothing in the code makes that coincidence
+true**, and this is the paragraph that says so out loud rather than one that
+asserts it holds.
+
+Measured live, one `/api/state` per seat, same second, against a store of
+**247** conversation records:
+
+| seat | kind | `conversation.is_leader` | mail read | mail withheld | payload `withheld` |
+|---|---|---|---|---|---|
+| `human` | `human` | **true** | **247** | 0 | 0 |
+| `codex` | `codex` | false | 205 | 42 | 45 |
+| `claude-session1` | `claude` | false | 185 | 62 | 65 |
+| `codex-orangement` | `codex` | false | 67 | 180 | 184 |
+| `synthesizer-v0` | `claude` | false | 0 | 247 | 250 |
+
+The sentence this table replaces read *"`human` reads **237** mail rows where
+`codex` reads 200 and `claude-session1` reads 175"*. Those three numbers are
+stale and they are also **the wrong quantity**. 237 is `mail + withheld` — the
+whole store as it stood then — so the old sentence compared a full view against
+partial ones and called the difference a leak size. Worse, it named `codex`,
+whose two seats read **205** and **67** from the same store in the same second:
+the identity is not enough to predict what a seat reads, which was the fact
+worth stating and the one the old sentence hid.
+
+(`withheld` and *mail withheld* differ by 0–4 because `withheld` is one counter
+serving both loads at `gate.py:179` and `:192`; the residue is the count of
+gated *channels*, which carry no records of their own. Reported as measured.)
+
+**One payload calls the same agent the leader and a non-participant, one key
+apart.** On a throwaway root — channel `dmtest`, participants `alpha, beta`,
+leader `lead`; `alpha` and `beta` exchange two DMs — the `delta` seat, registered
+`--kind human`, holds `lead`'s office by typing only:
+
+    conversation.is_leader  = True          (gate.py:159, from delta's kind)
+    channels[0].leader      = 'lead'        (fabric, from the manifest)
+    delta in channels[0].participants  =  False
+
+    from/to: alpha ⇄ beta, neither is delta. delta reads both bodies.
+    gamma (a claude non-participant, same root, same second):              mail=0  withheld=2
+
+`walled_off` already answers this correctly — `gate.walled_off(delta)` is
+**False** where `gate.walled_off(gamma)` is **True** (`gate.py:24` is itself the
+`kind == "human"` branch). The gate knows delta is not walled; the loader never
+asks.
 
 **And `kind` is written by the agent it describes.** `aim register --as
 <name> --kind human` asks nobody's permission. So every sentence in this system
