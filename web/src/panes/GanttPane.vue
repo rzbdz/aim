@@ -396,6 +396,15 @@ const matched = computed(() => rows.value.length)
  * that 57 more rows have no dates has been given a complete-looking number that
  * is not the whole board. It stays the whole board's -- the undated list below is
  * not paged -- and is worded so.
+ *
+ * Known and not fixed here: the number is the bars *handed* to ECharts, and at a
+ * page size whose rows are shorter than a pixel the chart stops painting them.
+ * Measured `?per=100` on a 695px canvas with 100 rows: the row pitch is ~2.5px, so
+ * seven rows share a pixel, and 41 bars survive as colour (14 runs). So `shownRows`
+ * is exact at `per=25` (25 rows, ~15px pitch, 25 bands over 24 runs) and an
+ * over-count at `per=100`. The honest count for a paged chart would be the bars it
+ * painted, and nothing in the pane can see that; what it can do is name the set it
+ * handed over, which is what it now does.
  */
 const chartName = computed(() => {
   const bars = shownRows.value.length
