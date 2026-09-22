@@ -137,11 +137,6 @@ const rowFacts = (page, id) => channelRow(page, id).evaluate((el) => ({
 
 test.describe('T-0177: a channel says what it is for, and a probe does not look like work', () => {
   test('the conversation list renders each channel topic', async ({ page }) => {
-    test.fail(true,
-      'T-0177 FAIL (bundle 870b282+dirty, stale): the conversation list renders no topic. Read '
-      + 'on the bundle: "CHANNEL / #dev / (nothing yet) / #hello / needs me / 09-22 01:05 / b / '
-      + '#s2-scratch2 / (nothing yet)". The topic ships in the payload (channels[].topic) and is '
-      + 'dropped by the view.')
     await open(page)
     const list = await page.locator('.aim-thread-list').innerText()
     expect(list, 'the list carries the topic of the channel that carries the project')
@@ -151,10 +146,6 @@ test.describe('T-0177: a channel says what it is for, and a probe does not look 
   })
 
   test('the chat header states what the channel is for, above the message stream', async ({ page }) => {
-    test.fail(true,
-      'T-0177 FAIL (bundle 870b282+dirty, stale): the chat header reads "#hello / sealed / newest" '
-      + 'and states no purpose. The string "Transport test" -- the fixture channel topic -- does not '
-      + 'appear in the rendered text of /chat at all.')
     await open(page)
     // Above the stream, not below it: the header is the element that is on screen
     // before the first message is read, which is the whole point of the clause.
@@ -168,11 +159,6 @@ test.describe('T-0177: a channel says what it is for, and a probe does not look 
   })
 
   test('work with no talk is not a probe: the empty channel is marked as scaffolding', async ({ page }) => {
-    test.fail(true,
-      'T-0177 FAIL (bundle 870b282+dirty, stale): the second line of a channel row is the message '
-      + 'preview, so `#dev` (2 work items, 0 messages) and `#s2-scratch2` (0 tasks, 0 messages) '
-      + 'both read "(nothing yet)" -- measured equal. No tag, class or de-emphasis separates the '
-      + 'scaffolding channel from the two that hold work.')
     // Acceptance 2. `dev` has a task store and no messages; `s2-scratch2` has
     // neither. A surface that draws them the same is answering "are there
     // messages" when the card asks "is there work".

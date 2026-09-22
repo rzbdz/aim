@@ -35,6 +35,70 @@
 export const messageWaiting = (message, viewer) => message.to === viewer
   && message.state !== 'acked'
 
+/**
+ * What the payload says a channel is for, and what it holds.
+ *
+ * The conversation list and the reader header both have to answer "what is this
+ * channel for, and is there anything in it", and both answers are already on the
+ * wire: `/api/state` publishes `channels[].topic` and `channels[].tasks_recorded`
+ * per channel (`aimboard/api.py:356,365`), which is the same manifest
+ * `aim status --channel` prints from. The *gate's* copy of a channel --
+ * `conversation.channels[]` -- carries `id/phase/gated/messages/rule` and no
+ * topic at all, which is why a view that built its rows from that copy had
+ * nothing to say about the channel's purpose. Measured live as
+ * `claude-session1`: `#hello`'s topic reaches neither surface, so `dev`,
+ * `s2-scratch`, `s2-scratch2` and `barrier-v0` -- four empty channels -- looked
+ * exactly like the channel holding the project until they were opened.
+ *
+ * `tasks` is the count the server publishes, and it is the count that is right
+ * for a channel the viewer may not read into: a barrier withholds a channel's
+ * *contents*, never the fact that work was recorded there, so `barrier-v0` reads
+ * `6 work items` to a seat that can open none of them, which is the honest
+ * sentence. Where a payload does not carry the key at all (an older server, a
+ * fixture), `tasks` is `null` and the sentence says "not published" rather than
+ * printing a 0 the server never stated -- and only then does the caller fall
+ * back to the board's own rows (`workFromBoard` below), because a second fold of
+ * the same question is how two surfaces come to disagree about one number.
+ */
+export const channelFacts = (entry) => {
+  const count = Number(entry?.tasks_recorded)
+  return {
+    topic: String(entry?.topic || '').trim(),
+    tasks: Number.isFinite(count) ? count : null,
+    // Who the channel is for. Published beside the topic (`channels[].participants`,
+    // `aimboard/api.py:358`) and, like the topic, absent from the gate's copy of
+    // the same channel -- so it is carried on the thread here rather than looked
+    // up twice by two renderers that could then disagree about membership.
+    participants: (entry?.participants || []).map(String),
+  }
+}
+
+/**
+ * A probe: a channel that holds no work and no talk.
+ *
+ * The card's own words ("a channel with no tasks and no messages is visibly
+ * scaffolding, not a peer of a channel with 71 work items"). A channel with
+ * *some* work and no messages is the case this rule has to leave alone: it is
+ * work without talk, which is a state a channel is allowed to be in, and the
+ * surfaces below say so in words instead of marking it.
+ */
+export const isProbe = (thread) => thread.group === 'channel' && thread.tasks === 0
+  && thread.msgs.length === 0
+
+/** "2 work items, no messages" -- the two halves of what a thread holds. */
+export const held = (thread) => [
+  thread.group === 'channel'
+    ? thread.tasks === null
+      ? 'work count not published'
+      : thread.tasks
+        ? `${thread.tasks} work item${thread.tasks === 1 ? '' : 's'}`
+        : 'no work items'
+    : null,
+  thread.msgs.length
+    ? `${thread.msgs.length} message${thread.msgs.length === 1 ? '' : 's'}`
+    : 'no messages',
+].filter(Boolean).join(', ')
+
 export const threadWaiting = (thread, viewer, rooms) => {
   if (thread.group === 'direct') {
     return thread.msgs.some((message) => messageWaiting(message, viewer))
@@ -95,6 +159,15 @@ const { filters, activeCount, clear } = useQueryFilters({
 
 const threads = computed(() => {
   const byKey = new Map()
+  /**
+   * The channel's own record, as `/api/state` publishes it.
+   *
+   * The gate's list below carries the readable messages and not the channel; this
+   * carries the topic and the work count and not the messages. The row needs one
+   * of each, and taking either from somewhere it is not published is how this
+   * pane came to have a row that could only count messages.
+   */
+  const declared = new Map((board.channels || []).map((channel) => [channel.id, channel]))
   for (const channel of board.conversation.channels) {
     byKey.set(`ch:${channel.id}`, {
       key: `ch:${channel.id}`,
@@ -103,6 +176,7 @@ const threads = computed(() => {
       gated: Boolean(channel.gated),
       phase: channel.phase || '',
       note: channel.rule || '',
+      ...channelFacts(declared.get(channel.id)),
       target: { type: 'channel', id: channel.id },
       msgs: [],
     })
@@ -114,6 +188,10 @@ const threads = computed(() => {
       label: `#${room.channel} / #${room.room}`,
       phase: board.doc?.channels?.find((channel) => channel.id === room.channel)?.phase || '',
       note: 'a room inherits the parent channel gate; draft by default, publishing is deliberate',
+      // A room is inside a channel and is not one: the channel's topic or work
+      // count printed on it would be a sentence about the parent, not the room.
+      topic: '',
+      tasks: null,
       target: { type: 'room', id: room.id, channel: room.channel },
       msgs: [],
     })
@@ -129,12 +207,18 @@ const threads = computed(() => {
       thread = row.shape === 'channel'
         ? {
             key, group: 'channel', label: `#${row.channel}`, gated: row.gated,
-            phase: row.phase, note: row.rule, target: { type: 'channel', id: row.channel }, msgs: [],
+            phase: row.phase, note: row.rule,
+            // A channel the gate's list did not name at all still gets a row, and
+            // it has no declared record here to read: see the `tasks` assignment
+            // below for why the fallback is not a `0`.
+            ...channelFacts(declared.get(row.channel)),
+            target: { type: 'channel', id: row.channel }, msgs: [],
           }
         : row.shape === 'room'
           ? {
               key, group: 'room', label: `#${row.channel} / #${row.room}`,
               phase: row.phase, note: row.rule,
+              topic: '', tasks: null,
               target: { type: 'room', id: row.room, channel: row.channel }, msgs: [],
             }
           : {
@@ -196,6 +280,23 @@ const threads = computed(() => {
     const mine = thread.msgs.filter(waitingOnViewer)
     thread.unread = mine.length
     thread.unreadFrom = mine[0]?.id || ''
+    /**
+     * The count is the server's, and the fallback is named rather than silent.
+     *
+     * `tasks_recorded` is `null` only for a channel `/api/state` did not describe
+     * (an older server, or a fixture that ships the gate's list and not the
+     * channel's record). A `0` here means "the server counted zero", and those two
+     * are different facts: a board that folds its own rows to fill the gap is
+     * answering a question the record already answered, which is how one number
+     * becomes two. So the empty case is counted from the payload's own rows and
+     * the row says which count it is printing -- a channel drawn as a probe for
+     * the want of a field would be the wrong side of that trade.
+     */
+    if (thread.group === 'channel' && thread.tasks === null) {
+      thread.tasks = workFromBoard(thread)
+      thread.tasksFromRows = true
+    }
+    thread.msgsCount = thread.msgs.length
   }
   return [...byKey.values()].sort((a, b) =>
     groupOrder[a.group] - groupOrder[b.group] || (a.label < b.label ? -1 : 1))
@@ -204,6 +305,8 @@ const threads = computed(() => {
 // binding to the seat this page is reading as.
 const waitingOnViewer = (message) => messageWaiting(message, board.viewer)
 const threadNeedsMe = (thread) => threadWaiting(thread, board.viewer, board.conversation.rooms)
+/** The board's own rows for a channel, used only where the channel key is absent. */
+const workFromBoard = (thread) => board.tasks.filter((task) => task.channel === thread.target.id).length
 const visibleThreads = computed(() => threads.value.filter((thread) => {
   if (filters.shape !== 'all' && thread.group !== filters.shape) return false
   if (filters.participant) {
@@ -285,9 +388,17 @@ const anchorIndex = computed(() => {
 })
 const dayOf = (ts) => (ts || '').slice(0, 10)
 const stamp = (ts) => (ts || '').replace('T', ' ').slice(0, 19)
+/**
+ * The last message, as one line of plain text.
+ *
+ * The `(nothing yet)` fallback is no longer what an empty row prints: the row
+ * draws a channel's work and message counts and draws this only where a message
+ * exists (T-0177), so a channel with no messages cannot reach it. It is kept for
+ * the one thing it still describes -- a message that arrived with no body.
+ */
 const preview = (t) => {
   const last = t.msgs[t.msgs.length - 1]
-  return (last?.body || '').replace(/[#*`>|\n]+/g, ' ').trim().slice(0, 72) || '(nothing yet)'
+  return (last?.body || '').replace(/[#*`>|\n]+/g, ' ').trim().slice(0, 72) || '(no body)'
 }
 const body = (text) => md.render(text)
 
@@ -630,7 +741,35 @@ async function sendDirect() {
                 </el-tag>
                 <span class="aim-dim" style="font-size:10.5px">{{ (t.msgs.at(-1)?.ts || '').slice(5, 16).replace('T', ' ') }}</span>
               </div>
-              <div class="aim-dim" style="font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <!-- What the channel holds, said in words on the row.
+                   The second line of this row used to be `preview(t)` -- the last
+                   message, or `(nothing yet)`. Measured on the T-0177 fixture, that
+                   made `#dev` (2 work items, 0 messages) and `#s2-scratch2` (0, 0)
+                   the same string: the row answered "are there messages" when the
+                   card asks "is there work". The work count is on the wire
+                   (`channels[].tasks_recorded`) and was simply not drawn. So the
+                   count and the message count are both printed -- work first,
+                   because that is the question -- and a channel holding neither is
+                   a probe and is tagged as one.
+                   A channel with work and no messages is *not* a probe and is not
+                   de-emphasised: work without talk is a state a channel is allowed
+                   to be in, and the row says so ("2 work items, no messages") where
+                   the scaffolding row says what it is instead of how busy it is. -->
+              <div v-if="t.group === 'channel'" style="display:flex;align-items:center;gap:6px;margin-top:3px">
+                <el-tag v-if="isProbe(t)" class="aim-probe" size="small" type="info" effect="plain"
+                        title="no work items and no messages: this channel was opened and nothing was recorded in it">
+                  scaffolding — no work, no messages
+                </el-tag>
+                <el-tag v-else class="aim-held" size="small" effect="plain"
+                        :title="`from the payload: ${t.topic || 'no topic'}`">{{ held(t) }}</el-tag>
+              </div>
+              <div v-if="t.group === 'channel' && t.topic" class="aim-dim aim-thread-topic">
+                {{ t.topic }}
+              </div>
+              <!-- The last message, drawn only where there is one to draw. The
+                   placeholder was what made an empty channel and a working one
+                   read alike, and an empty thread's state is now the tags above. -->
+              <div v-if="t.msgs.length" class="aim-dim" style="font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 {{ preview(t) }}
               </div>
             </div>
@@ -642,12 +781,39 @@ async function sendDirect() {
 
     <section class="aim-reader">
       <div class="aim-reader-head">
-          <strong style="font-size:13.5px">{{ current?.label }}</strong>
-          <el-tag v-if="current?.gated" size="small" type="warning" effect="plain">sealed to you</el-tag>
-          <span class="aim-dim" style="font-size:11.5px">{{ current?.note }}</span>
-          <span style="flex:1" />
-          <el-input v-model="q" size="small" placeholder="search in this thread" style="width:180px" clearable />
-          <el-button size="small" text @click="jumpToEnd"><el-icon><Bottom /></el-icon> newest</el-button>
+          <div class="aim-reader-headline">
+            <strong style="font-size:13.5px">{{ current?.label }}</strong>
+            <el-tag v-if="current?.gated" size="small" type="warning" effect="plain">sealed to you</el-tag>
+            <!-- What this channel *is*, said before the reader opens a message.
+                 The card's third clause: the header named the id, the gate and the
+                 phase note, which is a state and not a purpose. The words come
+                 from `held()` and `isProbe()`, the same two the list rows use, so
+                 the header and the row cannot describe one channel differently. -->
+            <el-tag v-if="current?.group === 'channel'" size="small"
+                    :type="isProbe(current) ? 'info' : 'success'" effect="plain">
+              {{ isProbe(current) ? 'scaffolding — no work, no messages' : held(current) }}
+            </el-tag>
+            <span class="aim-dim" style="font-size:11.5px">{{ current?.note }}</span>
+            <span style="flex:1" />
+            <el-input v-model="q" size="small" placeholder="search in this thread" style="width:180px" clearable />
+            <el-button size="small" text @click="jumpToEnd"><el-icon><Bottom /></el-icon> newest</el-button>
+          </div>
+          <!-- The topic, on its own line above the stream and not below it: a
+               purpose printed after the last message is not the purpose to a
+               reader who has just arrived. `channels[].topic` is the manifest's
+               own sentence (`aimboard/api.py:356`), which `aim status --channel`
+               prints from -- there is no second copy of it here, and an empty
+               topic says so rather than rendering nothing, because a row that is
+               silent for two different reasons is the defect this card is about
+               one level up (see `BarrierPane.vue`'s `(this channel records no
+               topic)`, the same sentence for the same absence). -->
+          <div v-if="current?.group === 'channel'" class="aim-reader-topic">
+            {{ current.topic || '(this channel records no topic)' }}
+          </div>
+          <div v-if="current?.group === 'channel' && current.participants?.length"
+               class="aim-dim aim-reader-participants">
+            participants: {{ current.participants.join(', ') }}
+          </div>
         </div>
 
       <div ref="historyEl" class="aim-history" @scroll.passive="onHistoryScroll">
@@ -787,3 +953,26 @@ async function sendDirect() {
     </el-alert>
   </el-dialog>
 </template>
+
+<style scoped>
+/* The header is a column now, because it has two things to say: what the channel
+   is (the title line, the gate, what it holds) and what it is for (the topic,
+   above the stream). It was one flex row, which is why the topic had nowhere to
+   sit except on the same line as the id, and the pane's own CSS has always said
+   why that matters -- "a reader who has just arrived" reads the head before the
+   first message, so a purpose printed below the log is not what the channel is
+   for. `flex-direction` is the only thing overridden; the sticky position, the
+   z-index and the background stay in `style.css`, where the class's layout is. */
+.aim-reader-head { flex-direction: column; align-items: stretch; }
+.aim-reader-headline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.aim-reader-topic { font-size: 12.5px; line-height: 1.6; margin-top: 4px; }
+.aim-reader-participants { font-size: 11px; margin-top: 2px; }
+
+/* A channel's topic in the list, which is long on purpose: `hello`'s is a whole
+   question. Two lines are enough to tell a transport check from the development
+   channel, and the row stays a row. */
+.aim-thread-topic { font-size: 11px; margin-top: 3px; line-height: 1.45;
+                    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+                    overflow: hidden; }
+.aim-probe, .aim-held { font-size: 10.5px; }
+</style>
