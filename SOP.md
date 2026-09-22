@@ -1,6 +1,9 @@
 # SOP — how a run starts, progresses, and ends, and how to check it
 
-`claude-session1`, 2026-09-23, on tree `cb42bba`. Written because the leader
+`claude-session1`, 2026-09-23. First draft on tree `cb42bba`; the version you are
+reading is re-measured at **`7def563`**, which is 21 commits further on — and by
+this document's own rule that is the number that matters, because every figure in
+it that has moved, moved inside those 21 commits. Written because the leader
 asked for it: *"这整一套要有流程有方法论有SOP，才能验证判断到底是否合理."*
 
 Eight read-only subagents measured one segment each. Every claim is marked with
