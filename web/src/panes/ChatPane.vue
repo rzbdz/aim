@@ -1,3 +1,58 @@
+<script>
+/**
+ * Whether this thread is waiting on *the reader*, as opposed to merely busy.
+ *
+ * The old predicate asked whether the thread contained a `receipt demanded` chip
+ * **anywhere** -- which is true of demands the reader sent and demands addressed
+ * to another agent. Measured live as `human`: 15 receipts owed, of which 11 were
+ * `codex -> claude-session1`. It also returned `false` for every channel
+ * unconditionally, so `#hello` -- which was holding an unanswered phase request
+ * -- was filtered out of the one view that would have shown it. A channel can
+ * never be unread under a rule that says channels are never unread.
+ *
+ * So the question is asked of the messages that are addressed to the viewer and
+ * that nothing has answered:
+ *
+ *   * a direct message is waiting if `to === viewer` and its `state` is not
+ *     `acked`. `state` is on the wire per row already (T-0162's spec), and the
+ *     chip next to it is derived from the same row, so the marker and the chip
+ *     cannot disagree. The chip stays, because it is the record; it stops being
+ *     the predicate.
+ *   * a room is waiting for the unread count the server computes per agent.
+ *   * a channel is waiting when its newest message is not from the viewer -- the
+ *     honest thing that is computable today. A true per-viewer cursor is a fabric
+ *     change (`aim read --as <who> --channel <ch> --through <msg_id>`, a new event
+ *     on the chain) and it is not built; inventing one here from the browser's
+ *     memory would be the weaker answer that T-0181 warns against.
+ *
+ * The viewer and the rooms are arguments rather than the store, and the two
+ * functions are exported, so the rule can be driven without a browser
+ * (`web/tests/unit/W3.spec.js`). One predicate serves both the `needs me` filter
+ * and the marker each row draws: a list that filters on a state it does not show
+ * is what T-0172 is about, and two derivations of one question is how that
+ * happens.
+ */
+export const messageWaiting = (message, viewer) => message.to === viewer
+  && message.state !== 'acked'
+
+export const threadWaiting = (thread, viewer, rooms) => {
+  if (thread.group === 'direct') {
+    return thread.msgs.some((message) => messageWaiting(message, viewer))
+  }
+  if (thread.group === 'room') {
+    const room = rooms.find((item) => item.channel === thread.target.channel && item.id === thread.target.id)
+    return Boolean((room?.unread || {})[viewer])
+  }
+  // A channel has no per-viewer read state, so `thread.unread` is 0 for every
+  // channel by construction: a channel message is addressed `to: #<channel>`, never
+  // `to: <viewer>`. Asking the count here answered `false` for every channel
+  // unconditionally -- the defect the comment above names, written back in as the
+  // predicate. What is computable today is who spoke last: a channel is waiting on
+  // the reader when its newest message is somebody else's.
+  return thread.msgs.length > 0 && thread.msgs.at(-1)?.by !== viewer
+}
+</script>
+
 <script setup>
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -96,28 +151,52 @@ const threads = computed(() => {
       body: row.body,
       subject: row.subject,
       id: row.msg_id,
+      /**
+       * The receipt state, kept as a field rather than only as a chip.
+       *
+       * `state` is what happened to the message and `ack_required` is a property
+       * of the request; drawing both as chips made a row that reads `acked` and
+       * `receipt demanded` side by side. The field is what the marker and the
+       * anchor read, so the sentence and the predicate cannot drift apart.
+       */
+      state: row.state || '',
+      ackRequired: Boolean(row.ack_required),
+      /**
+       * What happened, and what the message asked for -- never both as one row.
+       *
+       * `ack_required` is a property of the request; `state` is what happened to
+       * it. Rendering them side by side gave a message that reads `acked` and
+       * `receipt demanded` on the same line, and spent a chip on `${bytes} bytes`,
+       * which is a transport detail at a reader who is reading a conversation.
+       * A demand that has been answered is not a demand, so it is not shown.
+       */
       chips: row.shape === 'channel'
         ? [row.kind && `kind ${row.kind}`, row.responds_to && `responds-to ${row.responds_to}`].filter(Boolean)
         : row.shape === 'room'
           ? (row.mentions || []).map((mention) => `@${mention}`)
-          : [row.state, row.ack_required && 'receipt demanded', `${row.bytes} bytes`].filter(Boolean),
+          : [row.state, row.ack_required && row.state !== 'acked' && 'receipt demanded'].filter(Boolean),
     })
   }
   const groupOrder = { channel: 0, room: 1, direct: 2 }
+  /**
+   * What is waiting on the viewer, per thread, computed once for the list.
+   *
+   * The list and the reader have to agree about this: a row that says `2` over a
+   * thread whose first unread is somewhere else is the same defect as a count
+   * window that does not match the list it summarises.
+   */
+  for (const thread of byKey.values()) {
+    const mine = thread.msgs.filter(waitingOnViewer)
+    thread.unread = mine.length
+    thread.unreadFrom = mine[0]?.id || ''
+  }
   return [...byKey.values()].sort((a, b) =>
     groupOrder[a.group] - groupOrder[b.group] || (a.label < b.label ? -1 : 1))
 })
-const threadNeedsMe = (thread) => {
-  if (thread.group === 'direct') {
-    return thread.msgs.some((message) => message.chips?.includes('receipt demanded'))
-  }
-  if (thread.group === 'room') {
-    const room = board.conversation.rooms
-      .find((item) => item.channel === thread.target.channel && item.id === thread.target.id)
-    return Boolean((room?.unread || {})[board.viewer])
-  }
-  return false
-}
+// The rule lives in the module-level `threadWaiting` above; this is only the
+// binding to the seat this page is reading as.
+const waitingOnViewer = (message) => messageWaiting(message, board.viewer)
+const threadNeedsMe = (thread) => threadWaiting(thread, board.viewer, board.conversation.rooms)
 const visibleThreads = computed(() => threads.value.filter((thread) => {
   if (filters.shape !== 'all' && thread.group !== filters.shape) return false
   if (filters.participant) {
@@ -165,14 +244,37 @@ const currentRoom = computed(() => {
   return board.conversation.rooms.find((room) =>
     room.channel === current.value.target.channel && room.id === current.value.target.id)
 })
+/**
+ * Where a thread opens.
+ *
+ * The rule is one sentence: **the first thing that is waiting on the reader, and
+ * otherwise the newest message** -- bottom-aligned, so the end of the newest
+ * message is on screen rather than below the fold.
+ *
+ * What it replaced, and why each half was wrong:
+ *
+ *  * `msgs.findIndex((m) => m.chips?.includes('receipt demanded'))` picked the
+ *    first *receipt chip* whatever its state. Measured live: on
+ *    `claude-session1 ⇄ codex` the first chip is message 8 and its state is
+ *    `acked`, so the page opened on an answered message 89,710px above the first
+ *    actually-unread one (index 99 of 121), with the newest 106,485px below the
+ *    fold. A chip is a fact about a message; it is not a fact about the reader.
+ *  * `msgs.length - 1` is not the bottom either. The old `scrollToAnchor` put the
+ *    target's *top* at the scroll container's top minus 12px, so the last message
+ *    opened at its own beginning. On a one-message thread that looks right, which
+ *    is why it survived; on a real one it left the end of the newest message
+ *    below the fold by construction.
+ *
+ * `unreadFrom` comes from the thread model, which computes it once for the whole
+ * list -- the row's badge and the reader's landing point are then the same fact,
+ * because a count that disagrees with where the page opens is the defect this
+ * card is about, one pane over.
+ */
 const anchorIndex = computed(() => {
   const msgs = messages.value
   if (!msgs.length) return 0
-  const firstReceipt = msgs.findIndex((message) => message.chips?.includes('receipt demanded'))
-  if (firstReceipt >= 0) return firstReceipt
-  const unread = currentRoom.value?.unread?.[board.viewer] || 0
-  if (unread > 0) return Math.max(0, msgs.length - unread)
-  return msgs.length - 1
+  const firstUnread = msgs.findIndex(waitingOnViewer)
+  return firstUnread >= 0 ? firstUnread : msgs.length - 1
 })
 const dayOf = (ts) => (ts || '').slice(0, 10)
 const stamp = (ts) => (ts || '').replace('T', ' ').slice(0, 19)
@@ -187,17 +289,94 @@ async function openThread(key) {
   filters.thread = key
   await scrollToAnchor()
 }
+
+/**
+ * Put the reader where the anchor rule says, once the thread has stopped growing.
+ *
+ * Two things the old version got wrong, and both are visible from the outside:
+ *
+ *  * **It aligned the wrong edge.** The target's *top* was placed 12px below the
+ *    scroll container's top, so the anchor message opened at its own beginning and
+ *    its end sat below the fold. On the leader's thread that was 106,485px of
+ *    newest message under the fold. So: an unread anchor aligns its top, because
+ *    the reader is about to read *forward* from it; anything else aligns its
+ *    bottom, because "the newest message" means all of it.
+ *  * **It ran once.** A thread's content arrives in pieces -- the markdown bodies
+ *    are rendered on mount -- so a single pass against a half-grown history lands
+ *    in the wrong place, which is how `jumpToEnd` came to be the only control that
+ *    actually reached the end. It is written across a short window of frames, and,
+ *    like the router's own reset, it stops the instant the reader scrolls or types:
+ *    nothing here moves the page under the reader's hands.
+ */
+/**
+ * The scroll position that puts the anchor where the rule says it goes.
+ *
+ * Which edge to align depends on what the anchor *is*. An unread anchor is the
+ * start of what the reader has not read, so its top goes near the top and the
+ * reader reads forward. The newest message is the thing itself, so all of it has
+ * to be on screen -- aligning its top, which is what this did before, put the end
+ * of the newest message below the fold by construction.
+ *
+ * The value is the *change* to apply rather than an absolute position, because
+ * the pane's height is still changing while the bodies render.
+ */
+function anchorDelta(history, node) {
+  const box = history.getBoundingClientRect()
+  const at = node.getBoundingClientRect()
+  const isLast = anchorIndex.value === messages.value.length - 1
+  return isLast ? at.bottom - box.bottom : at.top - box.top - 12
+}
+
 async function scrollToAnchor() {
   await nextTick()
-  const history = historyEl.value
-  if (!history) return
-  const message = history.querySelectorAll('.aim-msg')[anchorIndex.value]
-  if (!message) {
-    history.scrollTop = history.scrollHeight
-    return
+  const reader = watchingForReader()
+  /**
+   * The loop runs until the anchor is *where it should be*, not for a fixed
+   * number of frames.
+   *
+   * A frame count is a proxy, and it was a wrong one twice. Measured on the live
+   * board: a fixed twelve frames left the newest message's bottom 30px below the
+   * fold, because the last write happened one render before the last body's
+   * markdown finished laying out. 131 messages arrive over several frames, so the
+   * honest stop condition is the outcome itself -- the anchor's edge is at the
+   * scroller's edge -- with a frame budget to bound it and a give-up when writing
+   * no longer changes anything (the pane is clamped at its top or bottom, so no
+   * further write can help).
+   */
+  let before = -1
+  for (let frame = 0; frame < 60; frame += 1) {
+    const history = historyEl.value
+    if (!history || reader.moved()) break
+    const node = history.querySelectorAll('.aim-msg')[anchorIndex.value]
+    if (node) {
+      const delta = anchorDelta(history, node)
+      if (Math.abs(delta) <= 1) break
+      history.scrollTop = Math.max(0, history.scrollTop + delta)
+      if (history.scrollTop === before) break
+      before = history.scrollTop
+    }
+    await new Promise((next) => requestAnimationFrame(next))
   }
-  const delta = message.getBoundingClientRect().top - history.getBoundingClientRect().top
-  history.scrollTo({ top: history.scrollTop + delta - 12, behavior: 'auto' })
+  reader.done()
+}
+
+/**
+ * Whether the reader has taken over since this was called.
+ *
+ * The same rule `readingInterrupt` states on the data side, applied to this pane:
+ * an update that scrolls under the reader's hands is worse than one that is late.
+ */
+function watchingForReader() {
+  const events = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown']
+  let moved = false
+  const mark = () => { moved = true }
+  for (const name of events) window.addEventListener(name, mark, { passive: true, capture: true })
+  return {
+    moved: () => moved,
+    done() {
+      for (const name of events) window.removeEventListener(name, mark, { capture: true })
+    },
+  }
 }
 const messageKinds = computed(() => {
   if (current.value?.group !== 'channel') return []
@@ -208,9 +387,28 @@ const messageKinds = computed(() => {
 watch(messageKinds, (kinds) => {
   if (kinds.length && !kinds.includes(kind.value)) kind.value = kinds[0]
 }, { immediate: true })
-watch(anchorIndex, () => {
+/**
+ * Anchor when the reader opens a thread, and only then.
+ *
+ * It used to fire on every change of `anchorIndex`, which includes a new message
+ * arriving on the live record -- so the page yanked itself to the bottom under a
+ * reader who was mid-paragraph. The rule this project keeps: an update must never
+ * cost the reader the thing they were doing (`readingInterrupt` in the store says
+ * the same about a forced refresh). Sending is the one exception, and it is asked
+ * for by name at the end of `send()`.
+ */
+watch(() => current.value?.key, () => {
+  picked.value = current.value?.key || ''
   scrollToAnchor()
 }, { immediate: true })
+/**
+ * Go to the end, because the reader asked.
+ *
+ * The button stays: with the anchor rule above, opening a thread lands at the end
+ * by itself, so this is the way *back* for someone who has scrolled up -- not the
+ * click the leader had to make before. Automating the opening and keeping the
+ * return trip is the difference between removing a step and removing a control.
+ */
 async function jumpToEnd() {
   await nextTick()
   if (historyEl.value) {
@@ -322,6 +520,26 @@ async function sendDirect() {
                 <span style="font-size:12.5px">{{ t.label }}</span>
                 <el-icon v-if="t.gated" style="font-size:11px" title="sealed to you"><Lock /></el-icon>
                 <span style="flex:1" />
+                <!-- The row says what is waiting on the viewer, so the list is
+                     readable without opening every item. Before this, every row
+                     was equally quiet: the leader's own mail sat at the bottom of
+                     the sidebar with no marker while `unacked` named two messages
+                     awaiting their receipt. The page had the fact and did not
+                     draw it.
+
+                     The marker reads the same `threadNeedsMe` the filter above
+                     does, so a channel the `needs me` view keeps cannot arrive
+                     without one: a count where the fabric can count one, and the
+                     word where it cannot (a channel has no per-viewer cursor, so
+                     its unread count is 0 by construction and a count-only marker
+                     drew nothing for exactly the thread T-0172 was filed about). -->
+                <el-tag v-if="t.unread || threadNeedsMe(t)" class="aim-unread" size="small"
+                        :type="t.unread ? 'danger' : 'warning'" effect="dark"
+                        :title="t.unread
+                          ? `${t.unread} message(s) addressed to ${board.viewer} with no receipt yet`
+                          : `this thread is waiting on ${board.viewer}`">
+                  {{ t.unread || 'needs me' }}
+                </el-tag>
                 <span class="aim-dim" style="font-size:10.5px">{{ (t.msgs.at(-1)?.ts || '').slice(5, 16).replace('T', ' ') }}</span>
               </div>
               <div class="aim-dim" style="font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
