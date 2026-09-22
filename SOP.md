@@ -306,23 +306,46 @@ gone with nothing said.
 step in the path looks at either copy's `created` timestamp — `list_channels`
 sorts *names*, and the merge is a dict comprehension over that order — so the
 survivor is stable across reloads and blind to which card was written first.
-Draw that distinction carefully, because in *this* run it cost nothing: for five
-of the six ids `hello`'s `created` also predates `barrier-v0`'s, so "most recent
-wins" would have picked the same copy. **The claim the code supports is
-recency-blindness, not "the alphabet beat recency here."** It is the silence
-that matters: nothing compares the two rows, and nothing reports that one was
+**The claim the code supports is recency-blindness, and nothing more than that.**
+An earlier draft went further and said *"in this run it cost nothing: for five of
+the six ids `hello`'s `created` also predates `barrier-v0`'s, so 'most recent
+wins' would have picked the same copy."* The five-of-six is right **only for the
+`created` event**. Re-derived on the *last* event of each copy — a defensible
+reading of "most recent", and the one a reader who says "recency" usually means —
+**three of the six flip**, and the fold keeps the copy that was touched *less*
+recently:
+
+| id | `hello` last event | `barrier-v0` last event | newest wins | the fold keeps |
+|---|---|---|---|---|
+| T-0156 | 09:32:01.676Z | 03:26:33.972Z | `hello` | `hello` ✓ |
+| T-0157 | 03:02:57.644Z | 07:30:23.301Z | `barrier-v0` | `hello` ✗ |
+| T-0158 | 03:02:58.088Z | 07:58:19.376Z | `barrier-v0` | `hello` ✗ |
+| T-0159 | 08:17:41.136Z | 08:28:39.670Z | `barrier-v0` | `hello` ✗ |
+| T-0160 | 09:29:54.684Z | 08:28:44.180Z | `hello` | `hello` ✓ |
+| T-0161 | 09:29:50.635Z | 08:35:25.956Z | `hello` | `hello` ✓ |
+
+So the honest sentence is weaker than either draft's: **it is not that recency
+would have agreed. It is that nothing in the system has an opinion about recency
+at all, so "would recency have agreed" has no answer the code can give.** The
+counts below are the part that is not a matter of reading: it is the silence that
+matters — nothing compares the two rows, and nothing reports that one was
 dropped.
 
 **The record counts them; the board does not, and the two numbers are both
 published.** Measured at two viewers, so the discrepancy is not a gating
-artefact — it is the same 7 at both:
+artefact — it is the same gap at both. Re-measured at `7def563`:
 
-| | raw `created` in the store | `/api/flow` `opened` | `board.tasks` created events | the 7 |
+| | raw `created` in the store | `/api/flow` `opened` | `board.tasks` created events | the gap |
 |---|---|---|---|---|
-| `as=human` | 97 | 97 | 90 | 6 dual-channel ids + 1 retracted |
-| `as=claude-session1` | 97 | 70 | 63 | the same 6 + 1 |
+| `as=human` | **98** | 98 | 91 | 6 dual-channel ids + 1 retracted = 7 |
+| `as=claude-session1` | **98** | 70 | 63 | the same 6 + 1 |
 
-(`done` agrees exactly at both viewers — 65 and 59.) `flow_series` reads the raw
+(`done` agrees exactly at both viewers — 65 and 59.) Both columns stay internally
+consistent (`98 − 91 = 7`), which is the check that the method is sound rather
+than the number. `flow_series` was measured as 97/97/90 one commit earlier and
+the store gained a `created` (T-0246, filed by this pass) between the two reads —
+the arithmetic is the stable part, and it is why the table is now pinned to a
+revision instead of saying "measured right now". `flow_series` reads the raw
 event list and counts **both** copies of a dual-channel id; `fold_tasks` keys by
 id and keeps one. The seventh is `T-0001`: the store holds
 `created 02:16:37Z` then `retracted 02:28:03.908Z`, while the payload's `T-0001`
@@ -381,9 +404,14 @@ with the first.** `_plan_id_floor` (`bin/aim:1788`) reads every `plan/*.json`
 under the root and floors the per-channel counter above it. That was added
 because plan seeds once collided with store events, and it works — but it means
 a root's id space is *two* sources constrained by *one* floor, and the seed
-files could collide with each other. `plan/plan.json` alone carries 155 seeds,
-which is why this root's `hello` allocator is at `T-0245` rather than `T-0091`.
-Measured separately on a throwaway root: `plan/a.json` and `plan/b.json` each
+files could collide with each other. `plan/plan.json` carries **82** seeds, and
+it is their *ids* that run to `T-0155` — the list is sparse, with **73 gaps** in
+`1..155`. An earlier draft of this paragraph read the top of the id range as the
+size of the list, which is exactly the kind of number that looks measured. The
+floor is what the allocator actually reads, so the sentence that survives is the
+one about the range: `hello` is at `T-0245` rather than `T-0091` because 155 ids
+are spoken for, not because 155 seeds exist. Measured separately on a throwaway
+root: `plan/a.json` and `plan/b.json` each
 seeding `T-0001`, then a real `aim task new` → `T-0002` (the floor works), and
 the board folds `{'T-0001': 'seed from plan A', 'T-0002': 'real work'}` —
 `plan B`'s description is gone with nothing said.
