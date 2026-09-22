@@ -530,6 +530,38 @@ The refusal for `beta` is the barrier working. The tool has no equivalent for
 — the same `kind != "human"` shape as `bin/aim:2126`, and as the read gate at
 `aimboard/gate.py:24` and the mail gate at `aimboard/gate.py:159`.
 
+**"At every gate" is not an impression; it is a count, and the count has a shape
+worth stating.** Parsed rather than grepped — `ast.Compare` nodes with a
+`"human"` operand, over `bin/aim` and `aimboard/*.py`:
+
+| | |
+|---|---|
+| comparisons on `"human"` | **30** — 25 `!=`, 5 `==` |
+| of which in `bin/aim` | 27 (25 NotEq over **19 distinct functions**, 2 Eq) |
+| of which in `aimboard/` | 3 — `a2a.py:788 task_visible`, `gate.py:24 walled_off`, `gate.py:159 conversation_view` |
+| distinct enclosing functions | **24** |
+| that also ask *who is calling* | **1** — `require_leader` (`bin/aim:831`) |
+
+A grep for the text `!= "human"` returns **26**, one more than the AST finds;
+the extra is a comment at `bin/aim:4424` quoting the idiom. That one-line gap is
+the difference between counting a token and counting a *branch*, and it is why
+the number here is from the parser.
+
+**And exactly one of the thirty also asks who is calling.** `require_leader`
+reads `if kind != "human" or who != manifest["leader"]` — the only site where
+`human` is not sufficient on its own. Every other one is a disjunction whose
+left side is a membership test and whose right side is the self-declared flag,
+so the flag wins wherever membership would have refused. That is the master key
+stated as a number: **30 comparisons, 24 functions, 1 of them also checks the
+name.**
+
+The five `==` sites are the mirror image and worth one line, because a reader
+who greps only for the exemption misses them: `cmd_task_move:2126` sets
+`actor_exempt = kind == "human"` and consults it twice, and the other four are
+the same predicate asked as a positive (`_room_withheld:2727`, `task_visible`,
+`walled_off`, `conversation_view`). Same rule, spelled the other way round —
+which is §4.4's subject again, one level down.
+
 **And the mail gate is the widest one, because mail is not addressed to a
 channel.** `gate.conversation_view` does not ask whether the viewer leads
 anything, and it never reads a channel's `leader` field at all — `grep -n leader
