@@ -131,7 +131,11 @@ test('the opening page is an attention queue, not a data dump', async ({ page })
   await page.goto('/#/attention')
   await expect(page.locator('.aim-page h2')).toHaveText('Attention')
   await expect(page.locator('.aim-attention-hero h3')).toBeVisible()
-  await expect(page.locator('.aim-attention-signals .aim-signal')).toHaveCount(5)
+  // Six signals, one per thing the reader can act on: overdue, blocked, review,
+  // phase requests, receipts owed, and plan disagreements. The count is asserted
+  // rather than the labels because the point of the row is that it is short
+  // enough to read -- a seventh signal is a decision about what matters.
+  await expect(page.locator('.aim-attention-signals .aim-signal')).toHaveCount(6)
   await expect(page.locator('.el-table')).toHaveCount(0)
   await expect(page.locator('.el-menu-item').filter({ hasText: 'Kanban' })).toBeVisible()
   await expect(page.locator('.el-menu-item').filter({ hasText: 'Gantt' })).toBeVisible()

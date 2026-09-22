@@ -1,16 +1,16 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, inject } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { PRIORITY_TYPE, STATUS_TYPE, isOverdue } from '../theme'
-import TaskDecisionDrawer from '../components/TaskDecisionDrawer.vue'
+import TaskLink from '../components/TaskLink.vue'
 
+const ctx = inject('ctx')
 const board = useBoard()
+const drawer = ctx.service('taskDrawer')
 const { filters, activeCount, clear } = useQueryFilters({
   q: '', owner: '', status: '', milestone: '', tag: '', onlyLate: false,
 })
-const selected = ref(null)
-const drawer = ref(false)
 
 const rows = computed(() => board.tasks.filter((t) => {
   const search = filters.q.toLowerCase()
@@ -22,6 +22,7 @@ const rows = computed(() => board.tasks.filter((t) => {
   if (filters.onlyLate && !isOverdue(t.due, t.status, board.terminal)) return false
   return true
 }))
+
 </script>
 
 <template>
@@ -49,13 +50,13 @@ const rows = computed(() => board.tasks.filter((t) => {
       </div>
     </template>
 
-    <el-table :data="rows" size="small" @row-click="(r) => { selected = r; drawer = true }"
+    <el-table :data="rows" size="small" @row-click="(r) => drawer.open(r.id, { tasks: board.tasks })"
               :default-sort="{ prop: 'id' }" style="cursor:pointer">
       <el-table-column prop="id" label="id" width="86" sortable />
       <el-table-column label="action" width="86" fixed="right">
         <template #default="{ row }">
           <el-button size="small" text :aria-label="`Inspect task ${row.id}`"
-                     @click.stop="selected = row; drawer = true">inspect</el-button>
+                     @click.stop="drawer.open(row.id, { tasks: board.tasks })">inspect</el-button>
         </template>
       </el-table-column>
       <el-table-column prop="title" label="title" min-width="300" show-overflow-tooltip />
@@ -76,9 +77,11 @@ const rows = computed(() => board.tasks.filter((t) => {
         </template>
       </el-table-column>
       <el-table-column prop="estimate" label="est" width="66" sortable />
-      <el-table-column label="blocked by" width="110">
+      <el-table-column label="blocked by" width="130">
         <template #default="{ row }">
-          <el-tag v-for="b in row.blocked_by || []" :key="b" size="small" type="danger" effect="plain">{{ b }}</el-tag>
+          <!-- An id in a table is where a reader most expects to be able to go
+               somewhere, so a blocker is a link into the blocker. -->
+          <TaskLink v-for="b in row.blocked_by || []" :key="b" :id="b" class="aim-task-link-tag" />
           <span v-if="!(row.blocked_by || []).length" class="aim-dim">—</span>
         </template>
       </el-table-column>
@@ -89,6 +92,4 @@ const rows = computed(() => board.tasks.filter((t) => {
       </el-table-column>
     </el-table>
   </el-card>
-
-  <TaskDecisionDrawer v-model="drawer" :task="selected" />
 </template>

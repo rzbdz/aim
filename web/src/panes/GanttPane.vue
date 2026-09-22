@@ -1,13 +1,12 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
-import TaskDecisionDrawer from '../components/TaskDecisionDrawer.vue'
 import { STATUS_TYPE, color, days, isOverdue, today } from '../theme'
 
+const ctx = inject('ctx')
 const board = useBoard()
-const selected = ref(null)
-const drawer = ref(false)
+const drawer = ctx.service('taskDrawer')
 const { filters, activeCount, clear } = useQueryFilters({
   q: '', owner: '', status: '', milestone: 'all', tag: '', onlyLate: false,
 })
@@ -124,7 +123,7 @@ const option = computed(() => {
   }
 })
 function onClick(p) {
-  if (p.data?.task) { selected.value = p.data.task; drawer.value = true }
+  if (p.data?.task) drawer.open(p.data.task.id, { tasks: board.tasks })
 }
 const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due && matches(t)))
 </script>
@@ -170,5 +169,4 @@ const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due && m
     </el-tag>
   </el-card>
 
-  <TaskDecisionDrawer v-model="drawer" :task="selected" />
 </template>

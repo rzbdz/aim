@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { STATUS_TYPE } from '../theme'
+import TaskLink from '../components/TaskLink.vue'
 
 const board = useBoard()
 const { filters, activeCount, clear } = useQueryFilters({
@@ -80,13 +81,20 @@ const blockerOptions = computed(() => [...new Set((board.report.blocked || [])
       </div>
     </template>
     <el-table :data="blockedRows" size="small">
-      <el-table-column prop="id" label="blocked item" width="110" />
+      <el-table-column label="blocked item" width="130">
+        <template #default="{ row }"><TaskLink :id="row.id" /></template>
+      </el-table-column>
       <el-table-column prop="title" label="title" min-width="300" />
       <el-table-column prop="status" label="status" width="110">
         <template #default="{ row }"><el-tag size="small" :type="STATUS_TYPE[row.status] || 'info'" effect="plain">{{ row.status }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="waiting on" min-width="200">
-        <template #default="{ row }">{{ (row.blocked_by || []).join(', ') }}</template>
+      <!-- Both sides of the edge are work items, so both sides are ways in: the
+           reader arrived here to find out what is holding something up, and the
+           answer is another item they will want to look at. -->
+      <el-table-column label="waiting on" min-width="220">
+        <template #default="{ row }">
+          <TaskLink v-for="b in row.blocked_by || []" :key="b" :id="b" class="aim-task-link-tag" />
+        </template>
       </el-table-column>
     </el-table>
     <p class="aim-dim" style="font-size:12px">

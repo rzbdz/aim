@@ -21,6 +21,7 @@ import * as Icons from '@element-plus/icons-vue'
 import './style.css'
 import App from './App.vue'
 import { createContext } from './kernel'
+import { createTaskDrawer } from './composables/useTaskDrawer'
 import { createApi } from './api'
 import { useBoard } from './stores/board'
 import { chartsPlugin } from './plugins/charts'
@@ -38,6 +39,8 @@ for (const [name, component] of Object.entries(Icons)) app.component(name, compo
 const board = useBoard(pinia)
 ctx.provide('api', createApi({ getViewer: () => board.viewer }))
 ctx.provide('board', board)
+// One drawer for the whole shell. A pane opens a task; it does not own one.
+ctx.provide('taskDrawer', createTaskDrawer())
 ctx.use(chartsPlugin)
 ctx.use(markdownPlugin)
 ctx.use(viewsPlugin)

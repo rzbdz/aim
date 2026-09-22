@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ElMessageBox } from 'element-plus'
 import { useBoard } from '../stores/board'
@@ -7,15 +7,15 @@ import { useQueryFilters } from '../composables/useQueryFilters'
 import { isOverdue } from '../theme'
 import StatusTag from '../components/StatusTag.vue'
 import OwnerAvatar from '../components/OwnerAvatar.vue'
-import TaskDecisionDrawer from '../components/TaskDecisionDrawer.vue'
 
+const ctx = inject('ctx')
 const board = useBoard()
+// The shell owns the drawer; this pane only says what to open. See useTaskDrawer.
+const drawer = ctx.service('taskDrawer')
 const { filters, activeCount, clear } = useQueryFilters({
   q: '', owner: '', milestone: '', tag: [], priority: '', onlyLate: false,
 })
 const compact = ref(false)
-const selected = ref(null)
-const drawer = ref(false)
 
 const visible = (t) => {
   const search = filters.q.toLowerCase()
@@ -72,9 +72,10 @@ async function onMoved(evt, status) {
 
 const shipped = computed(() => Object.values(cols.value).flat().length)
 
+/** Resolved against the board at click time, so the drawer shows the current
+ *  state of the task rather than the copy this column was rendered from. */
 function openTask(task) {
-  selected.value = task
-  drawer.value = true
+  drawer.open(task.id, { tasks: board.tasks })
 }
 </script>
 
@@ -153,6 +154,4 @@ function openTask(task) {
       </VueDraggable>
     </section>
   </div>
-
-  <TaskDecisionDrawer v-model="drawer" :task="selected" />
 </template>

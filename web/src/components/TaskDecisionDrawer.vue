@@ -6,11 +6,18 @@ import { PRIORITY_TYPE, STATUS_TYPE } from '../theme'
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   task: { type: Object, default: null },
+  /**
+   * How many tasks deep the reader arrived here. Following a blocker from one
+   * task to another is a real path, and closing should walk back along it rather
+   * than land the reader on an empty board.
+   */
+  depth: { type: Number, default: 1 },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'back'])
 
 const ctx = inject('ctx')
 const api = ctx.service('api')
+const drawer = ctx.service('taskDrawer')
 const board = useBoard()
 const busy = ref('')
 const error = ref('')
@@ -40,6 +47,11 @@ const chatThread = computed(() => `ch:${channel.value?.id || 'hello'}`)
 
 function close() {
   emit('update:modelValue', false)
+}
+
+/** Follow a blocker, resolving it against the board as it is now. */
+function openBlocker(id) {
+  drawer.open(id, { tasks: board.tasks })
 }
 
 async function run(name, argv) {
@@ -137,6 +149,9 @@ async function decide(decision) {
     <template v-if="task">
       <header class="aim-drawer-head">
         <div>
+          <el-button v-if="depth > 1" size="small" text @click="emit('back')">
+            <el-icon><Back /></el-icon> previous task
+          </el-button>
           <h3>{{ task.title }}</h3>
           <p>
             <el-tag size="small" effect="dark" :type="STATUS_TYPE[task.status] || 'info'">{{ task.status }}</el-tag>
@@ -151,8 +166,17 @@ async function decide(decision) {
                 title="This review has no acceptance condition"
                 description="Request changes until the work has a sentence a reviewer can falsify." />
       <el-alert v-if="openBlockers.length" type="error" :closable="false" show-icon
-                :title="`Open blockers: ${openBlockers.join(', ')}`"
-                description="Done is not available until every dependency is complete." />
+                description="Done is not available until every dependency is complete.">
+        <template #title>
+          Open blockers:
+          <!-- A blocker id is a fact about another work item, so it is a way in to
+               it. Asking the board for the id at click time means the drawer shows
+               the blocker's *current* state, not a copy from whenever this alert
+               was drawn. -->
+          <el-button v-for="id in openBlockers" :key="id" size="small" text type="danger"
+                     class="aim-blocker-link" @click="openBlocker(id)">{{ id }}</el-button>
+        </template>
+      </el-alert>
 
       <el-descriptions class="aim-drawer-details" :column="1" border size="small">
         <el-descriptions-item label="acceptance">{{ task.accept || '—' }}</el-descriptions-item>

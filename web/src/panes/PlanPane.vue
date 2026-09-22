@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
+import { listQuery } from '../composables/useTaskDrawer'
 
 const board = useBoard()
 const { filters, activeCount, clear } = useQueryFilters({
@@ -46,7 +47,8 @@ const withoutDates = computed(() => board.tasks.filter((t) => !t.due).length)
   <el-alert type="info" :closable="false" show-icon style="margin-bottom:14px">
     <template #title>
       plan/*.json is the leader's plan and a <b>seed</b>. The store is the evidence: where the two disagree the
-      store wins, and the {{ board.drift.length }} disagreement(s) are on the overview. {{ withoutDates }} item(s)
+      store wins, and the <RouterLink :to="{ path: '/attention', hash: '#drift' }">{{ board.drift.length }}
+      disagreement(s)</RouterLink> are on the attention page. {{ withoutDates }} item(s)
       have no due date, which in a plan is a sentence without a verb.
     </template>
   </el-alert>
@@ -71,7 +73,14 @@ const withoutDates = computed(() => board.tasks.filter((t) => !t.due).length)
       </div>
     </template>
     <el-table :data="visibleMilestones" size="small">
-      <el-table-column prop="id" label="id" width="70" />
+      <el-table-column label="id" width="86">
+        <template #default="{ row }">
+          <!-- A milestone is a way into the work it is made of, rather than a
+               label the reader has to go and search for. -->
+          <RouterLink :to="{ path: '/items', query: listQuery('milestone', row.id) }"
+                      class="aim-task-link">{{ row.id }}</RouterLink>
+        </template>
+      </el-table-column>
       <el-table-column prop="name" label="name" min-width="200" />
       <el-table-column prop="due" label="due" width="110" />
       <el-table-column label="progress" width="230">

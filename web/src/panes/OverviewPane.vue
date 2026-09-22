@@ -1,15 +1,15 @@
 <script setup>
 import { computed, inject, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useBoard } from '../stores/board'
 import { PRIORITY_TYPE, STATUS_TYPE, isOverdue } from '../theme'
 import PhaseApprovalCard from '../components/PhaseApprovalCard.vue'
-import TaskDecisionDrawer from '../components/TaskDecisionDrawer.vue'
+import TaskLink from '../components/TaskLink.vue'
 
 const ctx = inject('ctx')
+const drawer = ctx.service('taskDrawer')
 const api = ctx.service('api')
 const board = useBoard()
-const selectedTask = ref(null)
-const actionDrawer = ref(false)
 const actionBusy = ref('')
 const actionError = ref('')
 
@@ -17,6 +17,19 @@ const overdue = computed(() => board.overdue)
 const blocked = computed(() => board.tasks.filter((task) => task.status === 'blocked'))
 const review = computed(() => board.tasks.filter((task) => task.status === 'review'))
 
+/**
+ * A signal is a way in, and a signal with nothing behind it is not.
+ *
+ * The count and the destination are one thing: `3 overdue` has to land on the
+ * three, or the reader learns that the numbers here are decorative. So the
+ * destination is built by the same function that counts, and a card at zero is
+ * drawn as a plain tile with no link at all -- a card that says "0 needs action"
+ * and then navigates somewhere is the summary that lies.
+ *
+ * `target` is the drawer-or-list decision: an item that wants attention because
+ * it *is* a work item opens that work item; a category opens the list filtered
+ * to itself.
+ */
 const signals = computed(() => [
   { label: 'Overdue', value: overdue.value.length, type: 'danger',
     to: { path: '/items', query: { onlyLate: '1' } } },
@@ -24,10 +37,12 @@ const signals = computed(() => [
     to: { path: '/items', query: { status: 'blocked' } } },
   { label: 'Review', value: review.value.length, type: 'warning',
     to: { path: '/items', query: { status: 'review' } } },
-  { label: 'Phase', value: board.phaseRequests.length, type: 'danger',
-    to: { path: '/attention' } },
+  { label: 'Phase requests', value: board.phaseRequests.length, type: 'danger',
+    to: { path: '/attention', hash: '#leader-decisions' } },
   { label: 'Receipts owed', value: board.unacked.length, type: 'warning',
-    to: { path: '/chat', query: { needsMe: '1' } } },
+    to: { path: '/chat', query: { needsMe: '1', shape: 'direct' } } },
+  { label: 'Plan disagreements', value: board.drift.length, type: 'warning',
+    to: { path: '/attention', hash: '#drift' } },
 ])
 
 const attentionTasks = computed(() => board.tasks
@@ -78,8 +93,7 @@ const threadKey = (message) => {
 }
 
 function openTask(task) {
-  selectedTask.value = task
-  actionDrawer.value = true
+  drawer.open(task.id, { tasks: board.tasks })
 }
 
 function taskActionLabel(task) {
@@ -141,19 +155,50 @@ async function rejectPhase(request, reason) {
     </header>
 
     <div class="aim-attention-signals">
-      <RouterLink v-for="signal in signals" :key="signal.label" :to="signal.to" class="aim-signal">
+      <component :is="signal.value ? RouterLink : 'div'" v-for="signal in signals" :key="signal.label"
+                 :to="signal.value ? signal.to : undefined"
+                 class="aim-signal" :class="{ 'aim-signal-clear': !signal.value }"
+                 :aria-disabled="signal.value ? undefined : 'true'">
         <span>{{ signal.value }}</span>
         <strong>{{ signal.label }}</strong>
-        <el-tag :type="signal.type" size="small" effect="plain">{{ signal.value ? 'needs action' : 'clear' }}</el-tag>
-      </RouterLink>
+        <el-tag :type="signal.type" size="small" effect="plain">
+          {{ signal.value ? 'needs action' : 'clear' }}
+        </el-tag>
+      </component>
     </div>
 
-    <el-card v-if="board.phaseRequests.length" shadow="never" class="aim-phase-card">
+    <el-card v-if="board.phaseRequests.length" id="leader-decisions" shadow="never" class="aim-phase-card">
       <template #header><span>Leader decisions</span><RouterLink to="/barrier">audit barrier</RouterLink></template>
       <PhaseApprovalCard v-for="request in board.phaseRequests"
                          :key="`${request.channel}:${request.ts}:${request.from}`"
                          :request="request" :busy="actionBusy" :error="actionError"
                          @approve="approvePhase" @reject="rejectPhase" />
+    </el-card>
+
+    <!-- Where the plan and the store disagree. The store wins, but the reader is
+         entitled to see which promises drifted rather than a count with nothing
+         behind it -- which is what this was on the plan page. -->
+    <el-card v-if="board.drift.length" id="drift" shadow="never" class="aim-drift-card">
+      <template #header>
+        <span>Plan and store disagree on {{ board.drift.length }} field(s)</span>
+        <RouterLink to="/plan">the plan itself</RouterLink>
+      </template>
+      <p class="aim-dim" style="font-size:12px;margin-top:0">
+        <code class="aim-mono">plan/*.json</code> is the leader's promise; the store is what was recorded.
+        A promise is not evidence, so the store wins here — and this list is what the plan still says.
+      </p>
+      <article v-for="(row, index) in board.drift.slice(0, 20)" :key="`${row.id}-${row.field}-${index}`"
+               class="aim-attention-row">
+        <TaskLink :id="row.id" />
+        <strong>{{ row.field }}</strong>
+        <span class="aim-dim">plan says</span>
+        <span>{{ row.plan ?? '—' }}</span>
+        <span class="aim-dim">store has</span>
+        <span>{{ row.store ?? 'not recorded' }}</span>
+      </article>
+      <p v-if="board.drift.length > 20" class="aim-dim" style="font-size:12px;margin-bottom:0">
+        {{ board.drift.length - 20 }} more, not drawn here.
+      </p>
     </el-card>
 
     <el-alert v-if="board.withheld" type="info" :closable="false" show-icon>
@@ -216,6 +261,4 @@ async function rejectPhase(request, reason) {
       </article>
     </el-card>
   </section>
-
-  <TaskDecisionDrawer v-model="actionDrawer" :task="selectedTask" />
 </template>

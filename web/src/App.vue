@@ -1,14 +1,40 @@
 <script setup>
-import { computed, inject } from 'vue'
+import { computed, inject, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBoard } from './stores/board'
 import { phaseConcept } from './concepts'
 import OwnerAvatar from './components/OwnerAvatar.vue'
 import PhaseChip from './components/PhaseChip.vue'
+import TaskDecisionDrawer from './components/TaskDecisionDrawer.vue'
 
 const ctx = inject('ctx')
 const board = useBoard()
 const route = useRoute()
+/**
+ * The shell mounts the one drawer, so a task opened from a report row, a blocker
+ * id or a milestone row is the same drawer as a card, and the pane the reader
+ * arrived in does not have to know anything about it.
+ */
+const taskDrawer = ctx.service('taskDrawer')
+const drawerTask = computed(() => {
+  const id = taskDrawer.state.id
+  return board.tasks.find((task) => task.id === id) || taskDrawer.state.task
+})
+/**
+ * A drawer does not outlive the reading it belonged to.
+ *
+ * The drawer lives in the shell, so it survives the pane it was opened from being
+ * torn down. That is what makes "the same drawer from every surface" possible,
+ * and it is also how a task can end up floating over a page that has nothing to
+ * do with it -- open a blocker on a report row, walk to the plan, and the board
+ * is showing something the reader has left. Same defect as a dead-end identifier,
+ * one layer up, so: leaving the list closes the item.
+ *
+ * Only the path counts. Opening the drawer never navigates, and the moves that
+ * happen *inside* a list -- a filter, an anchor -- are query and hash, so they do
+ * not close what the reader is looking at.
+ */
+watch(() => route.path, () => taskDrawer.close())
 const views = ctx.views
 const current = computed(() => views.find((v) => v.key === route.meta.view))
 /**
@@ -116,4 +142,9 @@ const navGroups = computed(() => {
       </el-main>
     </el-container>
   </el-container>
+
+  <TaskDecisionDrawer v-model="taskDrawer.state.open" :task="drawerTask"
+                      :depth="taskDrawer.state.history.length"
+                      @update:model-value="(open) => { if (!open) taskDrawer.close() }"
+                      @back="taskDrawer.back({ tasks: board.tasks })" />
 </template>
