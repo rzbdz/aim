@@ -296,10 +296,16 @@ def scoped_digests(payload, conversation, drift_rows, blocked_rows, stuck_rows):
     pane that moves for a neighbour's write is only the cost we already had.
     """
     tasks = payload.get("tasks") or {}
-    # `mail` here is the room log *counts* (`fabric.load_fabric` derives them from
-    # `rooms/*.json`); the ranked "who leaks" view is `A2A_SCOPES`' `mail`. Taking
-    # the whole key costs a room write re-hashing both, which is cheap and errs
-    # toward a stale pane never being possible.
+    # The `mail` folded into `conversation` is the outbox *counts*:
+    # `fabric.load_mail` (`aimboard/fabric.py:171`) walks `root / "outbox"` and
+    # only outbox -- it never opens `rooms/`, which `fabric.load_rooms` reads into
+    # its own key. This comment used to say the opposite ("derives them from
+    # `rooms/*.json`") and to name an `A2A_SCOPES` that is not in this repo; both
+    # were wrong while the paragraph's conclusion was right, which is the worst
+    # shape a wrong comment takes, because the reader cannot tell which half to
+    # trust. The conclusion stands: taking the whole key costs an outbox write
+    # re-hashing the conversation scope, which is cheap and errs toward a stale
+    # pane never being possible.
     barrier = [{"id": c.get("id"), "phase": c.get("phase"), "sealed": c.get("sealed"),
                 "refusals": c.get("refusals"), "concessions": c.get("concessions")}
                for c in payload.get("channels") or []]
