@@ -296,9 +296,19 @@ const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone
  * The three numbers the header publishes, and which list each is over.
  *
  * `data-drawn` is the total the filter leaves -- every dated row the chart is asked
- * to draw -- and `data-recorded` and `data-seeds` are that same set split by
- * `isPromise`. So the three are one statement rather than three: `drawn` is
- * `recorded` + `seeds`, and the split is what the header's sentence is about.
+ * to draw. The other two are *not* that set split by `isPromise`: they are over
+ * `allDated`, the whole board, because the sentence's other half is the board's own
+ * split and a split that moved with the filter would answer a question the sentence
+ * did not ask. Measured on the live board with the assets a reader gets (`/api/state?as=human`,
+ * 177 tasks, 107 dated, 20 recorded / 87 seeds):
+ *
+ *   no filter       data-drawn 107   data-recorded 20   data-seeds 87
+ *   ?status=done    data-drawn  89   data-recorded 20   data-seeds 87
+ *   ?owner=codex    data-drawn  49   data-recorded 20   data-seeds 87
+ *   ?milestone=M1   data-drawn  15   data-recorded 20   data-seeds 87
+ *
+ * so the three coincide exactly once, and only when nothing is filtered -- which is
+ * the shape that made the defect below invisible on a full board.
  *
  * That is a fix, and the defect it fixes is one the attribute's own name carried.
  * `drawn` was `rows.filter((r) => !isPromise(r.task)).length`, i.e. the *recorded*
