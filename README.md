@@ -629,6 +629,18 @@ So `missing` and `partial` are the two verdicts a reader should read as
 *measured*, and `present` means the rendered word `answered` with a surface that
 does what the cell says.
 
+**These four words are §9's, not the renderer's, and the renderer cannot print
+two of them.** The paragraph above came out of a hand-off that got this backwards
+and said the table's status column *is* the rendered verdict; it is not. Run the
+one-liner and the cells read `missing` and `answered`; this table says `missing`,
+`partial`, `present`. So the rule is not "re-render, do not edit" — re-running it
+does **not** reproduce this table, and it is not meant to. The mapping is
+two-way and both halves are named above: `answered` → `present` when the surface
+does what the cell says, `answered` → `partial` for rows 7, 10 and 11,
+`missing` → `missing` unchanged. A reader checking a row should run the one-liner
+to see which of the two constants owns it, then read this table for what was
+measured on top of that.
+
 `POST /rpc` means `POST` to the board's port with a JSON-RPC 2.0 body
 (`{"jsonrpc":"2.0","id":1,"method":…,"params":{…}}`). The caller's identity is the
 server's *read* identity: `/rpc` goes through the same `_viewer()` as `/api/state`
