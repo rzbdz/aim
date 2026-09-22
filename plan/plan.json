@@ -922,7 +922,7 @@
       "id": "T-0084",
       "title": "A verb to write the friction log, because the log has no writer",
       "owner": "claude-session1",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-22",
