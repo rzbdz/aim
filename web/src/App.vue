@@ -86,7 +86,7 @@ const navGroups = computed(() => {
         <el-alert v-if="board.error" type="error" show-icon :closable="false" style="margin-bottom:14px"
                   :title="`the board could not be read: ${board.error}`" />
         <div class="aim-page">
-          <h2>{{ current?.title }}</h2>
+          <h2>{{ current?.titleZh || current?.title }}</h2>
           <span class="aim-sub">{{ current?.hint }}</span>
         </div>
         <el-skeleton v-if="!board.doc && board.loading" :rows="8" animated />

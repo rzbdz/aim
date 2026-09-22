@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test'
 
+test('overview names the product concepts and summarizes conversation shapes', async ({ page }) => {
+  await page.goto('/#/overview')
+  await expect(page.locator('.aim-page h2')).toHaveText('概览')
+  await expect(page.locator('.el-menu-item').filter({ hasText: '看板' })).toBeVisible()
+  await expect(page.locator('.el-menu-item').filter({ hasText: '甘特图' })).toBeVisible()
+  const shapes = await page.locator('.el-card:has-text("latest on the record") .el-tag').allTextContents()
+  expect(shapes.length).toBeGreaterThan(0)
+  expect(shapes.map((shape) => shape.trim())).toContain('direct')
+})
+
 test('conversation history and pinned input never overlap or reload the page', async ({ page }) => {
   let navigations = 0
   page.on('framenavigated', (frame) => {
@@ -7,6 +17,7 @@ test('conversation history and pinned input never overlap or reload the page', a
   })
 
   await page.goto('/#/chat')
+  await expect(page.locator('.aim-page h2')).toHaveText('会话')
   const groups = await page.locator('.el-menu-item-group__title').allTextContents()
   expect(groups).toEqual([
     'Work · 工作',

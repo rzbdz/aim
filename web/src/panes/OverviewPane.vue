@@ -24,8 +24,24 @@ const msRows = computed(() => Object.values(board.milestones).map((m) => {
   const done = all.filter((t) => board.terminal.includes(t.status)).length
   return { ...m, done, total: all.length, pct: all.length ? Math.round(100 * done / all.length) : 0 }
 }))
-const recent = computed(() => [...board.conversation.mail]
-  .sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 6))
+const recent = computed(() => {
+  const rows = []
+  for (const channel of board.conversation.channels) {
+    for (const message of channel.messages) {
+      rows.push({ ...message, scope: `#${channel.id}`, shape: 'channel' })
+    }
+  }
+  for (const room of board.conversation.rooms) {
+    for (const message of room.messages) {
+      rows.push({ ...message, scope: `#${room.channel}/${room.id}`, shape: 'room' })
+    }
+  }
+  for (const message of board.conversation.mail) {
+    rows.push({ ...message, scope: `${message.from} ⇄ ${message.to}`, shape: 'direct' })
+  }
+  return rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 6)
+})
+const preview = (message) => message.subject || message.body || '(nothing yet)'
 </script>
 
 <template>
@@ -99,14 +115,15 @@ const recent = computed(() => [...board.conversation.mail]
 
     <el-card shadow="never">
       <template #header>latest on the record</template>
-      <div v-for="m in recent" :key="m.msg_id" class="aim-msg">
+      <div v-for="m in recent" :key="`${m.shape}:${m.msg_id || m.hash || m.ts}`" class="aim-msg">
         <header>
-          <strong>{{ m.from }}</strong><el-icon><Right /></el-icon><strong>{{ m.to }}</strong>
+          <strong>{{ m.from }}</strong><el-icon><Right /></el-icon><strong>{{ m.scope }}</strong>
           <span class="aim-dim">{{ m.ts }}</span>
-          <el-tag size="small" :type="m.state === 'acked' ? 'success' : m.state === 'claimed' ? 'warning' : 'info'" effect="plain">{{ m.state }}</el-tag>
+          <el-tag size="small" effect="plain" :type="m.shape === 'direct' ? 'info' : 'primary'">{{ m.shape }}</el-tag>
+          <el-tag v-if="m.state" size="small" :type="m.state === 'acked' ? 'success' : m.state === 'claimed' ? 'warning' : 'info'" effect="plain">{{ m.state }}</el-tag>
           <el-tag v-if="m.ack_required" size="small" type="danger" effect="plain">receipt demanded</el-tag>
         </header>
-        <div class="aim-dim" style="font-size:12.5px">{{ m.subject }}</div>
+        <div class="aim-dim" style="font-size:12.5px">{{ preview(m) }}</div>
       </div>
     </el-card>
   </div>
