@@ -2,6 +2,25 @@
 # Barrier self-test. Runs entirely inside a throwaway AIM_ROOT so it never
 # touches real channels. Every REFUSED below is the feature, not a bug.
 set -u
+# T-0144. AIM_ROOT and the capture files are per-process (below), but the tree
+# they run in is still shared: a second concurrent run is invisible to the first,
+# and an invisible peer is exactly how a suite came to report a verdict that
+# described two runs. The fix is not more isolation, it is one owner: take an
+# exclusive lock on the whole run, before any state is touched. A second run
+# announces itself and waits; if it cannot get in, it fails loudly instead of
+# racing a run it cannot see.
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCKFILE="${AIM_SELFTEST_LOCK:-$HERE/.dbg/selftest.lock}"
+LOCKWAIT="${AIM_SELFTEST_LOCK_WAIT:-600}"
+mkdir -p "$(dirname -- "$LOCKFILE")" || { echo "selftest: cannot create $(dirname -- "$LOCKFILE")" >&2; exit 2; }
+exec 9>"$LOCKFILE" || { echo "selftest: cannot open lock $LOCKFILE" >&2; exit 2; }
+if ! flock -n 9; then
+  printf 'selftest: another run holds %s; waiting up to %ss\n' "$LOCKFILE" "$LOCKWAIT" >&2
+  if ! flock -w "$LOCKWAIT" 9; then
+    printf 'selftest: FATAL: another tests/selftest.sh still holds %s after %ss; refusing to run concurrently (raise AIM_SELFTEST_LOCK_WAIT to wait longer)\n' "$LOCKFILE" "$LOCKWAIT" >&2
+    exit 3
+  fi
+fi
 # The root is per-process. It used to be a fixed `.selftest`, and this repo now has
 # two agents running it at once: each run `rm -rf`s the other's fabric mid-assertion,
 # and the result is a red suite that says nothing about the code. That is worse than
@@ -403,8 +422,14 @@ echo "== the board is channel state: work items obey the phase gate =="
 #
 # Its own channel, so it cannot perturb the ids the blocks above assert on.
 expect_ok   "open a fifth channel" $AIM new-channel --id t5 --topic "work items and the gate" --participants alpha,beta --leader human
+# `--owner alpha` is explicit because T-0226 stopped `task new` from defaulting to
+# the creator: an unowned card states no position, so it is readable by every
+# participant *even in a divergence phase*, and this draft is the fixture the four
+# assertions below use to prove a peer's draft is not. Measured before this flag
+# existed: `task list --as beta --channel t5 --json` returned alpha's title with
+# rc=0 -- the leak, through the gate that is supposed to stop it.
 expect_ok   "alpha creates a work item" \
-  $AIM task new --as alpha --channel t5 --title "alpha's own line of work" --priority high
+  $AIM task new --as alpha --channel t5 --title "alpha's own line of work" --priority high --owner alpha
 expect_ok   "alpha sees its own draft" \
   bash -c "$AIM task list --as alpha --channel t5 | grep -q \"alpha's own line of work\""
 expect_fail "beta cannot read alpha's draft" \

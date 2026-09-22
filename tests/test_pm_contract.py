@@ -93,10 +93,18 @@ def setup(f):
         f.aim("register", "--as", a, "--kind", k)
     f.aim("new-channel", "--id", CH, "--topic", "contract", "--participants",
           "codex,claude-session1")
-    draft = new_task(f, "codex", "--title", "a draft item")
+    # `--owner` is passed explicitly because T-0226 made `task new` stop defaulting
+    # to the creator: an unowned card states no position, so it is readable by every
+    # participant *even in a divergence phase*, and a draft left unowned here would
+    # walk straight through the gate the next assertion is about. Measured before
+    # this line existed: `task list --as claude-session1 --json` returned
+    # `[{id: T-0001, title: "a draft item", ...}]` with rc=0 -- a peer reading
+    # another agent's draft, which design/05 section 5 refuses.
+    draft = new_task(f, "codex", "--title", "a draft item", "--owner", "codex")
     # The leader is exempt from the phase gate; an agent is not. Both halves matter,
     # so the fixture tests the exempt one deliberately rather than by accident.
-    published = new_task(f, "human", "--title", "a published item", "--visibility", "published")
+    published = new_task(f, "human", "--title", "a published item", "--visibility", "published",
+                         "--owner", "human")
     return draft, published
 
 

@@ -159,6 +159,47 @@ def sha256_hex(data):
 # Only a reader who can tell a phase refusal from a malformed request can use
 # the ledger to answer "did anyone lean on the barrier" — which is the whole
 # reason the field exists, and the sentence README §3 makes to the leader.
+#
+# T-0222 corrected the "default `form` everywhere else" half of that sentence,
+# because measuring it showed the default was not a fallback, it was a claim,
+# and the claim was false at every site that inherited it: 15 of the 89 below
+# said nothing, and the 15 were not a random 15 -- they were the membership
+# gates and the "we do not know who you are" checks, which is to say the
+# identity refusals. `_record_refusal` defaults to
+# `cls="unrecorded"` now. The two rules that make that the honest default:
+#
+#   * A default is only safe if it is wrong *visibly*. `form` is a positive
+#     claim — "the request itself was malformed" — and the barrier page offers
+#     it as a filter, so a site that forgot its class did not merely lose
+#     information, it made a false statement about a well-formed request. On
+#     the live `hello` ledger, every identity refusal was filed that way: 6 x
+#     `'stranger' is not a participant` and 1 x `unknown agent` under
+#     `class="form"` (measured 2026-09-22, `channels/hello/ledger.jsonl` at
+#     commit dbdd04e, before this change). `unrecorded` is the one sentence
+#     that is true whenever nobody said otherwise, and it is deliberately *not*
+#     an option in BarrierPane.vue's filter: a reader who filters by `barrier`
+#     or `form` gets exactly the rows someone decided about, so an omission
+#     shows up as a count that does not add up.
+#   * A site that omits the class now records `unrecorded`, and after this
+#     change there is no such site: `die` in this file carries a literal class
+#     at all 89 of its call sites (counted with `ast.walk` over `bin/aim`, not
+#     by grep), 54 x `form` and 35 x `barrier` -- a split that would have been
+#     89 x `form` under the old default. The default now exists for a caller
+#     that has not been written yet, not for the ones that have.
+#
+# Cost, stated rather than implied: a future site that is genuinely `form` and
+# says nothing now records `unrecorded`, which is a weaker claim than the
+# ledger could make. That is a loss of precision for a reader; recording a
+# phase refusal as a malformed request was a loss of *truth*, and those are not
+# the same size. An explicit `cls="form"` at every `form` site would recover
+# the precision and cost ~54 edits to lines no test can check; this is the
+# smaller surface, and `tests/test_refusal_class.py` pins both directions.
+#
+# Forward only: nothing below rewrites a ledger row that already exists. The
+# rows recorded before this change keep the class they were written with, and
+# the chain is untouched, because `class` is the answer the tool gave at the
+# time and re-deriving it would be editing the record rather than correcting
+# the writer.
 _CTX = {"channel": None, "actor": None, "action": None}
 
 
@@ -168,7 +209,7 @@ def note_context(channel=None, actor=None, action=None):
             _CTX[key] = val
 
 
-def _record_refusal(msg, cls="form"):
+def _record_refusal(msg, cls="unrecorded"):
     """Write the refusal to the ledger. Never raises.
 
     A refusal is the most legible event this system produces: it is the only
@@ -198,7 +239,16 @@ def _record_refusal(msg, cls="form"):
         print(f"aim: warning: refusal not recorded: {exc}", file=sys.stderr)
 
 
-def die(msg, code=2, cls="form"):
+def die(msg, code=2, cls="unrecorded"):
+    """Refuse, record it, and exit non-zero.
+
+    `cls` defaults to the class that means "the caller did not decide", not to a
+    claim about the request. A default is a statement about every call site that
+    forgets, and `form` was a *false* statement at those sites (T-0222): the
+    request was well-formed and the tool refused it for who was asking. See the
+    block above `_CTX` for the measurement and for why `unrecorded` is the
+    honest default rather than a third filter option.
+    """
     _record_refusal(msg, cls)
     print(f"aim: {msg}", file=sys.stderr)
     sys.exit(code)
@@ -382,7 +432,9 @@ def channel_dir(ch):
 def load_manifest(ch):
     m = read_json(channel_dir(ch) / "manifest.json")
     if m is None:
-        die(f"no such channel: {ch}")
+        # A channel id that names nothing is the request, not the caller: the
+        # same command with a live channel succeeds.
+        die(f"no such channel: {ch}", cls="form")
     return m
 
 
@@ -480,7 +532,8 @@ def assert_barrier_defensible(manifest, to_phase=None):
 def cmd_channel(args):
     """Dispatcher for channel-level declarations. Reached only if a subcommand
     forgot to set its own func, which the required subparser above prevents."""
-    die(f"channel: which declaration? (got {getattr(args, 'channel_cmd', None)!r})")
+    die(f"channel: which declaration? (got {getattr(args, 'channel_cmd', None)!r})",
+        cls="form")
 
 
 def cmd_channel_workspace(args):
@@ -515,11 +568,15 @@ def cmd_channel_workspace(args):
     declared = dict(m.get("workspace") or {})
     for item in (args.set or []):
         if "=" not in item:
-            die(f"--set wants <participant>=<path>, got '{item}'")
+            die(f"--set wants <participant>=<path>, got '{item}'", cls="form")
         member, _, path = item.partition("=")
         member, path = member.strip(), path.strip()
         if member not in m["participants"]:
-            die(f"'{member}' is not a participant in '{args.channel}'")
+            # The caller has already passed `require_leader`; the unknown name is
+            # in the request. An identifier the fabric has no participant for is
+            # malformed input, the same judgement selftest.sh pins for
+            # `task new --owner nobody`.
+            die(f"'{member}' is not a participant in '{args.channel}'", cls="form")
         if path:
             declared[member] = path
         else:
@@ -537,16 +594,136 @@ def cmd_channel_workspace(args):
           f"no two of them share a writable path, so the barrier claim still holds")
 
 
+def _record_member_event(channel, rec):
+    """Append a membership change to the channel ledger, under the ledger lock."""
+    with Lock(channel_dir(channel) / ".ledger.lock"):
+        append_chained(channel_dir(channel) / "ledger.jsonl", rec)
+
+
+def cmd_channel_add(args):
+    """Join a registered agent to a channel that already exists.
+
+    `aim new-channel` was the only place `participants` was ever written, so a
+    registered agent that was not named at creation could never be joined to a
+    channel: `say`, `task new`, `friction --add` and `push --channel` all refuse
+    a non-participant, and not one of them can create the membership it tests
+    for. A registered agent in no channel was therefore in no channel forever.
+    This is the verb that performs the join.
+
+    Leader-only, and recorded in the ledger rather than only in the manifest,
+    for the same reason `channel workspace` is: membership is what "may speak
+    for this channel" resolves to, and it is the barrier's participant list, so
+    a change to it is a change to the barrier's precondition. A reader who never
+    opens the manifest has to be able to see that it happened.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    require_leader(who, kind, m, what="add a member to the channel")
+    if agent_kind(args.agent) is None:
+        die(
+            f"REFUSED: '{args.agent}' is not a registered agent, so there is nobody "
+            f"to join to '{args.channel}'.\n"
+            f"Register first: aim register --as {args.agent} "
+            f"--kind claude|codex|human|orchestration|other",
+            cls="form",
+        )
+    phase = m["barrier"]["phase"]
+    if args.agent in m["participants"]:
+        # Idempotent, and the no-op is recorded rather than silent. "Nobody
+        # asked" and "somebody asked and it was already true" are different
+        # facts about a team, and the ledger is the only artifact that can tell
+        # them apart. Exiting 0 keeps it safe to re-run after a partial failure.
+        _record_member_event(args.channel, {
+            "ts": now_iso(), "event": "channel_member_noop", "agent": who,
+            "action": "channel add", "phase": phase, "class": "barrier",
+            "member": args.agent, "members": list(m["participants"]),
+            "reason": args.reason or "",
+        })
+        print(f"{args.channel}: '{args.agent}' is already a participant — nothing "
+              f"changed, and the request is on the record")
+        return
+    m["participants"] = list(m["participants"]) + [args.agent]
+    save_manifest(args.channel, m)
+    _record_member_event(args.channel, {
+        "ts": now_iso(), "event": "channel_member_added", "agent": who,
+        "action": "channel add", "phase": phase, "class": "barrier",
+        "member": args.agent, "members": list(m["participants"]),
+        "reason": args.reason or "",
+    })
+    print(f"{args.channel}: '{args.agent}' joined — {len(m['participants'])} "
+          f"participant(s) now, and the change is in the ledger")
+    if phase in DIVERGENCE_PHASES:
+        # Not decoration. Sealing is per participant and per round, so a member
+        # added mid-divergence is a member with no seal, and the next move into
+        # SYNTHESIS will refuse until they seal. Saying so here is cheaper than
+        # letting the leader discover it at the transition.
+        print(f"  {args.channel} is in {phase}: '{args.agent}' has not sealed this "
+              f"round, so the move into SYNTHESIS will wait for them")
+
+
+def cmd_channel_remove(args):
+    """Remove a participant from a channel. The inverse of `channel add`."""
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    require_leader(who, kind, m, what="remove a member from the channel")
+    if args.agent == m["leader"]:
+        die(
+            f"REFUSED: '{args.agent}' leads '{args.channel}'. Removing the leader "
+            f"would leave the channel with nobody who may move its phase or its "
+            f"membership, which is not a state this file can express.",
+            cls="form",
+        )
+    if args.agent not in m["participants"]:
+        _record_member_event(args.channel, {
+            "ts": now_iso(), "event": "channel_member_noop", "agent": who,
+            "action": "channel remove", "phase": m["barrier"]["phase"],
+            "class": "barrier", "member": args.agent,
+            "members": list(m["participants"]), "reason": args.reason or "",
+        })
+        print(f"{args.channel}: '{args.agent}' is not a participant — nothing "
+              f"changed, and the request is on the record")
+        return
+    m["participants"] = [p for p in m["participants"] if p != args.agent]
+    # The workspace declaration goes with the membership. Leaving it behind
+    # would keep blocking divergence phases for a participant who is no longer
+    # here, and `channel workspace --set <them>=` could not clear it either,
+    # because that verb refuses a non-participant.
+    dropped = (m.get("workspace") or {}).pop(args.agent, None)
+    if not m.get("workspace"):
+        m.pop("workspace", None)
+    save_manifest(args.channel, m)
+    _record_member_event(args.channel, {
+        "ts": now_iso(), "event": "channel_member_removed", "agent": who,
+        "action": "channel remove", "phase": m["barrier"]["phase"],
+        "class": "barrier", "member": args.agent,
+        "members": list(m["participants"]),
+        "workspace_dropped": dropped, "reason": args.reason or "",
+    })
+    print(f"{args.channel}: '{args.agent}' removed — {len(m['participants'])} "
+          f"participant(s) now, and the change is in the ledger")
+    if dropped:
+        print(f"  its workspace declaration ({dropped}) was dropped with it")
+
+
 def resolve_actor(args, manifest=None):
     """Validate --as and return (agent_id, kind)."""
     who = args.__dict__.get("actor")
     if not who:
-        die("--as <agent-id> is required")
+        # Both refusals here are about the caller rather than the request: a
+        # missing `--as` and an id nobody registered are both "we do not know
+        # who is asking", which is the identity failure `walled_off` calls being
+        # a stranger (aimboard/gate.py:11) — the tool's first gate, taken before
+        # any phase rule can be consulted. `form` was the old default and it read
+        # as "your command line is malformed", which sent two readers of the
+        # ledger (T-0222's finding) looking for a typo in an argv that was
+        # correct.
+        die("--as <agent-id> is required", cls="barrier")
     kind = agent_kind(who)
     if kind is None:
         die(
             f"unknown agent '{who}'. register first:\n"
-            f"  aim register --as {who} --kind claude|codex|human"
+            f"  aim register --as {who} --kind claude|codex|human|orchestration|other",
+            cls="barrier",
         )
     note_context(actor=who)
     return who, kind
@@ -601,6 +778,60 @@ def gate(manifest, who, action):
 
 
 # --------------------------------------------------------------------------
+def _is_existing_file(value):
+    """Does this free-text argument name a file that is actually there?
+
+    T-0224. A body is free-form UTF-8, so `/tmp/x.md` is a *legal* message body:
+    it signs, it delivers, and it says a path where a sentence should be. The
+    only honest way to tell the accident from the intention is to ask whether a
+    file by that name exists and can be read, so that is the whole test. Values
+    carrying a newline, or text with a path inside a sentence, are messages and
+    are never touched.
+    """
+    if not value or "\n" in value:
+        return False
+    try:
+        path = Path(value)
+        return path.is_file() and os.access(path, os.R_OK)
+    except (OSError, ValueError):
+        return False
+
+
+def free_text_body(args, body_attr="body", file_attr="body_file", literal_attr="body_literal"):
+    """Resolve free text for one verb, refusing the `--body <path>` trap (T-0224).
+
+    Precedence: an explicit literal (`--body-literal`) says "these exact bytes,
+    even though they look like a path"; then `--body-file` reads the file; then
+    `--body`, which is refused when it names an existing readable file, naming
+    the flag the writer almost certainly meant.
+
+    Callers resolve the body before any gate that consults the world -- before
+    the phase rule, the membership test, or "does that task exist" -- because a
+    `--body` holding a path is a statement about the command line, and that
+    sentence should not change with the phase the channel happens to be in.
+
+    The guard is deliberately narrow. Refusing every single-token value would
+    make `--body /tmp/x.md` (meaning the text) and `--body yes` unsendable, and
+    a safety check that eats legal messages is a worse bug than the silent path
+    it was written to stop. Both escapes -- `--body-file` holding the one line,
+    or `--body-literal` -- still put those bytes on the wire.
+    """
+    path = getattr(args, file_attr, None)
+    if path:
+        return Path(path).read_text(encoding="utf-8")
+    if literal_attr:
+        literal = getattr(args, literal_attr, None)
+        if literal is not None:
+            return literal
+    text = getattr(args, body_attr, "") or ""
+    if _is_existing_file(text):
+        flag = "--" + body_attr.replace("_", "-")
+        escape = f" (or {flag}-literal {text} to send that text literally)" if literal_attr else ""
+        die(f"{flag} looks like a file; use --body-file {text}{escape}", cls="form")
+    return text
+
+
+# --------------------------------------------------------------------------
 # commands
 # --------------------------------------------------------------------------
 def cmd_init(args):
@@ -621,8 +852,21 @@ def cmd_register(args):
     name, and inherit everything the ledger says about it, and no record would
     show the switch.
     """
+    # Noted rather than fixed, and it is adjacent to the kind vocabulary above:
+    # the only way to correct an existing entry's kind is `--force`, which is the
+    # *takeover* argument, and the correction is recorded as a registration event
+    # with `reason: "forced takeover"` (below). Correcting your own kind is not
+    # taking over your own id -- the entry is still yours, and the session that
+    # registered as `codex` only because no better word existed is naming itself
+    # more honestly, not seizing somebody's identity. The ledger cannot tell the
+    # two apart today: same event, same reason string, different acts. A
+    # kind-diff would need its own registration event kind, which is a design
+    # change rather than a line, so this stays a note.
     prior = load_registry()["agents"].get(args.actor)
     if prior and not args.force:
+        # Registration is the first write every other verb depends on, so a
+        # refusal here is refused before identity exists at all: there is no
+        # stranger yet, and `--force` is the argument that makes it well-formed.
         die(
             f"REFUSED: '{args.actor}' is already registered "
             f"({prior['kind']}, first seen {prior['registered_at']}).\n"
@@ -630,7 +874,8 @@ def cmd_register(args):
             f"an id over is recorded as a distinct event rather than done quietly.\n"
             f"If you are that agent coming back, keep using the id. If you are "
             f"replacing it, say so: aim register --as {args.actor} "
-            f"--kind {args.kind} --force --session '<why>'"
+            f"--kind {args.kind} --force --session '<why>'",
+            cls="form",
         )
 
     # The takeover check above races with another register; the one that matters
@@ -642,7 +887,7 @@ def cmd_register(args):
         prev = reg["agents"].get(args.actor)
         if prev and not args.force:
             die(f"REFUSED: '{args.actor}' was registered by someone else while this "
-                f"command was running; nothing was written.")
+                f"command was running; nothing was written.", cls="form")
         rec = {
             "id": args.actor,
             "kind": args.kind,
@@ -672,12 +917,15 @@ def cmd_new_channel(args):
     parts = [p.strip() for p in args.participants.split(",") if p.strip()]
     d = channel_dir(args.id)
     if (d / "manifest.json").exists():
-        die(f"channel already exists: {args.id}")
+        die(f"channel already exists: {args.id}", cls="form")
     for p in parts:
         if agent_kind(p) is None:
-            die(f"participant '{p}' is not registered")
+            # A declaration is a statement about other agents, and the value is
+            # the caller's: no phase and no identity would make "p is a
+            # participant" well-formed while `p` does not exist.
+            die(f"participant '{p}' is not registered", cls="form")
     if agent_kind(args.leader) != "human":
-        die(f"leader '{args.leader}' must be a registered human")
+        die(f"leader '{args.leader}' must be a registered human", cls="form")
     m = {
         "id": args.id,
         "topic": args.topic,
@@ -698,11 +946,11 @@ def cmd_new_channel(args):
         declared = {}
         for item in args.workspace:
             if "=" not in item:
-                die(f"--workspace wants <participant>=<path>, got '{item}'")
+                die(f"--workspace wants <participant>=<path>, got '{item}'", cls="form")
             member, _, path = item.partition("=")
             member = member.strip()
             if member not in parts:
-                die(f"'{member}' is not a participant in '{args.id}'")
+                die(f"'{member}' is not a participant in '{args.id}'", cls="form")
             declared[member] = path.strip()
         m["workspace"] = declared
     # Before the channel exists, not after: a channel whose own manifest
@@ -758,13 +1006,18 @@ def echo_ratio(body, peers):
 
 def cmd_say(args):
     who, kind = resolve_actor(args)
+    body = free_text_body(args)
+    if not body.strip():
+        die("empty message; use --body or --body-file", cls="form")
     m = load_manifest(args.channel)
     phase = m["barrier"]["phase"]
     if who not in m["participants"] and who != m.get("synthesizer") and kind != "human":
-        die(f"'{who}' is not a participant in {args.channel}")
-    body = args.body_file and Path(args.body_file).read_text(encoding="utf-8") or (args.body or "")
-    if not body.strip():
-        die("empty message; use --body or --body-file")
+        # The synthesizer is the exception the participant check has to carry:
+        # the leader merges the record and may write it, and `who` is an agent
+        # only because the earlier gate excluded the stranger. Refused for
+        # identity, like every membership gate.
+        die(f"'{who}' is not a participant in {args.channel}",
+            cls="barrier")
 
     kind_of = args.kind
     if kind_of is None:
@@ -773,7 +1026,8 @@ def cmd_say(args):
                 "REFUSED: --kind is required in CROSS_EXAMINE.\n"
                 f"Label the move: one of {', '.join(sorted(CROSS_EXAMINE_KINDS))}.\n"
                 "An unlabelled message is how a rebuttal gets read as evidence and a "
-                "concession gets read as a proposal."
+                "concession gets read as a proposal.",
+                cls="barrier",
             )
         kind_of = "note"
 
@@ -792,10 +1046,12 @@ def cmd_say(args):
     else:
         if phase == "CROSS_EXAMINE":
             if kind_of not in CROSS_EXAMINE_KINDS:
-                die(f"kind '{kind_of}' not allowed in CROSS_EXAMINE; use one of {sorted(CROSS_EXAMINE_KINDS)}")
+                die(f"kind '{kind_of}' not allowed in CROSS_EXAMINE; use one of {sorted(CROSS_EXAMINE_KINDS)}",
+                    cls="barrier")
         else:
             if kind_of not in {"note", "claim", "evidence", "position", "question"}:
-                die(f"kind '{kind_of}' is only meaningful in CROSS_EXAMINE")
+                die(f"kind '{kind_of}' is only meaningful in CROSS_EXAMINE",
+                    cls="barrier")
 
     rec = {
         "ts": now_iso(),
@@ -837,12 +1093,14 @@ def cmd_say(args):
         known = {r.get("id") for r in prior_log}
         if rec["responds_to"]:
             if rec["responds_to"] not in known:
-                die(f"REFUSED: --responds-to '{rec['responds_to']}' is not a message in this channel")
+                die(f"REFUSED: --responds-to '{rec['responds_to']}' is not a message in this channel",
+                    cls="form")
         elif known:
             die(
                 "REFUSED: every CROSS_EXAMINE message must set --responds-to <msg-id>.\n"
                 "No free-floating broadcasts: you answer something specific, or you are silent.\n"
-                "(An opening message is the one exception, and only into an empty channel.)"
+                "(An opening message is the one exception, and only into an empty channel.)",
+                cls="form",
             )
 
         # Quota: your own top-level messages in this round. Direct replies to a
@@ -861,7 +1119,8 @@ def cmd_say(args):
             die(
                 f"REFUSED: you have already used your {MAX_MSGS_PER_ROUND} messages this round "
                 f"(round {m['barrier']['round']}).\nTurn-taking is part of the barrier; "
-                f"wait for the leader to open round {m['barrier']['round'] + 1}."
+                f"wait for the leader to open round {m['barrier']['round'] + 1}.",
+                cls="barrier",
             )
 
         peers = [r["body"] for r in read_jsonl(log) if r.get("from") != who]
@@ -872,10 +1131,11 @@ def cmd_say(args):
                 f"(limit {ECHO_RATIO_LIMIT:.0%}).\n"
                 f"Restating a peer's framing is how a channel drifts to one position "
                 f"without evidence. Paraphrase in your own terms, add evidence, "
-                f"or pass --echo-ok with --echo-reason to record why quoting is necessary."
+                f"or pass --echo-ok with --echo-reason to record why quoting is necessary.",
+                cls="barrier",
             )
         if args.echo_ok and not args.echo_reason:
-            die("--echo-ok requires --echo-reason (it is logged)")
+            die("--echo-ok requires --echo-reason (it is logged)", cls="form")
 
     with Lock(channel_dir(args.channel) / ".lock"):
         seq = len(read_jsonl(log)) + 1
@@ -897,6 +1157,9 @@ def cmd_say(args):
 
 def cmd_seal(args):
     who, kind = resolve_actor(args)
+    text = free_text_body(args, body_attr="summary", literal_attr=None)
+    if not text.strip():
+        die("need --summary or --body-file", cls="form")
     m = load_manifest(args.channel)
     if m["barrier"]["phase"] not in ("SEALED_DIVERGENT", "COMMIT"):
         # A phase rule, and the one that name-and-position it is: sealing is how
@@ -904,10 +1167,7 @@ def cmd_seal(args):
         # where committing a new one would change what the record means.
         die(f"sealing is closed in {m['barrier']['phase']}", cls="barrier")
     if who not in m["participants"]:
-        die(f"'{who}' is not a participant")
-    text = args.body_file and Path(args.body_file).read_text(encoding="utf-8") or (args.summary or "")
-    if not text.strip():
-        die("need --summary or --body-file")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     private = channel_dir(args.channel) / "private" / f"{who}.jsonl"
     recs = read_jsonl(private)
     seal = {
@@ -1000,12 +1260,13 @@ def cmd_advance(args):
     if to is None:
         nxt = TRANSITIONS[cur]
         if not nxt:
-            die(f"{cur} is terminal")
+            die(f"{cur} is terminal", cls="form")
         to = nxt[0]
     if to not in PHASES:
-        die(f"unknown phase '{to}'")
+        die(f"unknown phase '{to}'", cls="form")
     if to not in TRANSITIONS[cur] and not args.force:
-        die(f"illegal transition {cur} -> {to} (allowed: {TRANSITIONS[cur]}); --force to override")
+        die(f"illegal transition {cur} -> {to} (allowed: {TRANSITIONS[cur]}); --force to override",
+            cls="form")
     # Checked against the phase being *entered*, not the one being left: a
     # channel already past CROSS_EXAMINE may legitimately declare a shared
     # workspace, and it is the move back into divergence that falsifies it.
@@ -1044,7 +1305,9 @@ def cmd_advance(args):
                 cls="barrier",
             )
         if agent_kind(args.synthesizer) is None:
-            die(f"'{args.synthesizer}' is not a registered agent")
+            # `--force` is not the escape here and the phase is not the reason:
+            # the argument names an agent id the fabric has never seen.
+            die(f"'{args.synthesizer}' is not a registered agent", cls="form")
         m["synthesizer"] = args.synthesizer
     if to == "CROSS_EXAMINE":
         m["barrier"]["round"] += 1
@@ -1069,7 +1332,7 @@ def cmd_request_advance(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
     if who not in m["participants"]:
-        die(f"'{who}' is not a participant")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     log = channel_dir(args.channel) / "log.jsonl"
     with Lock(channel_dir(args.channel) / ".lock"):
         seq = len(read_jsonl(log)) + 1
@@ -1235,11 +1498,31 @@ def fold_tasks(ch):
 
 
 def _visible_to(task, who, phase):
-    """The board's version of the cross-read refusal."""
+    """The board's version of the cross-read refusal.
+
+    An unowned work item is readable by everyone in every phase, and that is the
+    leader's rule rather than a relaxation of it: `the task should not belong to
+    anyone before assigned, anyone (existing, new join guy) could pickup not
+    assigned tasks`. A card nobody holds states no position -- it is an offer of
+    work, and the barrier exists to stop a peer's *position* being read before it
+    was sealed, not to hide the fact that there is work to do. A card that *is*
+    owned keeps the rule exactly as it was: its owner, its creator, or nobody in
+    a divergence phase.
+
+    Written as its own clause rather than folded into the return below, and the
+    two-line shape is deliberate: `tests/test_a2a_conformance.py` reads this
+    function's source and requires every line that is both a `return` and a
+    mention of `owner` to be a *claim test* (one that names `created_by` too).
+    That check protects the union of owner and creator from being weakened, so
+    the exemption must not be spelled as a second claim test -- it is not one.
+    """
     if task["visibility"] == "published":
         return True
     if phase not in DIVERGENCE_PHASES:
         return True                        # the barrier is open; drafts are readable
+    if not task.get("owner"):
+        # Unowned: nobody's position to protect.
+        return True
     return task.get("owner") == who or task.get("created_by") == who
 
 
@@ -1354,17 +1637,43 @@ def _append_task_event(ch, ev, seed=None):
     return ev
 
 
+def _append_task_event_guarded(ch, ev, guard):
+    """Append one task event only if `guard` still says yes *under the lock*.
+
+    Every other task verb decides from a fold read outside the write lock, and
+    that is right for them: `move` out of a status another writer already left
+    is refused on the record's own terms, not on what the reader believed when
+    it started. `claim` is the exception. Its whole content is "nobody owns
+    this yet" -- a statement about the *absence* of a record -- and two
+    claimants who both read the board before either appended would both write a
+    well-formed claim: two `assigned` events, one card, nothing erroring, and
+    the second claim silently wins on the fold. That is the lost update this
+    store has already been burned by once.
+
+    `guard(task)` runs with the lock held and returns (True, "") to append, or
+    (False, message) to refuse. It re-folds inside the critical section, so the
+    second claimant is refused by the state the first one left behind.
+    """
+    p = tasks_path(ch)
+    with Lock(channel_dir(ch) / ".lock"):
+        ok, why = guard(fold_tasks(ch).get(ev.get("task")))
+        if not ok:
+            return None, why
+        append_chained(p, ev)
+    return ev, None
+
+
 def cmd_task_new(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
     if who not in m["participants"] and kind != "human":
-        die(f"'{who}' is not a participant in {args.channel}")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     if args.status not in TASK_STATUSES:
-        die(f"unknown status '{args.status}'; one of {', '.join(TASK_STATUSES)}")
+        die(f"unknown status '{args.status}'; one of {', '.join(TASK_STATUSES)}", cls="form")
     if args.priority not in TASK_PRIORITIES:
-        die(f"unknown priority '{args.priority}'; one of {', '.join(TASK_PRIORITIES)}")
+        die(f"unknown priority '{args.priority}'; one of {', '.join(TASK_PRIORITIES)}", cls="form")
     if args.owner and agent_kind(args.owner) is None:
-        die(f"REFUSED: owner '{args.owner}' is not a registered agent")
+        die(f"REFUSED: owner '{args.owner}' is not a registered agent", cls="form")
     vis = args.visibility
     if vis == "published" and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
         # The board's version of the cross-read rule: a work item born published
@@ -1379,7 +1688,7 @@ def cmd_task_new(args):
             cls="barrier",
         )
     if args.blocked_by and args.blocked_by not in fold_tasks(args.channel):
-        die(f"REFUSED: no such task to depend on: {args.blocked_by}")
+        die(f"REFUSED: no such task to depend on: {args.blocked_by}", cls="form")
     tid = _next_task_id(args.channel)
     # `context_id` is written beside `channel` rather than replacing it, and every
     # reader falls back to `channel` for a record written before this line
@@ -1392,7 +1701,14 @@ def cmd_task_new(args):
     ev = {
         "ts": now_iso(), "event": "created", "actor": who, "channel": args.channel,
         "context_id": args.channel,
-        "task": tid, "title": args.title, "owner": args.owner or who,
+        # `--owner` is now an *explicit* assignment and not a fallback to the
+        # creator (T-0226, the leader's rule: `the task should not belong to
+        # anyone before assigned`). This was `args.owner or who`, so every card
+        # in the store was born owned -- measured on the live fabric, 71 of 71
+        # `created` events carried an owner -- and "who could take this" was
+        # unanswerable. A card with `owner: ""` is unowned: readable by every
+        # participant in every phase, and taken with `aim task claim`.
+        "task": tid, "title": args.title, "owner": args.owner or "",
         "status": args.status, "priority": args.priority,
         "estimate_pts": args.estimate or 0, "start": args.start or "", "due": args.due or "",
         "milestone": args.milestone or "", "tags": args.tag or [], "accept": args.accept or "",
@@ -1409,7 +1725,81 @@ def cmd_task_new(args):
     if ev.get("id_reallocated_from"):
         print(f"note: {ev['id_reallocated_from']} was taken while this was being "
               f"written; recorded as {tid}")
-    print(f"{tid} created ({ev['status']}, {ev['visibility']}) — {ev['title'][:60]}")
+    unowned = "" if ev["owner"] else (
+        f"  [unowned — `aim task claim --as <you> --channel {args.channel} --id {tid}`]")
+    print(f"{tid} created ({ev['status']}, {ev['visibility']}) — {ev['title'][:60]}{unowned}")
+
+
+def cmd_task_claim(args):
+    """Take an unowned work item: the pickup half of the leader's rule.
+
+    `the task should not belong to anyone before assigned, anyone (existing, new
+    join guy) could pickup not assigned tasks`. Three things make that state
+    real rather than a slogan: the card carries no owner (see `cmd_task_new`),
+    it is readable in every phase by every participant of its channel (see
+    `_visible_to`), and taking it is a recorded `assigned` event with
+    `from: ""` rather than a private intention -- so "who took this, and when"
+    survives a disagreement about it, exactly as every other change to a card
+    does.
+
+    A claim is not a reassignment. A card somebody already holds is refused, and
+    the refusal names the verb that *can* move it (`assign`), because an agent
+    that quietly overwrites a peer's claim is the failure the fabricated
+    ownership rule was meant to prevent, arriving from the other direction.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if who not in m["participants"] and kind != "human":
+        # Same rule as `task new`: work in a channel belongs to its participants.
+        # The leader's `new join guy` arrives by `aim channel add`, which is the
+        # recorded join, and then claims; there is no path that skips the join,
+        # because a claim is an act *in* the channel and not a read of it.
+        die(
+            f"REFUSED: '{who}' is not a participant in '{args.channel}' and cannot "
+            "claim work in it.\n"
+            "Picking a card up is work in the channel; the leader's `aim channel add` "
+            "is the join.",
+            cls="barrier",
+        )
+    _, _, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if t["status"] == "dropped":
+        die(f"REFUSED: {args.id} is dropped; a dropped task is a record, not a workspace",
+            cls="form")
+    if t.get("owner") == who:
+        print(f"{args.id} is already yours")
+        return
+    if t.get("owner"):
+        die(
+            f"REFUSED: {args.id} is claimed by {t['owner']}.\n"
+            f"Taking a card somebody else holds is a reassignment, not a claim: "
+            f"`aim task assign --as <you> --channel {args.channel} --id {args.id} "
+            f"--owner <who>` is the verb that moves it, and it names its actor.",
+            cls="form",
+        )
+
+    def still_unowned(task):
+        if task is None:
+            return False, f"no such task: {args.id}"
+        if task.get("owner"):
+            return False, (
+                f"REFUSED: {args.id} was claimed by {task['owner']} while this claim "
+                "was being written, so nothing was recorded. The card is theirs; "
+                f"`aim task list --channel {args.channel}` will show its owner.")
+        return True, ""
+
+    ev = {
+        "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
+        "task": args.id, "owner": who, "from": "", "via": "claim",
+    }
+    # `--reason` is read rather than merely parsed: a flag that exists and is
+    # dropped on the floor is the defect `--blocked-by` already was.
+    if (args.reason or "").strip():
+        ev["reason"] = args.reason.strip()
+    got, why = _append_task_event_guarded(args.channel, ev, still_unowned)
+    if got is None:
+        die(why, cls="form")
+    print(f"{args.id}: claimed by {who} (was unowned)")
 
 
 def _load_task_or_die(ch, tid, who, kind):
@@ -1417,7 +1807,7 @@ def _load_task_or_die(ch, tid, who, kind):
     board = fold_tasks(ch)
     t = board.get(tid)
     if t is None:
-        die(f"no such task: {tid}")
+        die(f"no such task: {tid}", cls="form")
     if not _visible_to(t, who, m["barrier"]["phase"]) and kind != "human":
         die(
             f"REFUSED: '{tid}' is a draft owned by someone else and the channel is in "
@@ -1433,11 +1823,13 @@ def cmd_task_move(args):
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
     if t["status"] == "dropped":
-        die(f"REFUSED: {args.id} is dropped; a dropped task is a record, not a workspace")
+        die(f"REFUSED: {args.id} is dropped; a dropped task is a record, not a workspace",
+            cls="form")
     if args.to not in TASK_FLOW.get(t["status"], []):
         die(
             f"REFUSED: illegal transition {t['status']} -> {args.to} for {args.id} "
-            f"(allowed: {', '.join(TASK_FLOW.get(t['status'], [])) or 'nothing — terminal'})"
+            f"(allowed: {', '.join(TASK_FLOW.get(t['status'], [])) or 'nothing — terminal'})",
+            cls="form",
         )
     if args.to == "done":
         open_blockers = [b for b in t["blocked_by"] if board.get(b, {}).get("status") != "done"]
@@ -1445,11 +1837,12 @@ def cmd_task_move(args):
             die(
                 f"REFUSED: {args.id} is blocked by {', '.join(open_blockers)}, which are not done.\n"
                 "\"Done\" is the one status that has to be decided by something other than "
-                "the person asserting it."
+                "the person asserting it.",
+                cls="form",
             )
     if args.to in ("blocked", "dropped") and not (args.reason or "").strip():
         die(f"REFUSED: moving to '{args.to}' requires --reason. "
-            f"A blocker without a stated cause is a stall nobody can clear.")
+            f"A blocker without a stated cause is a stall nobody can clear.", cls="form")
     ev = {
         "ts": now_iso(), "event": "dropped" if args.to == "dropped" else "moved",
         "actor": who, "channel": args.channel, "context_id": args.channel,
@@ -1461,16 +1854,51 @@ def cmd_task_move(args):
 
 
 def cmd_task_assign(args):
+    """Hand a card to somebody, or hand it back to the pool.
+
+    `--owner ""` is the release, and it is the other half of T-0226 rather than
+    a convenience: the leader's rule makes a card pickable by anyone, and a card
+    taken by a session that then dies would be parked on an id nobody else may
+    write -- the exact state the rule was written to remove. Releasing is
+    `assign` to nobody rather than its own verb, because a release *is* an
+    assignment record with an empty owner, and the fold already reads
+    `assigned` that way.
+
+    A release must state a reason, for the reason `move --to blocked` must: an
+    unowned card with no recorded cause is indistinguishable from a card nobody
+    ever took, and "why is this back in the pool" is the question the next
+    claimer needs answered.
+    """
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
-    if agent_kind(args.owner) is None:
-        die(f"REFUSED: owner '{args.owner}' is not a registered agent")
+    owner = (args.owner or "").strip()
+    if not owner:
+        if not (args.reason or "").strip():
+            die(
+                f"REFUSED: releasing {args.id} requires --reason. "
+                "A card returned to the pool with no stated cause is a stall "
+                "nobody can clear.",
+                cls="form",
+            )
+        if not t["owner"]:
+            print(f"{args.id} is already unowned")
+            return
+        _append_task_event(args.channel, {
+            "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
+            "context_id": args.channel,
+            "task": args.id, "owner": "", "from": t["owner"], "via": "release",
+            "reason": args.reason,
+        })
+        print(f"{args.id}: owner {t['owner']} -> (unowned): {args.reason}")
+        return
+    if agent_kind(owner) is None:
+        die(f"REFUSED: owner '{owner}' is not a registered agent", cls="form")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
         "context_id": args.channel,
-        "task": args.id, "owner": args.owner, "from": t["owner"],
+        "task": args.id, "owner": owner, "from": t["owner"],
     })
-    print(f"{args.id}: owner {t['owner'] or '(none)'} -> {args.owner}")
+    print(f"{args.id}: owner {t['owner'] or '(unowned)'} -> {owner}")
 
 
 def cmd_task_publish(args):
@@ -1515,9 +1943,9 @@ def cmd_task_link(args):
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
     if args.blocked_by not in board:
-        die(f"REFUSED: no such task to depend on: {args.blocked_by}")
+        die(f"REFUSED: no such task to depend on: {args.blocked_by}", cls="form")
     if args.blocked_by == args.id:
-        die("REFUSED: a task cannot block itself")
+        die("REFUSED: a task cannot block itself", cls="form")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "linked", "actor": who, "channel": args.channel,
         "context_id": args.channel,
@@ -1528,10 +1956,10 @@ def cmd_task_link(args):
 
 def cmd_task_comment(args):
     who, kind = resolve_actor(args)
-    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
-    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
+    body = free_text_body(args)
     if not body.strip():
-        die("need --body or --body-file")
+        die("need --body or --body-file", cls="form")
+    m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "commented", "actor": who, "channel": args.channel,
         "context_id": args.channel,
@@ -1565,7 +1993,7 @@ def cmd_task_retract(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
     if kind != "human" and who not in m["participants"]:
-        die(f"'{who}' is not a participant in {args.channel}")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     if kind != "human":
         # Not a barrier rule -- a `created` event is already visible to its own
         # creator, and retracting it discloses nothing new. It is an ownership
@@ -1573,15 +2001,16 @@ def cmd_task_retract(args):
         t = fold_tasks(args.channel).get(args.id)
         if t is not None and t.get("created_by") != who and t.get("owner") != who:
             die(f"REFUSED: {args.id} was created by '{t.get('created_by') or '?'}'; "
-                f"only its creator or the leader may retract it.")
+                f"only its creator or the leader may retract it.", cls="barrier")
     if args.id not in fold_tasks(args.channel):
         die(f"REFUSED: no such task in {args.channel}'s store: {args.id}\n"
             f"Retraction appends to the store, so it can only name a card the "
-            f"store itself holds. A plan seed is the plan's, not the store's.")
+            f"store itself holds. A plan seed is the plan's, not the store's.",
+            cls="form")
     if not (args.reason or "").strip():
         die("REFUSED: retracting a task requires --reason. It removes a card from "
             "every view, and the record of why is the only thing that makes it "
-            "auditable rather than a silent disappearance.")
+            "auditable rather than a silent disappearance.", cls="form")
     _append_task_event(args.channel, {
         "ts": now_iso(), "event": "retracted", "actor": who, "channel": args.channel,
         "context_id": args.channel,
@@ -1634,9 +2063,33 @@ def cmd_task_list(args):
     # recorded, and `--count-hidden` is how you ask for the size without the
     # contents. `--owner <yourself>` is exempt, because a result that can only
     # contain your own rows cannot leak a peer's.
-    self_read = args.owner == who and who in m["participants"]
+    # Two things this pair of lines got wrong, both measured on the live fabric
+    # with a viewer who was registered but not a participant of the channel.
+    #
+    # First, the exemption was ANDed with channel membership, so it could never
+    # fire for the registered non-participant -- the "stranger" case this file
+    # documents at length -- while the refusal underneath recommended
+    # `--owner <the viewer>`, a remedy that returned the identical refusal. The
+    # rule the comment above states is about the *result*, not the caller's
+    # standing: a result that can only contain the viewer's own rows cannot
+    # leak a peer's, and that argument does not depend on membership. So the
+    # exemption is "the requested owner is the caller", and the caller being
+    # registered is already guaranteed -- `resolve_actor` refuses an unknown id
+    # before this line runs -- which is exactly why membership was never doing
+    # any work here.
+    #
+    # Second, the count came from the post-filter result set, so it tracked the
+    # *requested* owner rather than the caller: the same viewer asking three
+    # different owners got three different claims about what they owned
+    # (measured: `--owner codex-orangement` -> 23, `--owner claude-session1`
+    # -> 21, `--owner codex` -> 1, in one channel, from one seat). A number in
+    # a refusal is evidence. It may not move when the caller changes a filter,
+    # so it is computed from the viewer's own rows.
+    viewer_registered = agent_kind(who) is not None
+    self_read = args.owner == who and viewer_registered
     if withheld and not self_read:
-        me = f" (you own {len(rows)} of them)" if rows else ""
+        mine = sum(1 for t in board.values() if t.get("owner") == who)
+        me = f" (you own {mine} work item(s) in this channel)" if mine else ""
         die(
             f"REFUSED: {withheld} work item(s) in '{args.channel}' are drafts owned by "
             f"someone else, and the channel is in {phase}{me}.\n"
@@ -1657,8 +2110,13 @@ def cmd_task_list(args):
         badge = "" if t["visibility"] == "published" else "  [draft]"
         block = f"  blocked_by={','.join(t['blocked_by'])}" if t["blocked_by"] else ""
         due = f"  due={t['due']}" if t["due"] else ""
-        print(f"{t['id']}  {t['status']:<8} {t['owner']:<16} {t['priority']:<6} "
-              f"{t['title'][:52]}{badge}{block}{due}")
+        # `owner: ""` printed as blank is a column a reader cannot tell from a
+        # bug; T-0227 does the same marking on the board renderer. The word is
+        # long for the column, so the id stays in its place and only the field
+        # widens -- an unowned card must be *findable*, which is the whole point
+        # of making it readable.
+        print(f"{t['id']}  {t['status']:<8} {(t['owner'] or '(unclaimed)'):<16} "
+              f"{t['priority']:<6} {t['title'][:52]}{badge}{block}{due}")
     if withheld:
         # Counted, never shown: a board that quietly omits rows is a board that
         # lies about the size of the project.
@@ -1743,7 +2201,7 @@ def cmd_task_doorbell(args):
             die(f"REFUSED: cannot use the push notification object: aimboard.a2a "
                 f"did not import ({exc}).\nThe config's shape is a translation of "
                 f"a foreign spec and it lives beside the renderer; if that module "
-                f"is missing, so is the translation.")
+                f"is missing, so is the translation.", cls="form")
 
     if sub == "create":
         validate, config_id_of, _ = _module()
@@ -1774,7 +2232,7 @@ def cmd_task_doorbell(args):
                 f"{where}\n"
                 f"The object is the spec's (§4.3.1, §4.3.3, §13.2) and it is "
                 f"refused rather than partly stored, because a config that is "
-                f"half written is one that reports success and never fires.")
+                f"half written is one that reports success and never fires.", cls="form")
         cid = config_id_of(args.id, config)
         recs, live = _push_config_recs(args.channel)
         if cid in live:
@@ -1821,7 +2279,7 @@ def cmd_task_doorbell(args):
         cid = args.config_id
         if cid not in live:
             die(f"REFUSED: no push notification config '{cid}' on that task in "
-                f"'{args.channel}'. `aim task doorbell --help` lists them.")
+                f"'{args.channel}'. `aim task doorbell --help` lists them.", cls="form")
         with Lock(channel_dir(args.channel) / ".lock"):
             append_chained(_push_configs_path(args.channel), {
                 "ts": now_iso(), "event": "doorbell_rotated", "actor": who,
@@ -1844,7 +2302,7 @@ def cmd_task_doorbell(args):
         cid = args.config_id
         if cid not in live:
             die(f"REFUSED: no push notification config '{cid}' on that task in "
-                f"'{args.channel}'")
+                f"'{args.channel}'", cls="form")
         with Lock(channel_dir(args.channel) / ".lock"):
             append_chained(_push_configs_path(args.channel), {
                 "ts": now_iso(), "event": "deleted", "actor": who,
@@ -1875,18 +2333,32 @@ def cmd_reveal(args):
     """
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
+    # T-0224 before the barrier, and the empty check after it.
+    #
+    # `--body <path>` is a statement about the command line, and a command line is
+    # not in a phase: the writer meant `--body-file` whether the channel is sealed
+    # or not, so the guard fires first and names that flag in every phase (pinned by
+    # tests/test_body_path_guard.py). But "you gave me no body at all" is a claim
+    # about a request that is otherwise *complete*, so it must not pre-empt the
+    # barrier: a sealed channel asked to reveal something is refused by the barrier,
+    # and the ledger has to record `class: barrier` -- evaluating the body first
+    # turned a barrier refusal into a malformed-request refusal, which is the T-0222
+    # defect wearing this verb's name. Both orders are wrong; the split is the fix.
+    body = free_text_body(args)
     if m["barrier"]["phase"] not in ("CROSS_EXAMINE", "RESOLVE"):
         # `reveal` is the one verb whose entire purpose is to undo part of the
         # barrier deliberately, so the phase it is open in is the barrier's own
         # boundary rather than a formality about the command.
         die(f"REFUSED: reveal is only open from CROSS_EXAMINE on (now {m['barrier']['phase']})",
             cls="barrier")
+    if not body.strip():
+        die("need --body or --body-file", cls="form")
     seal = read_json(channel_dir(args.channel) / "seals" / f"{who}.json")
     if seal is None:
-        die("you have no seal in this channel")
-    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
-    if not body.strip():
-        die("need --body or --body-file")
+        # Not a barrier refusal: the seal is *yours*, so nothing here is withheld
+        # from you, and no phase would make the request well-formed. It is a
+        # missing precondition in the request, which is what `form` covers.
+        die("you have no seal in this channel", cls="form")
     log = channel_dir(args.channel) / "log.jsonl"
     with Lock(channel_dir(args.channel) / ".lock"):
         seq = len(read_jsonl(log)) + 1
@@ -1908,14 +2380,14 @@ def cmd_push(args):
     what was actually said and when.
     """
     who, kind = resolve_actor(args)
+    body = free_text_body(args)
+    if not body.strip():
+        die("need --body or --body-file", cls="form")
     m = load_manifest(args.channel) if args.channel else None
     if args.channel and who not in m["participants"] and kind != "human":
-        die(f"'{who}' is not a participant in {args.channel}")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     if args.to not in load_registry()["agents"]:
-        die(f"'{args.to}' is not a registered agent")
-    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
-    if not body.strip():
-        die("need --body or --body-file")
+        die(f"'{args.to}' is not a registered agent", cls="form")
     d = outbox_dir(args.to)
     d.mkdir(parents=True, exist_ok=True)
     ts = now_iso()
@@ -2051,10 +2523,10 @@ def cmd_confirm(args):
         if rec.get("msg_id") == args.msg_id or path.stem == args.msg_id:
             mine.append((path, rec))
     if not mine:
-        die(f"no message '{args.msg_id}' in your outbox")
+        die(f"no message '{args.msg_id}' in your outbox", cls="form")
     path, rec = mine[0]
     if rec.get("to") != who:
-        die(f"'{args.msg_id}' was not addressed to you")
+        die(f"'{args.msg_id}' was not addressed to you", cls="form")
     # Did you actually read it? A receipt that does not require a prior read is a
     # receipt for a file's existence. Codex produced exactly that in the first
     # live use of this command: it confirmed a push it had never pulled, so the
@@ -2065,13 +2537,14 @@ def cmd_confirm(args):
             f"REFUSED: cannot confirm '{args.msg_id}' — you have not read it.\n"
             f"Read it first (aim pull --as {who} --claim), then confirm. A receipt "
             f"for an unread message tells the sender intact delivery happened when "
-            f"what actually happened is that a file arrived."
+            f"what actually happened is that a file arrived.",
+            cls="form",
         )
     damage, claims = _receipt_verification(rec, rec.get("body", "").encode("utf-8"))
     if damage:
         # Confirming a message you cannot vouch for is worse than silence: it
         # would let the sender believe intact delivery happened when it did not.
-        die(f"REFUSED: cannot confirm '{args.msg_id}' — {damage}")
+        die(f"REFUSED: cannot confirm '{args.msg_id}' — {damage}", cls="form")
 
     ts = now_iso()
     rid = f"{ts.replace(':', '').replace('-', '')}-{who}-receipt"
@@ -2299,7 +2772,7 @@ def cmd_tension(args):
         )
     parts = list(args.participants.split(",")) if args.participants else m["participants"]
     if len(parts) != 2:
-        die("tension compares exactly two participants; pass --participants a,b")
+        die("tension compares exactly two participants; pass --participants a,b", cls="form")
     seals = {}
     for p in parts:
         s = read_json(channel_dir(args.channel) / "seals" / f"{p}.json")
@@ -2497,7 +2970,8 @@ def _render_card(agent, target):
     except Exception as exc:  # pragma: no cover - only on a broken checkout
         die(f"REFUSED: cannot render an AgentCard: aimboard.a2a did not import ({exc}).\n"
             f"The card is a translation of the registry and it lives beside the "
-            f"renderer; if that module is missing, so is the translation.")
+            f"renderer; if that module is missing, so is the translation.",
+            cls="form")
     return json.dumps(agent_card(agent, target), indent=2, ensure_ascii=False)
 
 
@@ -2558,13 +3032,13 @@ def cmd_friction(args):
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)                 # refuses an unknown channel
     if who not in m["participants"] and kind != "human":
-        die(f"'{who}' is not a participant in {args.channel}")
+        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
     if args.add:
         missing = [f for f, v in (("--command", args.command), ("--cost", args.cost))
                    if not v]
         if missing:
             die(f"a friction record needs {', '.join(missing)}; "
-                f"see `aim friction --help`")
+                f"see `aim friction --help`", cls="form")
         with Lock(channel_dir(args.channel) / ".lock"):
             append_chained(_friction_path(args.channel), {
                 "ts": now_iso(), "event": "friction", "actor": who,
@@ -2742,7 +3216,25 @@ def main():
                    help="every registered agent, as one JSON array")
     p = add("register", cmd_register)
     p.add_argument("--as", dest="actor", required=True)
-    p.add_argument("--kind", required=True, choices=["claude", "codex", "human", "other"])
+    # The kind vocabulary is small and closed on purpose, and what each word
+    # *does* is worth stating where it is defined rather than discovering by
+    # reading every consumer: `agent_kind` is consulted to decide whether an
+    # actor is the human leader (`require_leader`, and `new-channel --leader`,
+    # which refuses any other kind). Every other comparison in this file is
+    # `kind != "human"` -- the barrier, the participant rule, the divergence
+    # publication gate, the task visibility rule and the tension report all turn
+    # on that one negation -- so a kind is a *name*, not a permission, and
+    # adding one changes who can be described and not who can do what.
+    #
+    # `orchestration` was added for T-0231 and design/13 section 7, whose first
+    # acceptance item reads "its registry entry says what it is
+    # (`kind: orchestration`)". It could not be satisfied before this word
+    # existed: the choices were claude|codex|human|other, so the live
+    # `codex-orangement` entry says `kind: codex`, which is a false statement
+    # about a seat that dispatches work and writes no code. `other` was the
+    # available dodge and it is not a name -- it is the absence of one.
+    p.add_argument("--kind", required=True,
+                   choices=["claude", "codex", "human", "orchestration", "other"])
     p.add_argument("--model", default="")
     p.add_argument("--session", default="")
     p.add_argument("--force", action="store_true",
@@ -2758,10 +3250,26 @@ def main():
                    help="a directory this participant writes to; two participants "
                         "naming the same one makes the barrier indefensible (T-0110)")
 
-    p = add("channel", cmd_channel, help="channel-level declarations that outlive a phase")
+    p = add("channel", cmd_channel,
+            help="channel-level declarations that outlive a phase: workspace, "
+                 "and membership (add/remove a participant)")
     csub = p.add_subparsers(dest="channel_cmd", required=True)
     q = csub.add_parser("workspace", help="declare or clear the workspace participants share")
     q.set_defaults(func=cmd_channel_workspace)
+
+    p = csub.add_parser("add", help="join a registered agent to an existing channel (leader-only)")
+    p.set_defaults(func=cmd_channel_add)
+    p.add_argument("--as", dest="actor", required=True, help="must be the channel leader")
+    p.add_argument("--channel", required=True)
+    p.add_argument("--agent", required=True, help="the registered agent to join")
+    p.add_argument("--reason", default="", help="why the membership changed")
+
+    p = csub.add_parser("remove", help="remove a participant from a channel (leader-only)")
+    p.set_defaults(func=cmd_channel_remove)
+    p.add_argument("--as", dest="actor", required=True, help="must be the channel leader")
+    p.add_argument("--channel", required=True)
+    p.add_argument("--agent", required=True)
+    p.add_argument("--reason", default="", help="why the membership changed")
     q.add_argument("--as", dest="actor", required=True)
     q.add_argument("--channel", required=True)
     q.add_argument("--set", action="append", metavar="AGENT=PATH",
@@ -2776,6 +3284,8 @@ def main():
     p.add_argument("--subject", default="")
     p.add_argument("--body", default="")
     p.add_argument("--body-file")
+    p.add_argument("--body-literal", dest="body_literal",
+                   help="send this text literally, even if it names an existing file (T-0224)")
     p.add_argument("--evidence", action="append")
     p.add_argument("--responds-to")
     p.add_argument("--refs-seal")
@@ -2854,9 +3364,17 @@ def main():
     q.add_argument("--reason", default="")
     q.add_argument("--force", action="store_true")
 
+    q = tadd("claim", cmd_task_claim)
+    q.add_argument("--id", required=True)
+    q.add_argument("--reason", default="",
+                   help="why you are taking it (recorded; optional)")
+
     q = tadd("assign", cmd_task_assign)
     q.add_argument("--id", required=True)
-    q.add_argument("--owner", required=True)
+    q.add_argument("--owner", required=True,
+                   help='the new owner, or "" to release the card back to the pool '
+                        "(which requires --reason)")
+    q.add_argument("--reason", default="", help="required when releasing")
 
     q = tadd("publish", cmd_task_publish)
     q.add_argument("--id", required=True)
@@ -2870,6 +3388,8 @@ def main():
     q.add_argument("--id", required=True)
     q.add_argument("--body", default="")
     q.add_argument("--body-file")
+    q.add_argument("--body-literal", dest="body_literal",
+                   help="send this text literally, even if it names an existing file (T-0224)")
 
     # The one repair verb, and it is an append rather than an edit. It exists
     # because an accidental `created` landed in a hash-chained store and this
@@ -2940,6 +3460,8 @@ def main():
     p.add_argument("--claim-id", required=True)
     p.add_argument("--body", default="")
     p.add_argument("--body-file")
+    p.add_argument("--body-literal", dest="body_literal",
+                   help="send this text literally, even if it names an existing file (T-0224)")
 
     p = add("push", cmd_push)
     p.add_argument("--as", dest="actor", required=True)
@@ -2948,6 +3470,8 @@ def main():
     p.add_argument("--subject", default="")
     p.add_argument("--body", default="")
     p.add_argument("--body-file")
+    p.add_argument("--body-literal", dest="body_literal",
+                   help="send this text literally, even if it names an existing file (T-0224)")
     p.add_argument("--via", default="", help="how you intend to deliver this (recorded for the ledger)")
     p.add_argument("--require-ack", action="store_true",
                    help="record that this message demands a receipt")
@@ -3040,7 +3564,7 @@ def main():
         die(f"REFUSED: {exc.path} line {exc.lineno} is not valid JSON ({exc.detail}).\n"
             f"Run `aim verify --channel {getattr(args, 'channel', '<ch>')}` to see "
             f"whether the chain is intact; a truncated line usually means a writer "
-            f"was interrupted mid-append.")
+            f"was interrupted mid-append.", cls="form")
     # Every other verb returns None and the exit code is 0, which is what it has
     # always been. `doctor` is the one verb whose whole output *is* the verdict it
     # forwards, so a command that says "this checkout cannot be run" and then
