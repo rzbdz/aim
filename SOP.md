@@ -587,10 +587,40 @@ sentences are true of the same five-row file.
 
 That is a weaker fact than the sentence was claiming and a more interesting one:
 the five channels in `channels/` are the only ones that ever held real work, and
-none of them got past `COMMIT`. The unfixed `.gitignore` does not cover `.dbg/`
-(`git check-ignore .dbg/channels/c/ledger.jsonl` returns **1**, and
-`git ls-files .dbg` is 11 files), so this root is *visible* in every `git show`
-and nobody had read it.
+none of them got past `COMMIT`. This root is *visible* in every `git show` and
+nobody had read it — but **not for the reason this paragraph first gave.**
+
+It said "the unfixed `.gitignore` does not cover `.dbg/`", citing
+`git check-ignore .dbg/channels/c/ledger.jsonl` → **1**. The rule does cover it.
+`.gitignore:13` is `.dbg/` and has been since `0dae3f3`. The **1** is git's
+default `check-ignore` declining to answer for a **tracked** path — it is a
+statement about the index, not about the rule:
+
+    $ git check-ignore -v .dbg/channels/c/ledger.jsonl      # tracked
+    (no output)                                              rc=1
+    $ git check-ignore -v .dbg/nonexistent.jsonl            # untracked
+    .gitignore:13:.dbg/     .dbg/nonexistent.jsonl           rc=0
+    $ git check-ignore -v --no-index .dbg/channels/c/ledger.jsonl
+    .gitignore:13:.dbg/     .dbg/channels/c/ledger.jsonl     rc=0
+
+The real chronology is six minutes wide and runs the other way. The 11 `.dbg`
+files entered the index in `94c116d` (`16:15:07 +0800`); the ignore line was
+added in `0dae3f3` (`16:21:05 +0800`), and `git merge-base --is-ancestor 94c116d
+0dae3f3` is **true**. The debug root was committed first, the rule was written
+minutes later by the same session — and a path already in the index is never
+ignored again, so the rule has been inert on it ever since. That is the
+mechanism, and it is a much smaller one than a missing rule: nobody forgot to
+write the line; the line cannot reach backwards. The same residue is still in
+the tree — `outbox/_drafts/handoff-to-codex.md` is tracked while
+`outbox/_drafts/` is ignored (`git check-ignore --no-index` finds 12 tracked
+paths matching the ignore file, all 11 `.dbg` and that one).
+
+*(The correction is worth more than the claim. `rc=1` was a real measurement
+attached to an invented reason — "check-ignore says no, therefore the rule is
+missing" — which is the document's own failure mode for the third time in this
+section. The rule was never missing. What is missing is anything that would
+have made me test the difference between "this path is untracked and would be
+ignored" and "this path is tracked and the question does not apply".)*
 
 **A census that names its own glob is a census; one that says "no live channel"
 is a sentence about a directory the author did not enumerate.** Re-measured at
