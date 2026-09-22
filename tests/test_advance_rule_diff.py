@@ -30,19 +30,26 @@ Why the assertions have the shape they have:
     own acceptance quotes — "CROSS_EXAMINE is the next phase that opens it" — so
     it is pinned here on the CLI's copy of the same fact.
 
-Revision measured: `fac2a0ce9ead85da7533d378087a96f748d3080b` (HEAD) with
-`bin/aim` **dirty** (585 insertions / 90 deletions vs HEAD) and `/api/revision`
-`stale: true`. The behaviour measured here comes from **committed** lines:
-`git show HEAD:bin/aim` already contains, unchanged by the dirty diff, the only
-thing `cmd_advance` prints --
+Revision measured: `abb177f` with `bin/aim` clean, since re-measured -- the file
+was written against `fac2a0ce9ead85da7533d378087a96f748d3080b`, where `cmd_advance`
+printed only `ch: SEALED_DIVERGENT -> COMMIT (round 0, by human)` and all three
+methods below were `@unittest.expectedFailure`. The acceptance landed afterwards
+and nothing re-ran the file, so the markers outlived the defect: two of them now
+pass, and the third fails on the *value* the tool prints rather than on the
+sentence it prints. Re-measured one method at a time with the decorators stripped
+before any of them was removed -- a marker is evidence only until someone checks
+what is under it.
 
-    print(f"{args.channel}: {cur} -> {to} (round {m['barrier']['round']}, by {who})")
+What the third one found. The advance that opens `read_others` and `channel_say`
+printed
 
-The three failing methods are `@unittest.expectedFailure`: the acceptance is not
-met on this build and the failure is recorded rather than hidden.
+    this advance changed 2: read_others: open -> open; channel_say: open -> open
 
-    $ python3 tests/test_advance_rule_diff.py
-    ch: SEALED_DIVERGENT -> COMMIT (round 0, by human)
+because the `was` side of the arrow was inverted (`'closed' if was else 'open'`).
+The fix is in `bin/aim` and not here: this file asserts on the tool's own
+vocabulary rather than on the words `True`/`False`, because the line exists to be
+read by a person and `read_others: closed -> open` is what it has to say. Pinning
+`True` would have pinned a rendering and let the inversion through.
 
 Run: python3 tests/test_advance_rule_diff.py     (exit code = number of failures)
 """
@@ -124,7 +131,6 @@ class AdvanceRuleDiffTest(unittest.TestCase):
         self.assertEqual(rules_line(self.root, ch), before,
                          "COMMIT now changes a rule; the no-rule-change case must be re-measured")
 
-    @unittest.expectedFailure
     def test_an_advance_that_changes_no_rule_is_labelled(self):
         ch = self.fresh_channel()
         out = self.advance(ch, "COMMIT")
@@ -135,7 +141,6 @@ class AdvanceRuleDiffTest(unittest.TestCase):
         self.assertIn("CROSS_EXAMINE", out,
                       f"the output must name the phase that next opens reading: {out!r}")
 
-    @unittest.expectedFailure
     def test_an_advance_that_opens_a_rule_names_the_rule_and_the_values(self):
         ch = self.fresh_channel()
         self.seal_everyone(ch)
@@ -144,12 +149,15 @@ class AdvanceRuleDiffTest(unittest.TestCase):
         out = self.advance(ch, "CROSS_EXAMINE")
         for rule in ("read_others", "channel_say"):
             self.assertIn(rule, out, f"advance did not name the rule it opened: {out!r}")
-        self.assertRegex(out, r"read_others[^\n]*True",
-                         f"CROSS_EXAMINE opens read_others and the output does not say so: {out!r}")
-        self.assertRegex(out, r"channel_say[^\n]*True",
-                         f"CROSS_EXAMINE opens channel_say and the output does not say so: {out!r}")
+        # Both arrows, not only the new value. `read_others[^\n]*True` passed on a
+        # line that read `read_others: open -> open` -- the *old* side was the
+        # inverted one -- so the assertion that catches it has to be about the
+        # transition, which is the thing the line is for.
+        for rule in ("read_others", "channel_say"):
+            self.assertRegex(out, rf"{rule}: closed -> open",
+                             f"{rule} is opened by this advance and the line does not say "
+                             f"what it moved from: {out!r}")
 
-    @unittest.expectedFailure
     def test_the_three_rules_are_printed_with_their_values(self):
         ch = self.fresh_channel()
         out = self.advance(ch, "COMMIT")

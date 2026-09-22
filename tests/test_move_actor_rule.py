@@ -32,27 +32,37 @@ Why the assertions have the shape they have:
   * `rules_line`-style reading of the events, not of the human line `T-0001:
     doing -> review`, because only the event can answer "submitted by its author".
 
-Measured, on two cards in a scratch root with two registered actors:
+Measured at the revision this file was written against
+(`fac2a0ce9ead85da7533d378087a96f748d3080b`, `bin/aim` **dirty** 585/90), on two
+cards in a scratch root with two registered actors:
 
-    moved by the actor      transition        today
+    moved by the actor      transition        then
     other                   doing -> review   accepted   <- the card forbids this
     owner                   review -> done    accepted   <- the card forbids this
     owner (with --reason)   doing -> review   accepted   <- the card requires this
     other                   review -> done    accepted   <- the card requires this
 
-and the `moved` events carry `actor` but never an `owner` field at all. So the
-`--force` rows are: a non-owner's `--force --reason "..."` succeeds and the event
-carries the actor and the reason (asserted, and it must keep holding whether the
-fix keeps the force escape or removes it), while a non-owner's `--force` *without*
-a reason also succeeds and records `reason: ""` with no `forced` flag -- the tree
-does not record that the force was used, which is the failing row.
+and the `moved` events carried `actor` but never an `owner` field at all.
 
-Revision measured: `fac2a0ce9ead85da7533d378087a96f748d3080b` (HEAD) with
-`bin/aim` **dirty** (585 insertions / 90 deletions vs HEAD) and `/api/revision`
-`stale: true`. The missing rule is absent from **committed** lines:
-`git show HEAD:bin/aim::cmd_task_move` checks visibility, TASK_FLOW, open blockers
-for `done`, and `--reason` for blocked/dropped, and checks no actor; the dirty
-diff touches this function only to add `cls="form"` to the refusals it already had.
+**Both of those are now historical.** The rule landed in `f4b8310` -- `bin/aim`'s
+`cmd_task_move` applies the actor rules before the blocker rule, refuses
+`doing -> review` to a non-owner without `--force`, refuses `review -> done` to the
+owner, and records `overridden`. Nothing re-ran this file, so its four
+`@unittest.expectedFailure` markers outlived the defect they recorded and had
+become "unexpected success" noise in every full-suite read. They were re-measured
+with the decorators stripped, one method at a time, before any was removed; all
+four pass, and the file is now a regression test rather than a statement of
+intent. The two positive controls (`test_the_owner_can_submit...`,
+`test_a_non_owner_can_approve...`) were never decorated and are why a build that
+refused *every* move could not have passed this file.
+
+The `--force` contract is unchanged and still asserted: a force with a reason is
+recorded with the actor and the reason, and `test_a_reasonless_force_is_recorded_as_such_or_refused`
+passes because the reasonless force is now measured against `overridden`, which is
+the field that answers it.
+
+The drawer clause of the card -- 'Send to review' for the owner only, the review
+three for a non-owner only -- is `web/**`, which this file does not touch.
 
 Run: python3 tests/test_move_actor_rule.py     (exit code = number of failures)
 """
@@ -155,8 +165,6 @@ class MoveActorRuleTest(unittest.TestCase):
         rows = moved_events(self.root, tid)
         self.assertEqual(rows[-1]["to"], "done", rows[-1])
         self.assertEqual(rows[-1]["actor"], OTHER, rows[-1])
-
-    @unittest.expectedFailure
     def test_a_non_owner_cannot_push_a_card_into_review(self):
         tid = self.new_card("only its author may submit this one")
         p = self.move(tid, OTHER, "review")
@@ -164,8 +172,6 @@ class MoveActorRuleTest(unittest.TestCase):
                             f"a viewer moved a card it does not own into review: {p.stdout!r}")
         self.assertEqual(moved_events(self.root, tid), [],
                          "a refused move still wrote a `moved` event")
-
-    @unittest.expectedFailure
     def test_the_owner_cannot_approve_their_own_work(self):
         tid = self.new_card("the author must not approve this one")
         p = self.move(tid, OWNER, "review", "--reason", "submitted")
@@ -175,8 +181,6 @@ class MoveActorRuleTest(unittest.TestCase):
                             f"the owner approved their own work: {p.stdout!r}")
         self.assertEqual([e.get("to") for e in moved_events(self.root, tid)], ["review"],
                          "a refused self-approval still recorded done")
-
-    @unittest.expectedFailure
     def test_every_move_event_names_the_actor_and_the_cards_owner(self):
         tid = self.new_card("its history must say who submitted it")
         p = self.move(tid, OWNER, "review", "--reason", "submitted")
@@ -205,8 +209,6 @@ class MoveActorRuleTest(unittest.TestCase):
         self.assertEqual(len(rows), 1, rows)
         self.assertEqual(rows[0]["actor"], OTHER, rows[0])
         self.assertEqual(rows[0]["reason"], "unblocking a stalled card", rows[0])
-
-    @unittest.expectedFailure
     def test_a_reasonless_force_is_recorded_as_such_or_refused(self):
         tid = self.new_card("forced through review with no stated cause")
         p = self.move(tid, OTHER, "review", "--force")
