@@ -1957,7 +1957,7 @@ not a reader, so that cell is a category slip rather than a miscitation.
 | **receipt** | the push record's own fields | `confirm` `:3497` | `outbox` — gated on the caller's own inbox | first-class, narrow |
 | **seal** | `seals/<a>.json` | `seal` `:1354` | `synthesis-input` `bin/aim:1610` (leader + synthesizer); `status`/`verify` show digests to anyone | first-class **with one real gate and two ungated readers** |
 | **barrier phase** | `manifest.barrier` | `advance` `:1450` | the write side (`require_leader` `:830`, `advance`'s edge check `:1450`); the read side is `PHASE_RULES`, a **table**, not a reader — the same sentence the intro above makes about `:56`, so the two agree and a reader who saw them as contradicting twelve lines apart was reading a row that had already been corrected | first-class |
-| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **292** rows for every viewer, including a stranger — `286` of them in `hello` alone; this cell read `285` when it was written and the store had grown) | first-class, **append-only and fully public** |
+| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **293** rows for every viewer, including a stranger — `287` of them in `hello` alone; this cell read `285` when it was written and has been re-derived twice since, which is the cost of a live store rather than a defect in the cell) | first-class, **append-only and fully public** |
 | **room** | `rooms/<id>.jsonl` | `room new` `:2822` | `visible_rooms` `gate.py:133` — **a real gate**, reached from the payload at `conversation.rooms` (`views/chat.py:44`) | first-class |
 | **friction** | `friction.jsonl` | `friction --add` `:4011` | `friction` `:4042` — gated on membership, and the payload also carries it unscoped (`channels[].friction`) | first-class, narrow, **and published anyway** |
 | **milestone** | `plan/plan.json` | **none** | `fold.report_data` | **read-only seed** |
@@ -2352,7 +2352,7 @@ a whole `action` the cross-tab had no row for:
 | `action` | rows | `form` | `unrecorded` | `barrier` |
 |---|---|---|---|---|
 | `task move` | 197 | 112 | 2 | 83 |
-| `task list` | **54** | 0 | 0 | **54** |
+| `task list` | **55** | 0 | 0 | **55** |
 | `task new` | 11 | 5 | 0 | 6 |
 | `friction` | **8** | 3 | 0 | **5** |
 | `say` | **6** | 2 | 0 | **4** |
@@ -2363,7 +2363,15 @@ a whole `action` the cross-tab had no row for:
 | `task comment` | 2 | 1 | 0 | 1 |
 | `task publish` | 2 | 0 | 0 | 2 |
 | `task claim` | 1 | 0 | 0 | 1 |
-| **total** | **292** | **129** | **2** | **161** |
+| **total** | **293** | **129** | **2** | **162** |
+
+*(`task list` read 54 and the total 292 / 161 when this table was re-derived;
+the two figures moved together because this session ran `aim task list` twice
+more while checking its own work, and each run writes a refusal row — the exact
+cost §4.6 measures. The total is therefore the row count of the moment, and the
+*shape* is the finding: `task list` is the second-largest refusal family in the
+store, and every row of it is a peer being refused a read of work they can see
+by another route.)*
 
 *(This note has been rewritten twice, and the sequence is the section's own
 finding happening to the section's own table. It first said "five rows have
