@@ -39,23 +39,28 @@
  * and by capturing the `POST /api/command` bodies the page actually sends.
  *
  * ---------------------------------------------------------------------------
- * VERDICT: FAIL on acceptance 3 and 4. Five tests pass; the table-driven one is
- * annotated `test.fail` with its measurements. Acceptance 1 and 2 pass, driven
- * end to end for the first time (`Approve` / `Request changes` / `Reject` appeared
- * nowhere under `web/tests/` before this file). Measured on the load-bearing
- * bundle: for a task whose provenance is a plan seed, the work-items row offers
- * decisions the drawer refuses to draw.
+ * VERDICT: PASS on all four acceptance clauses, re-measured 2026-09-22 on bundle
+ * `001be7a` plus `ItemsPane.vue`'s `decisionsFor` fix. The history below is kept
+ * because it is the card's evidence, not because it is still true.
  *
- *   T-2001  review + seed   row: [Approve, Request changes, Reject] (each a
- *                                `task new` + comment on `{new id}`)
- *                           drawer: [Record this work item]
- *   T-2003  ready  + seed   row: [Approve, Reject]
- *                           drawer: [Record this work item]
+ * The defect it recorded was real and is now closed: for a task whose provenance
+ * is a plan seed, the work-items row offered decisions the drawer refuses to draw.
  *
- * Those are exactly the "(status x provenance) pairs" the card names, and the
- * disagreement is the drift it was filed to catch. Acceptance 4 names the side
- * that is right: "a seed that claims a decision is offered only 'record it'",
- * which is the drawer's answer, not the row's. The row is the one that lies.
+ *   T-2001  review + seed   row was: [Approve, Request changes, Reject] (each a
+ *                                     `task new` + comment on `{new id}`)
+ *                           drawer:   [Record this work item]
+ *                           now:      row == drawer == [Record this work item]
+ *   T-2003  ready  + seed   row was: [Approve, Reject]; drawer [Record this work
+ *                           item]; now row == drawer == [Record this work item]
+ *
+ * Acceptance 4 named the side that was right: "a seed that claims a decision is
+ * offered only 'record it'", which was the drawer's answer. The row was the one
+ * that lied, and the fix was to make `decisionsFor` ask `isPromise` before it
+ * switches on status -- the row's own `decisionArgv` had been building the seed's
+ * `task new` argv all along, so the label contradicted the command beneath it and
+ * not merely the drawer. `T-2002` (review, recorded) still draws the review three,
+ * which the file asserts separately so the fix cannot be mistaken for a blanket
+ * removal of the review vocabulary.
  */
 import { expect, test } from '@playwright/test'
 
@@ -160,14 +165,15 @@ async function closeDrawer(page) {
 
 test.describe('T-0176: the decision is offered where the decision is claimed', () => {
   test('the work-items row and the drawer draw the same decisions, per status x provenance', async ({ page }) => {
-    test.fail(true,
-      'T-0176 FAIL (bundle f0c4d64+dirty, stale): a plan seed that claims a decision is drawn as '
-      + 'review decisions in the work-items row and as `Record this work item` in the drawer. '
-      + 'T-2001 (review x seed): row [Approve, Request changes, Reject] with `task new` argv, '
-      + 'drawer [Record this work item]. T-2003 (ready x seed): row [Approve, Reject], drawer '
-      + '[Record this work item]. Card acceptance 4 names the side that is right: a seed that '
-      + 'claims a decision is offered only the record (links.spec.js:181). The row is the one '
-      + 'that lies; the drawer comment says making a promise decidable is T-0180.')
+    // The marker that stood here is gone: the row now draws the record for a seed,
+    // which is the side the card's acceptance 4 names as right, and the two
+    // derivations agree on all four claim rows. Measured 2026-09-22 on bundle
+    // `001be7a` + this pane's fix: `T-2001` (review x seed) row
+    // `[Record this work item]` == drawer; `T-2003` (ready x seed) the same;
+    // `T-2002` (review, recorded) and `T-2008` (blocked review) keep the review
+    // three. Before the fix the row drew `[Approve, Request changes, Reject]` for
+    // `T-2001` against the drawer's `[Record this work item]`.
+    //
     // Acceptance 3 and 4 together: for every (status x provenance) pair whose row
     // *claims* a decision -- `status === 'review'`, or a plan promise parked on the
     // leader (seed + ready + owner human) -- the controls the row draws are the
@@ -189,11 +195,17 @@ test.describe('T-0176: the decision is offered where the decision is claimed', (
       expect(line.row, `${line.id} (${line.status} x ${line.provenance ? 'seed' : 'store'}): `
         + 'the row draws the decisions the drawer draws').toEqual(line.drawer)
     }
-    // The two rows that disagree, named, so the failure is a fact and not a diff.
-    expect(table.find((l) => l.id === 'T-2001').row).toEqual(['Approve', 'Request changes', 'Reject'])
+    // The two seed rows, named, so a regression is a fact and not a diff: a seed is
+    // offered the record and only the record, whatever its status says. The status
+    // is the promise's *plan* status, and offering `approve` for it would build a
+    // `task move` against a work item that does not exist.
+    expect(table.find((l) => l.id === 'T-2001').row).toEqual(['Record this work item'])
     expect(table.find((l) => l.id === 'T-2001').drawer).toEqual(['Record this work item'])
-    expect(table.find((l) => l.id === 'T-2003').row).toEqual(['Approve', 'Reject'])
+    expect(table.find((l) => l.id === 'T-2003').row).toEqual(['Record this work item'])
     expect(table.find((l) => l.id === 'T-2003').drawer).toEqual(['Record this work item'])
+    // And the recorded row keeps the three, so the fix is a narrowing and not a
+    // blanket replacement of the review vocabulary.
+    expect(table.find((l) => l.id === 'T-2002').row).toEqual(['Approve', 'Request changes', 'Reject'])
   })
 
   test('Approve on a recorded review item sends comment then task move --to done', async ({ page }) => {

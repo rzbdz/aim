@@ -299,7 +299,27 @@ const DECISIONS = {
  */
 const NEW_ID = '{new id}'
 
+/**
+ * The decisions this row draws, and the seed case is the one the `status` switch
+ * was getting wrong.
+ *
+ * Keying on `status` alone puts every `review` row in the review three, including
+ * the rows `needsDecision` admits because they are promises -- and a promise has no
+ * work item for `approve`'s `task move` to act on. Measured on the served bundle
+ * before this: `T-2001` (`review`, `provenance: "plan seed 12"`) drew
+ * Approve/Request changes/Reject while the drawer drew `Record this work item`, and
+ * the row's own `decisionArgv` already built that seed's `task new` argv for the
+ * click -- so the label contradicted the command underneath it, not merely the
+ * drawer. That is the rule two paragraphs up ("offering a decision for work that
+ * has never been recorded is the control that lies", `links.spec.js:181`) applied
+ * one line further down, and it is what T-0176's marker measures.
+ *
+ * A promise therefore takes the `ready` list -- the single record -- whatever its
+ * status says. The status is a promise's *plan* status, which is the whole reason
+ * it is not work.
+ */
 function decisionsFor(task) {
+  if (isPromise(task)) return DECISIONS.ready
   return DECISIONS[task?.status === 'ready' ? 'ready' : 'review'] || []
 }
 
