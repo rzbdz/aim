@@ -464,9 +464,18 @@ test('a phase is said in English, and the enum stays available but secondary', a
   // raw in the tab, the descriptions table, the refusal filter and the history.
   // No surface in the audit page may show a raw phase as its label -- the enum is
   // only allowed where a reader asked for it (a tooltip).
+  // The wait is the assertion's, not a sleep. `page.goto` resolves when the
+  // document is loaded, and `#/barrier` is a lazily-imported route whose tab
+  // strip is drawn from the payload the pane fetches after it mounts -- so a
+  // `allTextContents()` on the next line is a race against that render, and it
+  // loses often enough to matter: measured, a single-file run passed 13/13 while
+  // two full-suite runs this hour read the strip as empty in 1 of 2. Reading it
+  // as `await expect(tabs).not.toHaveCount(0)` is the same assertion with the
+  // retry the locator already implements, so a slow render waits and a pane that
+  // genuinely draws no tab still fails here rather than one line later.
   await page.goto('/#/barrier')
+  await expect(page.locator('.el-tabs__item').first()).toBeVisible()
   const tabs = await page.locator('.el-tabs__item').allTextContents()
-  expect(tabs.length).toBeGreaterThan(0)
   for (const tab of tabs) {
     expect(tab).not.toMatch(/SEALED_DIVERGENT|CROSS_EXAMINE|SYNTHESIS/)
   }
