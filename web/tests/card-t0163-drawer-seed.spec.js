@@ -60,10 +60,14 @@
  * ---------------------------------------------------------------------------
  * VERDICT, re-measured 2026-09-22T11:36Z against bundle 59b99a9+dirty (built
  * 11:36:51Z, `/api/revision` stale false) and three times before it: all three
- * tests pass, with no annotation left in the file. The "measured" paragraph above
- * describes `870b282+dirty`, the bundle all three markers were written against;
- * each item below says what the defect was and which commit closed it, because
- * that is the record of why each marker existed. No assertion in this file was
+ * tests pass, with no annotation left in the file. Re-run once more to close, at
+ * 11:52Z against `cf5f838+dirty` (11:52:40Z, stale false): the same three pass,
+ * three runs in a row, and the JSON reporter reads `status: 'passed'`,
+ * `expectedStatus: 'passed'`, `annotations: []` for each. The "measured" paragraph
+ * above describes `870b282+dirty`, the bundle all three markers were written
+ * against; each item below says what the defect was and which commit closed it,
+ * because that is the record of why each marker existed. No assertion in this file
+ * was
  * changed at any point -- only markers were removed, and only on the JSON
  * reporter's own evidence that the body had started passing.
  *

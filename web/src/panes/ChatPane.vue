@@ -724,20 +724,26 @@ async function sendDirect() {
                      its unread count is 0 by construction and a count-only marker
                      drew nothing for exactly the thread T-0172 was filed about).
 
-                     And it is drawn for *every* row, because a marker that is
-                     only present when it is bad cannot be told from a marker that
-                     failed to render: silence was the old state on both. A row
-                     waiting on the reader says how much, one they answered says
-                     `clear`, and `clear` is a claim about that thread alone. -->
-                <el-tag class="aim-unread" size="small"
-                        :type="t.unread ? 'danger' : threadNeedsMe(t) ? 'warning' : 'success'"
-                        :effect="t.unread || threadNeedsMe(t) ? 'dark' : 'plain'"
+                     It is drawn only where it says something: a row waiting on
+                     the reader, or one holding messages the reader has not
+                     receipted. An earlier version drew it on *every* row, "clear"
+                     included, on the argument that a marker which is only present
+                     when it is bad cannot be told from one that failed to render.
+                     Measured against the suite, that argument costs more than it
+                     pays: `chat.spec.js:207` asserts the badge is absent on
+                     `claude-session1 ⇄ codex` (someone else's mail) and got a
+                     "clear" chip instead, and T-0172's own filter clause counts
+                     `marked` by the presence of this element, so "clear" rows made
+                     `marked` 6 where the filter keeps 3. A marker on a row with
+                     nothing to report is a second, weaker claim about the fixture
+                     wearing the same class as the real one. -->
+                <el-tag v-if="t.unread || threadNeedsMe(t)" class="aim-unread" size="small"
+                        :type="t.unread ? 'danger' : 'warning'"
+                        :effect="'dark'"
                         :title="t.unread
                           ? `${t.unread} message(s) addressed to ${board.viewer} with no receipt yet`
-                          : threadNeedsMe(t)
-                            ? `this thread is waiting on ${board.viewer}`
-                            : `nothing in this thread is waiting on ${board.viewer}`">
-                  {{ t.unread || (threadNeedsMe(t) ? 'needs me' : 'clear') }}
+                          : `this thread is waiting on ${board.viewer}`">
+                  {{ t.unread || 'needs me' }}
                 </el-tag>
                 <span class="aim-dim" style="font-size:10.5px">{{ (t.msgs.at(-1)?.ts || '').slice(5, 16).replace('T', ' ') }}</span>
               </div>

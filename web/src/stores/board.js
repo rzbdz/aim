@@ -50,15 +50,27 @@ const TOP_EPSILON = 2
  * -- whose value the component keeps at the current page ("0" on the Items pane,
  * "1" on the Gantt).
  *
- * Read off the live board (127.0.0.1:8777, probe
- * /tmp/aim-tasks/probe-t0163-realpage.mjs, no route interception, the rule
- * replicated in the page) that one box was the *only* hit on each of `#/items`,
- * `#/kanban`, `#/gantt` and `#/reports`. On four of the five main panes the veto
- * was therefore permanently on: the digest poll saw a new digest, `update()`
- * refused it, and the footer read "held back because a field has unsent text" for
- * a reader who had typed nothing. `tests/live.spec.js` and `tests/chat.spec.js`
- * were both green on the same code and red on the live board -- their fixtures
- * never rendered a paginator.
+ * Read off the live board (127.0.0.1:8777): that one box was the *only* hit on
+ * each of `#/items`, `#/kanban`, `#/gantt` and `#/reports` for the old rule, and
+ * it is the element the two rules disagree about. Replicated both against the
+ * same DOM in one page load -- `/tmp/aim-tasks/probe-t0163-obstruction.mjs`,
+ * which runs this rule and the old one side by side -- the pair reads
+ * `now: {"reason": null}` and `old: {"reason": "a field has unsent text", "el":
+ * {"type": "number", "value": "0", "aria": "Page"}}`. On four of the five main
+ * panes the veto was therefore permanently on: the digest poll saw a new digest,
+ * `update()` refused it, and the footer read "held back because a field has
+ * unsent text" for a reader who had typed nothing.
+ *
+ * The probe cited here is the *pair*, deliberately. An earlier version of this
+ * comment cited a probe that replicates only the old rule, and a reader who ran
+ * it would see the pager listed as a hit and conclude the veto is still on --
+ * which is a citation pointing at the wrong observation rather than at a wrong
+ * fact. Any rule replicated in a page is a copy of this function; a probe that
+ * prints what the shipped code answers is the only one that can settle whether
+ * they agree.
+ *
+ * `tests/live.spec.js` and `tests/chat.spec.js` were both green on the same code
+ * and red on the live board -- their fixtures never rendered a paginator.
  */
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'email', 'password', 'number'])
 
