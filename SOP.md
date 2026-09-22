@@ -1662,22 +1662,30 @@ chip, and the chip's phase is not the phase of the work. The chain is four hops:
     web/src/stores/board.js:296   phase: (s) => s.doc?.phase || '-'
     web/src/App.vue:312           <PhaseChip :phase="board.phase" ... />
 
-`gate_channel` (`aimboard/gate.py:43-45`) returns **the first channel, by sorted
-id, that the viewer participates in** — a rule written for a different question
-(*"which channel's phase governs a task that does not name one"*, its own
-docstring, `:37`). On the live root that resolves to, measured:
+`gate_channel` (`aimboard/gate.py:43-45`) is **three arms, not one** — first the
+first channel by sorted id that the viewer participates in, and, if the viewer
+participates in none, the first channel whose store exists, and failing that
+`channels[0]`. It is a rule written for a different question (*"which channel's
+phase governs a task that does not name one"*, its own docstring, `:37`). On the
+live root that resolves to, measured (raw event rows per store, which is the
+unit the last column is in):
 
-| seat | the chip shows | from channel | task rows in that channel |
-|---|---|---|---|
-| `claude-session1` | `SYNTHESIS` | `barrier-v0` | **6** |
-| `human` | `SYNTHESIS` | `barrier-v0` | **6** |
-| `codex` | `SEALED_DIVERGENT` | `dev` | **0** (``dev`` has no store at all) |
-| `codex-orangement` | `COMMIT` | `hello` | 495 |
+| seat | the chip shows | from channel | the arm it came through | raw task rows in that channel |
+|---|---|---|---|---|
+| `claude-session1` | `SYNTHESIS` | `barrier-v0` | participation | **6** |
+| `human` | `SYNTHESIS` | `barrier-v0` | **`tasks_exists`** — the leader is in no channel's `participants` | **6** |
+| `codex` | `SEALED_DIVERGENT` | `dev` | participation | **0** (``dev`` has no store at all) |
+| `codex-orangement` | `COMMIT` | `hello` | participation | 495 |
 
-**`hello` holds 495 of the root's 501 task rows and is the only channel with a
-rendered phase request, and two of the four seats are shown a different
-channel's phase for it.** A third is shown a channel that holds no tasks
-whatsoever. And nothing on the page — or in the payload — names the channel the
+**`hello` holds 495 of the root's 501 raw task rows and is the only channel with
+a rendered phase request, and three of the four seats are shown a different
+channel's phase for it.** The fourth seat resolves through a different arm of
+the function entirely: every channel is led by `human` and **no channel lists
+`human` among its `participants`**, so the leader's chip comes from
+`tasks_exists`, not from participation — and it lands on `barrier-v0` because
+that channel sorts first, even though the root's other store-bearing channel is
+the one they lead the work in. One seat in four is shown the channel with the
+work. And nothing on the page — or in the payload — names the channel the
 chip came from: the top-level keys are `phase` and `channels`, the chip's
 tooltip is `` `${key} — ${summary}. ${consequence}` `` (`PhaseChip.vue:28`), and
 the header's next element prints the withheld count, not a channel. So the
@@ -1963,20 +1971,24 @@ one question the ledger exists to answer.
 
 Part IV is a list of defects. This is the *set* view, because the leader asked
 for it directly — *状态机，范畴的关系* — and because the defects are better
-explained by the shape of the set than one at a time. There are **eleven**
+explained by the shape of the set than one at a time. There are **twelve**
 machines in this fabric. Counted from the table's own `mark` column: **five
-carry `ENFORCED` as their verdict, two are partial, and four are prose or
+carry `ENFORCED` as their verdict, two are partial, and five are prose or
 absent** — and the sentence and the column only agree because the split is read
 at the level of the *verdict* rather than the *word*. Six rows contain the
 string `ENFORCED`: rows 1, 4, 5, 6, 7 and **row 2, whose full mark is
 "ENFORCED at move, absent at birth"** — a partial machine that names the
-enforced half first. Counting the word gives 6/1/4; counting the verdict gives
-5/2/4. Both sum to eleven and the table is the same table.
+enforced half first. Counting the word gives 6/1/5; counting the verdict gives
+5/2/5. Both sum to twelve and the table is the same table.
 **This is the document's own recurring defect, one paragraph up from its own
 census**, so it is stated rather than smoothed: a count taken from a string is
 not a count taken from the thing. (An earlier pass counted eight; a reader re-deriving the list from
 the code found the two enforced machines the eight missed — room publication
-and push‑ack — and the event vocabulary the document already called a ninth.)
+and push‑ack — and the event vocabulary the document already called a ninth.
+A later pass added the twelfth, **closure**, which is not a machine of its own
+but the condition row 2's `review -> done` edge never reads; it is listed
+separately because an edge with an unread precondition is a different defect
+from an edge that is not enforced, and merging the two would hide the second.)
 
 | # | machine | store | edges | who may move it | where enforced | mark |
 |---|---|---|---|---|---|---|
@@ -2024,6 +2036,7 @@ stranger's write.)*
 | 9 | **obligation** (who owes the leader an action) | none | — | — | 5 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249,263,276,291,313`) | **ABSENT by design, on the record** |
 | 10 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
 | 11 | **event vocabulary** | the `event` field of a **task** row in `tasks.jsonl` | unenforced; the vocabulary lives in one declared list nothing reads | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing**; the fold has branches for eight names and its stray-name counter (`fold.py:120`) fires only for an event with no `created`, never for an unknown name | **PROSE — and the one writer outside the eight drops silently** |
+| 12 | **closure** (was the work done?) — not a competing machine but *the condition row 2's `review -> done` edge never reads* | `accept` on the card's `created` row (`bin/aim:1982`) | unenforced; nothing reads the sentence | — nothing reads it — | `--accept` is *"the sentence that makes this verifiable"* (`:4570`), and it is stored (`:1696`), folded (`fold.py:358`), exported (`exporters.py:174`), rendered (`components.py:33-35`) and **searched** (`:4158`) — and never *evaluated*. The only gate on `review -> done` is identity: `:2141` refuses `who == owner` unless `actor_exempt` (`:2126`), and `:2128` keeps the author out of `-> review`. Both are about *who*, and neither is about *what*. On the live root **64 cards carry a non-empty `accept` line and a recorded `moved`→`done`**, and **2** of the 65 recorded closes has a comment at or after the move (`T-0199`, `T-0219`); the vocabulary a task event can carry has **no** `evidence`, `verified` or `proof` field at all (28 keys, measured) | **PROSE — and the prose is written by the closer** |
 
 Measured for #4, on a throwaway root — this is the machine that is *better* than
 its documentation:
@@ -2167,7 +2180,7 @@ what sent me back to the scan: the two errors were one item — the three
 but absent from a literal scan, so "every literal" and "every name the store
 holds" were never the same set.)*
 
-**Two of the eleven cannot be seen from the page** — and they are not the same
+**Two of the twelve cannot be seen from the page** — and they are not the same
 kind of invisible. Row 8, the channel lifecycle, is computed on every
 `load_fabric` and dropped by `aimboard/api.py:363`'s projection, which keeps
 `id, topic, phase, round, leader, synthesizer, participants, history, sealed,
@@ -2180,6 +2193,20 @@ reader — not the JSON, not the CLI (`aim status --channel dev` prints the phas
 the leader, the rules and the participants, and no lifecycle), and not the page.
 And so does the event vocabulary's *absence of a reader* — no pane answers the
 question "did an `edited` ever land", because no pane would know the name.
+
+**The twelfth is visible, and that is worse.** The `accept` line is the one
+machine in this table that the front end shows *well*: the kanban draws it under
+each card with a three-line clamp (`KanbanPane.vue:442-447`, T-0161's own card),
+the timeline searches it (`GanttPane.vue:288`), and `web/src/concepts.js:170`
+states the rule the machine is missing, in the user's own words — *"The
+acceptance condition is the part that matters: without one, 'done' is an
+opinion."* So a reader is told, on the concepts page, that the acceptance
+condition is what makes `done` mean something; is shown the acceptance condition
+on every card; and may close the card without it, by any identity that is not
+its owner. Nothing on that path reads the field. **The claim is rendered; the
+check is not.** That is a sharper form of the document's recurring defect than a
+dropped field, because the drop is invisible and this one is on screen — the
+board teaches the rule it does not run.
 
 ## IV-c.2 The relations between the categories
 
