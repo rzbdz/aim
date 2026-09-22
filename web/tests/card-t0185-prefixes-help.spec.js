@@ -104,7 +104,20 @@ const STATE = () => ({
 })
 
 /** Every route the shell registers (`web/src/views/*.js`). */
-const ROUTES = ['/attention', '/items', '/chat', '/kanban', '/gantt', '/plan', '/barrier', '/help', '/reports']
+/**
+ * Every route the shell registers (`web/src/views/*.js`), with the heading the
+ * shell draws for it.
+ *
+ * The heading is what `open()` asserts against, because the hash is committed
+ * before the lazy pane is: `.aim-main` exists in every frame, so waiting on it
+ * is satisfied by the pane the reader is leaving. The strings are the `title` of
+ * each `views/*.js`, which is what `App.vue` renders into `.aim-page h2`.
+ */
+const ROUTES = [
+  ['/attention', 'Attention'], ['/items', 'Work items'], ['/chat', 'Conversations'],
+  ['/kanban', 'Kanban'], ['/gantt', 'Gantt'], ['/plan', 'Plan & risks'],
+  ['/barrier', 'Audit & barrier'], ['/help', 'Help & concepts'], ['/reports', 'Reports'],
+]
 
 /**
  * Every token in the rendered text that names a work item, a milestone, a
@@ -147,7 +160,18 @@ const collectTokens = (page, phases) => page.evaluate((phaseNames) => {
 
 const reachable = (t) => (t.linked && (t.fragment ? t.resolves : true)) || t.atDefinition || t.inDrawer
 
-async function open(page, route) {
+/**
+ * Land on a route, and be sure it is the route that rendered.
+ *
+ * The heading is the gate, not `.aim-main`: every pane's frame has `.aim-main`,
+ * and the hash is committed before the lazy chunk resolves, so a wait on either
+ * alone is satisfied by the pane the reader is leaving. `App.vue` draws
+ * `.aim-page h2` from the route's own `title`, and `vue-router` commits only
+ * after the chunk has resolved -- so a heading naming this route is this route
+ * being on screen. Measured on a cold `/reports`: without this gate the walk
+ * collected Help's nine anchors and resolved eight of them as missing.
+ */
+async function open(page, route, title) {
   await page.route('**/api/state**', (r) => r.fulfill({
     contentType: 'application/json', body: JSON.stringify(STATE()),
   }))
@@ -160,20 +184,30 @@ async function open(page, route) {
   // the bundle, not about this test, and it is recorded here rather than waited
   // out.
   await page.goto(`/#${route}`, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('.aim-main, .aim-reader, main').first()).toBeVisible()
+  await expect(page.locator('.aim-page h2')).toHaveText(title)
 }
 
 test.describe('T-0185: every identifier in the text has a way in', () => {
   test('the walk: no route renders a token with nowhere to go', async ({ page }) => {
     test.fail(true,
-      'T-0185 FAIL (bundle 870b282+dirty, stale): unlinked tokens per route -- /attention 1, '
-      + '/items 3 (T-0001, M1, M2), /barrier 6 (every phase enum in the refusal strip), /help 13, '
-      + '/kanban 3, /gantt 1. /plan links M1/M2 as router links and is clean. Help\'s identifier '
-      + 'rows carry no id at all (HelpPane.vue:381 has no :id, against :282 and :323), so even a '
-      + 'link to D7 or R1 would have nothing to land on.')
+      'T-0185 re-measured 2026-09-22T11:41Z on bundle 59b99a9+dirty (stale false), five runs: three '
+      + 'routes still render a token this walk cannot reach -- /attention "T-0001, T-0001, M1", '
+      + '/items the same three, /gantt the same three of its five. The original measurement below is '
+      + 'kept because it is the card\'s history, and the numbers have moved a long way toward it. '
+      + 'Of the three remaining tokens, T-0001 is not dead: the panes draw it as a control '
+      + '(TaskLink.vue:74 is a `<button class="aim-task-link" aria-label="Open work item T-0001">` '
+      + 'that opens the drawer, and the attention row is an `article[role="button"]` with '
+      + '`aria-label="Open task T-0001: …"`), but `collectTokens` only recognises the drawer shapes '
+      + '`[aria-label^="Inspect task"]` and `.aim-row-decisions`, so the predicate is what cannot see '
+      + 'it. The milestone token M1 is genuinely unlinked and no predicate reaches it -- that is the '
+      + 'real remaining work, and it is pane-side, not this file\'s. '
+      + 'ORIGINAL: unlinked tokens per route -- /attention 1, /items 3 (T-0001, M1, M2), /barrier 6 '
+      + '(every phase enum in the refusal strip), /help 13, /kanban 3, /gantt 1. /plan links M1/M2 as '
+      + 'router links and is clean. Help\'s identifier rows carry no id at all, so even a link to D7 '
+      + 'or R1 would have nothing to land on.')
     const failures = []
-    for (const route of ROUTES) {
-      await open(page, route)
+    for (const [route, title] of ROUTES) {
+      await open(page, route, title)
       const tokens = await collectTokens(page, PHASES)
       const bad = tokens.filter((t) => !reachable(t))
       failures.push({ route, tokens: tokens.length, bad: bad.map((t) => t.token) })
@@ -190,15 +224,23 @@ test.describe('T-0185: every identifier in the text has a way in', () => {
     // Acceptance 2. The phase rows have ids and the identifier rows do not, which
     // is what makes the `D`/`R` vocabulary unlandable: the pane that explains the
     // prefixes is the one pane a prefix cannot link to.
-    await open(page, '/help')
-    const identifierRows = page.locator('#identifiers tr')
-    const phaseRows = page.locator('#phases tr')
+    await open(page, '/help', 'Help & concepts')
+    // `#identifiers` is the id of the *section card* (`HelpPane.vue` puts it on
+    // the `el-card`), so `#identifiers tr` counts the header row too: measured
+    // 5 rows and 4 ids, with the 4 being `prefix-t/-m/-d/-r` on the body rows.
+    // The header is not an identifier row and the acceptance is about the rows
+    // that carry a prefix, so the query is scoped to the table's body. Re-measured
+    // 2026-09-22T11:41Z on bundle 59b99a9+dirty (stale false), three runs, green.
+    const identifierRows = page.locator('#identifiers tbody tr')
+    const phaseRows = page.locator('#phases tbody tr')
     await expect(identifierRows.first()).toBeVisible()
     await expect(phaseRows.first()).toBeVisible()
 
     const ids = (locator) => locator.evaluateAll((els) => els.map((el) => el.id))
     const ident = await ids(identifierRows)
     const phase = await ids(phaseRows)
+    expect(ident.length, 'the identifier table has no body rows, so "every row carries an id" is not measurable')
+      .toBeGreaterThan(0)
     expect(phase.filter(Boolean).length, 'the phase rows are addressable').toBeGreaterThan(0)
     expect(ident.filter(Boolean).length, "Help's identifier rows carry ids")
       .toBe(ident.length)
@@ -207,15 +249,30 @@ test.describe('T-0185: every identifier in the text has a way in', () => {
   test('every phase chip in the panes lands on an element that exists', async ({ page }) => {
     // Acceptance 1's second half. A link that names an id nothing carries is a
     // link that cannot arrive, and it is invisible to a reader until they click.
+    //
+    // How the pair is read matters, and it cost this test a false red. The links
+    // are collected in one round trip and then each fragment is resolved in a
+    // *second* one, and `open()` waits on `.aim-main`, which every pane's frame
+    // has. On a cold route that wait is satisfied by the pane the reader is
+    // leaving, so the collect can happen against Help's frame and the resolve
+    // against the frame that replaced it -- measured on `/reports`: nine anchors
+    // collected (Help's eight sections plus the shell's `#aim-main`), eight of
+    // them reported broken, `#aim-main` the only one that still resolved. That is
+    // the signature of the race, not of a missing id: Help and its eight sections
+    // resolve together or not at all.
+    //
+    // Both halves are therefore resolved in the same round trip as the collect,
+    // and `open()` asserts the route it asked for is the one on screen, so a
+    // lagged frame cannot be measured as this route's. Neither change relaxes the
+    // assertion: every link still has to name an id that is in the DOM.
     const broken = []
-    for (const route of ROUTES) {
-      await open(page, route)
-      const anchors = await page.locator('a[href^="#"]:not([href^="#/"])').evaluateAll(
-        (els) => els.map((el) => el.getAttribute('href').slice(1)))
-      for (const fragment of anchors) {
-        if (!await page.evaluate((id) => Boolean(document.getElementById(id)), fragment)) {
-          broken.push(`${route}: #${fragment}`)
-        }
+    for (const [route, title] of ROUTES) {
+      await open(page, route, title)
+      const read = await page.evaluate(() => [...document.querySelectorAll('a[href^="#"]:not([href^="#/"])')]
+        .map((el) => el.getAttribute('href').slice(1))
+        .map((fragment) => ({ fragment, resolves: Boolean(document.getElementById(fragment)) })))
+      for (const { fragment, resolves } of read) {
+        if (!resolves) broken.push(`${route}: #${fragment}`)
       }
     }
     expect(broken, 'in-page links whose id is not in the DOM').toEqual([])

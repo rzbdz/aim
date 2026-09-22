@@ -22,7 +22,7 @@
  * copies: the contents from the five cards below, the pane directory from
  * `ctx.views`.
  */
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import PhaseChip from '../components/PhaseChip.vue'
 import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASE_ACCESS, PHASES, TRANSITIONS, phaseAnchor } from '../concepts'
 import { STATUS_TYPE, statusLabel } from '../theme'
@@ -30,6 +30,20 @@ import { useBoard } from '../stores/board'
 
 const board = useBoard()
 const ctx = inject('ctx')
+
+/**
+ * The shell's reading pane, which is the element that actually scrolls here.
+ *
+ * `el-anchor` resolves its `container` once (in a watcher with no `immediate`)
+ * and never looks again, so a string selector handed to it is resolved against
+ * the DOM at mount time -- and every pane on this board is a lazy chunk mounted
+ * into `.aim-main`, which means the string is only safe by accident. This ref is
+ * the element, found after mount in the same tick `el-anchor` initialises, so
+ * the contents scrolls the pane the reader is reading rather than the window
+ * that never moves (`style.css:148`).
+ */
+const scroller = ref(null)
+onMounted(() => { scroller.value = document.querySelector('.aim-main') })
 
 /**
  * The shell's groups, in the shell's order, over the panes it registered.
@@ -46,29 +60,6 @@ const PANE_GROUPS = [
   { title: 'Governance', keys: ['barrier', 'plan', 'org'] },
   { title: 'Reference', keys: ['help'] },
 ]
-
-/**
- * Move the pane's own scroller to a row, and keep the address bar honest.
- *
- * A plain `<a href="#phase-commit">` cannot be used here: in hash mode the whole
- * route lives *in* the fragment, so the browser's own fragment jump rewrites the
- * route to `phase-commit` ("no such pane") and moves the window, which this shell
- * does not scroll. `main.js:141-158` resolves a fragment against `.aim-main` for
- * exactly that reason, and this is the same move made by the page that owns the
- * links -- same selector, same 12px offset, so a row lands identically whether the
- * reader followed a chip or a contents line. The fragment is replaced rather than
- * pushed, so Back still returns to the pane the reader came from.
- */
-function goTo(id) {
-  const scroller = document.querySelector('.aim-main')
-  const target = document.getElementById(id)
-  if (!scroller || !target) return
-  const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-  scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 12), behavior: 'smooth' })
-  const parts = String(window.location.hash || '').split('#')
-  parts[parts.length - 1] = id
-  history.replaceState(null, '', parts.join('#'))
-}
 
 /**
  * The pane directory, straight off the shell's own registrations.
@@ -414,17 +405,38 @@ const ACTIONS = computed(() => {
 
     <!-- The contents and the pane map, first, because the two complaints this
          page earned were "no way in" and "never says what any pane is for", and
-         both are about the reader who has not started reading yet. -->
+         both are about the reader who has not started reading yet.
+
+         The contents is `el-anchor`, not a list of buttons. The shell's scroller
+         (`.el-main.aim-main`, `style.css:148`) scrolls on the window's behalf, so
+         every ordinary in-page link is a dead end: `main.js:120-175` exists to
+         re-implement the jump the browser will not do here. `el-anchor` takes the
+         scroller as its `container`, so the library does the jump and marks the
+         current section off that same element instead of off a second opinion
+         about where the reader is. `container` is the element and not the
+         selector `'.aim-main'`: the container is resolved once inside a watcher,
+         and a string that matched nothing on the first tick would leave the
+         component scrolling the window and marking nothing.
+
+         The `title` is the section list's own, so the contents cannot link to a
+         heading that was renamed underneath it, and the heading is the `title`
+         slot because that is where `el-anchor` puts its label.
+
+         The click's default is cancelled, and that is not belt-and-braces: in
+         hash mode `href="#glossary"` is the *route* `#/glossary`, so the
+         browser's own jump navigates and this pane unmounts -- `el-anchor`
+         scrolls its container but never calls `preventDefault`, and measured on
+         the served bundle the click left `#/help` entirely. The library's
+         `handleClick` runs on the target before this modifier runs on the
+         wrapper, so cancelling here stops the navigation and keeps the scroll
+         the content was actually after. -->
     <el-card shadow="never" style="margin-bottom:14px">
       <template #header><span>On this page</span></template>
-      <ol class="aim-help-contents">
-        <!-- A button, not an `<a href="#id">`: see `goTo` above -- in hash mode
-             the route is the fragment, so the browser's own jump is a navigation
-             to a pane that does not exist. -->
-        <li v-for="entry in SECTIONS" :key="entry.id">
-          <button type="button" class="aim-help-toc" @click="goTo(entry.id)">{{ entry.title }}</button>
-        </li>
-      </ol>
+      <el-anchor class="aim-help-contents" :container="scroller" :offset="0" :bound="15" type="underline">
+        <el-anchor-link v-for="entry in SECTIONS" :key="entry.id" :href="'#' + entry.id" @click.prevent>
+          <template #title>{{ entry.title }}</template>
+        </el-anchor-link>
+      </el-anchor>
       <p class="aim-dim" style="font-size:12px;margin:10px 0 0">
         Every section also has a stable anchor — <code class="aim-mono">{{ SECTIONS[0].id }}</code>,
         <code class="aim-mono">phase-commit</code>, <code class="aim-mono">concept-barrier</code> — which is
@@ -756,9 +768,8 @@ const ACTIONS = computed(() => {
         convention held in the plan files rather than a vocabulary the tool defines, so each row says who
         is the authority for it and how many exist in the record right now. Every row carries an anchor —
         <code class="aim-mono">prefix-t</code>, <code class="aim-mono">prefix-m</code>,
-        <code class="aim-mono">prefix-d</code>, <code class="aim-mono">prefix-r</code> — and that anchor
-        is the id a bare letter and number elsewhere on the board resolves to, so the explanation the
-        reader is sent to is the row that defines the prefix they clicked.
+        <code class="aim-mono">prefix-d</code>, <code class="aim-mono">prefix-r</code> — and a bare
+        identifier in another pane's text links to the row that defines its prefix.
       </p>
       <table class="aim-help-table">
         <thead>
@@ -825,29 +836,9 @@ const ACTIONS = computed(() => {
 </template>
 
 <style scoped>
-/* The contents is long enough to need two columns at a desktop width and one on
-   a phone, so it wraps rather than pushing the pane's own scroller sideways. */
-.aim-help-contents {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 4px 24px;
-  margin: 0;
-  padding-left: 20px;
-}
-/* A button, reset to look like the link it is: it moves the scroller itself
-   (see `goTo`), which an `<a href="#…">` cannot do in hash mode. */
-.aim-help-toc {
-  border: 0;
-  background: none;
-  padding: 2px 0;
-  font: inherit;
-  font-size: 13px;
-  color: var(--el-color-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.aim-help-toc:hover { text-decoration: underline; }
-.aim-help-toc:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; border-radius: 4px; }
+/* No rule for the contents: `el-anchor` draws its own list, marker and active
+   state, and a local copy of any of those is a second answer to "which section
+   is the reader in" (`el-anchor.css`). */
 .aim-help-pane-group + .aim-help-pane-group { margin-top: 10px; }
 .aim-help-pane-group h4 {
   margin: 0 0 2px;

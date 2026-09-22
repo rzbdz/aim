@@ -176,7 +176,14 @@ test('T-0186: Help opens with a map of every pane, in the shell\'s own words', a
  * behaviour, which is a different lie than the one this clause forbids.
  */
 test('T-0186: one click reaches any section, and Element Plus says which one', async ({ page }) => {
-  test.fail(true, 'measured 2026-09-22 on bundle 870b282+dirty: the pane renders 0 .el-anchor containers and 0 .el-anchor__link items, so nothing at the top of the 4308px page is clickable to a section')
+  // Clause 2's defect was measured 2026-09-22 on bundle 870b282+dirty: the pane
+  // rendered 0 `.el-anchor` containers and 0 `.el-anchor__link` items, so nothing
+  // at the top of the 4308px page was clickable to a section. `HelpPane.vue` now
+  // renders `<el-anchor :container="scroller">` with one `el-anchor-link` per
+  // section, and on bundle 59b99a9+dirty (re-measured 11:42Z, three runs) this
+  // test's body passes -- reported by the JSON reporter as "Expected to fail, but
+  // passed", which is what licenses removing the marker. The assertions below are
+  // untouched.
   await openHelp(page)
 
   const toc = await page.evaluate(() => {
