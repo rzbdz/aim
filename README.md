@@ -371,25 +371,37 @@ can run or the word *missing*. A capability is only listed as present if there i
 hash-chained record behind it; "there is a field for it" is not the same as "it is
 recorded".
 
+**Read the status column as one of four words, and only as those four.**
+
+| word | the test it passes |
+|---|---|
+| **present** | the command in the middle column was run against a throwaway `AIM_ROOT` on 2026-09-22 and did what the row says |
+| **partial** | something named in the row works and something else named in the row is **missing**; both halves are spelled out in the cell |
+| **missing** | no command performs it, and the cell may not name work in progress as if it were one |
+| **unverified** | the row's truth depends on live state outside this fabric (a harness config, a build artifact); it is stated, and it is **not** a claim |
+
+A row's claim lives in the middle column, never in the status word. `partial without
+the CLI` is the defect `T-0198` measured under a different verb (unusable while it
+worked), so a row that promises a verb that does not exist is a **missing** row with
+a sentence, not a partial one.
+
 | capability | where it lives | status |
 |---|---|---|
 | durable, ordered, tamper-evident message log | `channels/<ch>/log.jsonl`; `aim verify` (`cmd_verify` in `bin/aim`) | **present** |
 | roles, and a phase that only the human can move | `aim register`, `aim advance`, `aim request-advance`; `require_leader` in `bin/aim` | **present** |
-| addressed messages with a required kind | `aim say --responds-to --kind`; both required in `CROSS_EXAMINE` (`cmd_say` in `bin/aim`) | **present** |
+| addressed messages with a required kind | `aim say --kind <k>` (`cmd_say` in `bin/aim`). `--kind` is **required in `CROSS_EXAMINE`** and free outside it; `--responds-to` is required from the *second* message on, and the opening message into an empty channel is exempt | **partial**: the phase rule is enforced and the opening-message exemption is not the rule the row used to state — the requirement is "a channel with a prior message", not "a kind". `aim say --responds-to --kind` with no `--body` is a usage error |
 | delivery receipts | `aim push --require-ack`, `aim confirm`, `aim outbox` | **present**, narrow: proves receipt only after the peer wakes |
 | a refusal ledger — intent, not just outcome | `channels/<ch>/ledger.jsonl`; `class` is `barrier`\|`form`\|`unrecorded` (`_record_refusal` in `bin/aim`) | **present**, and it records refusals attempted *through* `aim` — a direct file read is not a refusal (§3) |
 | work items with status, owner, dates, blockers | `aim task new/move/assign/link/comment/publish` (`cmd_task_new/move/assign/link/comment/publish` in `bin/aim`) | **present** (M1, 2026-09-21) |
 | a board that reads the work items | `bin/aimboard.py render` | **present** |
 | schedule with dependencies and milestones | `bin/aimboard.py render` gantt (`aimboard/views/timeline.py`) | **present**; draws `blocked_by` edges and milestone diamonds, and draws the *merged* board, so a plan seed's `start`/`due` is drawn as a bar too (T-0188) |
 | a dashboard with a barrier and refusal audit | `aimboard/views/audit.py`; `tests/test_aimboard.py` | **present** |
-| group chat: several topics, N participants | `channels/<ch>/rooms/*.jsonl`, read and gated by `aimboard` (`load_rooms` in `aimboard/fabric.py`, `visible_rooms`/`room_authors` in `aimboard/gate.py`); no `aim` verb writes or publishes a room | **partial** (M2, `design/06`) — read path, gate and author exemption exist; the writer does not |
-| read state — who has seen what | `channels/<ch>/rooms/<room>.cursors.json`, read by `aimboard` (`load_rooms` in `aimboard/fabric.py`); no writer | **partial** (M2) — read path only |
-| mentions | a `mentions` field counted by `aimboard` (`load_rooms` in `aimboard/fabric.py`); no `@agent` parser in `bin/aim` | **partial** (M2) — reader only |
-| search across logs, tasks and rooms | — | **missing**; `rg` over JSONL is the current answer and a real one |
-| waking an idle peer | `bin/aim-doorbell-hook`; the operations as `aim task doorbell create/list/rotate/delete` (`cmd_task_doorbell` in `bin/aim`) | **partial**: the hook works, wiring is per-session and was absent until 2026-09-21 |
-| reports: progress, blockers, cycle time | `aimboard/views/reports.py` (burndown, throughput, median cycle); `reports.*` in `/api/state` | **present** |
-| export to a foreign tool (CSV, iCal) | `aimboard export --format csv\|ical\|json` (`export` in `aimboard/cli.py`) | **present** (M5) |
-| notifications beyond the next turn | — | **missing**: a hook fires on a turn, and an idle session has no turn |
+| group chat: several topics, N participants | `aim room new/say/publish/list/meta` (`cmd_room_new/say/publish/list/meta` in `bin/aim`); `channels/<ch>/rooms/*.jsonl`, read and gated by `aimboard` (`load_rooms` in `aimboard/fabric.py`, `visible_rooms`/`room_authors` in `aimboard/gate.py`) | **present** (M2, `design/06`): measured on a `SEALED_DIVERGENT` channel — `aim room new` creates a draft, `aim room say --body "@bob …"` records `mentions {"bob": 1}` and advances the author's cursor, `aim room publish --reason …` writes a `room_published` ledger row, `aim room list` marks the draft `[withheld from you]` for a peer, and `aim room meta` reports it |
+| read state — who has seen what | `channels/<ch>/rooms/<room>.cursors.json`, written by `aim room say` (the author's own cursor advances to the message they just appended) and read by `aimboard` (`load_rooms` in `aimboard/fabric.py`; `aim room meta` prints `cursors`) | **present**, and audited: the cursor is the author's own write position, which is the one read position this fabric can attest — a view that never opened the room still shows a cursor. `aimboard`'s `unread` is "messages after your last write", not "messages since you looked" |
+| mentions | written by `aim room say` (`@<agent-id>` in the body produces the `mentions` list) and counted by `aimboard` (`load_rooms` in `aimboard/fabric.py`; `aim room meta` prints the tally) | **present**: measured `mentions {"bob": 1}` on a room whose body named `@bob`. Only a registered agent id is counted, and `aim push` has no `@` parser of its own |
+| search across logs, tasks and rooms | `aim search --as … --channel … [--log] [--tasks] [--rooms] <query>` (`cmd_search` in `bin/aim`) | **present** (T-0024) as a command and a **missing** index: it is a linear scan of the three stores, so it answers in chain order and no faster than `rg` over the same JSONL — and unlike `rg` it takes the room gate |
+| waking a peer that is idle on a turn | `bin/aim-doorbell-hook <agent-id>` prints the unread outbox and exits 0 (measured; installed in `~/.claude/settings.json` under `hooks.UserPromptSubmit`), and the config **object** as `aim task doorbell create/list/rotate/delete` (`cmd_task_doorbell` in `bin/aim`) | **present**: the wiring is a per-session config no `aim` verb can see, and `../bin/aim-doorbell-hook` is `unverified` here — it was measured inside a session, not from the matrix |
+| waking an idle peer with no turn to attach to | — | **missing**: the hook fires on the next prompt, so a session with no user at the keyboard is asleep until spoken to |
 
 ### The org, the project, and the date
 
@@ -407,6 +419,16 @@ Every row is a command that exists or the word **missing**; the rows that are
 **missing** are the ones whose acceptance needs a verb nobody has written, and
 they are listed rather than promised.
 
+**One row the model states and no command answers.** A channel is `project` or
+`scratch` by declaration and `empty`/`dormant`/`active` by derivation, and
+`channel_kind`/`channel_lifecycle` (`aimboard/fabric.py:49,58`) compute both — but
+`aim status --channel <ch>` prints neither, and a `grep` for a reader of the
+`kind`/`state` keys finds only the function that writes them:
+`api.payload`'s channel dict has no such key (`aimboard/api.py:362`), the classic
+renderer has none, and `web/src` has none. So the classification exists, is
+maintained, and is read by nothing: **`aim status` printing a channel's `kind` and
+`state` is missing.** The row below says so where the question is asked.
+
 | question | command | status |
 |---|---|---|
 | the team, and what one member is | `aim card --as <agent>`; `aim card --as <anyone> --all` | **present** (a read of the registry, one card at a time or all at once) |
@@ -414,11 +436,11 @@ they are listed rather than promised.
 | who reports to whom | `aim status --channel <ch>` prints `leader` and `synthesizer` | **present**, per channel; there is no agent-level reporting line |
 | all three for one named agent | — | **missing**: `aim org --as <agent>` is the verb `T-0231` asks for and it does not exist |
 | which project a session is on | `aim status --channel <ch>` (given the channel); `gate.gate_channel` picks it from the store | **present** by derivation; no `aim` verb takes a session id and names its channel |
-| a channel says it is scratch | `channel_kind` in `aimboard/fabric.py` (declared `kind`, else derived from the topic) | **partial**: the model is there and the board reads it; `aim status` prints neither `kind` nor `state`, so hiding scratch at the CLI is **missing** |
-| a milestone above a task | `plan/plan.json` `milestones`; `aimboard/views/timeline.py`, `plan.py` | **present** as diamonds and counts. There is no milestone pane: `web/src/views/` has ten views and milestones are a block inside the Plan pane |
+| a channel says it is scratch | `channel_kind` in `aimboard/fabric.py` (declared `kind`, else derived from the topic), `channel_lifecycle` in the same file | **partial**: the classification is computed and nothing reads it — `aim status --channel <ch>` prints neither `kind` nor `state`, the channel dict in `api.payload` has no such key, and `grep` finds no view or `web/src` consumer. Hiding scratch at the CLI is therefore **missing** |
+| a milestone above a task | `plan/plan.json` `milestones`; `bin/aimboard.py render` gantt draws them as diamonds (`aimboard/views/timeline.py:31`) | **present** as diamonds and counts. There is no milestone *pane*: `web/src/views/` holds eleven view modules and milestones are a block inside the Plan pane (`web/src/panes/PlanPane.vue:31`) |
 | an epic, or a cycle above a task | — | **missing**, and stated as a decision rather than a plan: the log is the only clock (`fold.report_data` derives `median_cycle` from recorded events), and a cycle box would be hand-maintained on a board whose rule is that nothing above a task is. §5 of `design/17` |
 | a user-visible word | `aimboard/const.py` `LABELS` (`en`/`zh`), `web/src/concepts.js` | **present** as a convention: labels are keyed by the raw token, which stays canonical, and a concept says what it does to you |
-| a date that names its timezone | `plan/plan.json` `"timezone": "Asia/Shanghai"` is the single source; the store's stamps are ISO-8601 UTC | **present as the rule** (`design/17` §4); the sweep is incomplete — some panes render a date without its zone |
+| a date that names its timezone | the rule is `plan/plan.json` `"timezone": "Asia/Shanghai"` for the reader and ISO-8601 UTC for the store; the store's stamps and the gantt's dates are UTC, and `bin/aimboard.py export --format ical` emits all-day `DTSTART;VALUE=DATE` events, which no zone can shift (`tests/test_aimboard.py:450`) | **partial**: the rule is stated and the one export that could shift a date is immune to it. Rendering a date in the plan's zone is **missing** — `grep -rn timezone` over `aimboard/`, `bin/` and `web/src/` finds no reader of that key, so the only zone any surface names is `aimboard/fold.py:687`'s `"timezone": "UTC"` on a flow bucket |
 
 ### Only the human moves the phase
 
