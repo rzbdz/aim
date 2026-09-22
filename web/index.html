@@ -4,6 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>aim board</title>
+    <script>
+      // The palette, applied before the first paint. `App.vue` reads the same
+      // key through `useColorMode`, which runs when main.js does — after the
+      // bundle has arrived, which is one paint too late: a reload of a dark
+      // board flashed white first. This runs in the head, ahead of the module
+      // script, so the class is on <html> before anything is drawn. It is the
+      // only other writer of that class, and it writes the same value: the
+      // stored choice, never the operating system's, because `initialValue` is
+      // 'light' and a reader on a dark desktop has not asked this board to be
+      // dark. VueUse stores `'dark'` or, for the light mode whose value is the
+      // empty string, `''`.
+      try {
+        if (localStorage.getItem('aim-palette') === 'dark') {
+          document.documentElement.classList.add('dark')
+        }
+      } catch (e) {
+        // A browser that refuses storage (private mode, blocked site data)
+        // gets the light board rather than a script error before paint.
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>
