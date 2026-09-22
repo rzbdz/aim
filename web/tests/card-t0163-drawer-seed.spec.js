@@ -113,6 +113,18 @@
  * box is a field the reader has "typed in" or a number the page wrote itself.
  * That was the store owner's call and it was made in `2285af0`, on the evidence
  * in the comment there.
+ *
+ * Who measured what, because the "measured" paragraphs above describe three
+ * different sessions' work and this header is the only place that could say so.
+ * The mechanisms in 2a, 2b and 3 were found and isolated by the session that owns
+ * this file, with the probes named beside each one under `/tmp/aim-tasks/`; the
+ * two fixes are not this file's and were landed by the sessions that own
+ * `stores/board.js` and `TaskDecisionDrawer.vue`. The marker removals in
+ * `2285af0`, `59b99a9` and `c232c45` are the leader's, on the JSON reporter's
+ * evidence, and `c232c45` is also what replaced this header's first draft -- the
+ * re-measurement text that was written here at 11:36Z. Both readings are the
+ * same measurements; only the sentences are one session's instead of two, and
+ * the commit message does not name the other one.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -288,9 +300,19 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
     // 870b282+dirty, where `recordArgv()` sent no --estimate, --tag or --blocked-by
     // and the recorded work item lost 5 points, both tags and its dependency. That
     // defect is gone, so the marker inverted -- "Expected to fail, but passed" --
-    // and it is removed here. The assertions below are untouched, and nothing was
-    // relaxed to make the run green: the oracle is still the real `bin/aim`, and it
-    // still has to return every field.
+    // and the leader removed it in `c232c45`, on the JSON reporter's own evidence
+    // (`expectedStatus: 'passed'`, `status: 'passed'`, three runs in a row), which
+    // is the only reading that tells an inverted marker from a real failure. The
+    // assertions below are untouched, and nothing was relaxed to make the run
+    // green: the oracle is still the real `bin/aim`, and it still has to return
+    // every field.
+    //
+    // The reading that licensed it, verbatim from the same replay against the real
+    // tool: `missing: []` -- every `--flag` of the `wanted` table below is in the
+    // argv the drawer POSTed -- and
+    //   { estimate_pts: 5, tags: ["alpha", "beta"], blocked_by: ["T-0001"] }
+    // from the `created` event. What would have kept the marker: `missing`
+    // non-empty, or any of those three fields coming back thin.
     await open(page)
     const argv = await recordFromDrawer(page, SEED.id)
 
@@ -339,6 +361,18 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
     // jump box -- `<input type="number" aria-label="Page">`, never empty -- and
     // the store's field rule called it the reader's. Fixed in `2285af0`; the
     // assertion below is what caught it, and it is untouched.
+    //
+    // The evidence it rested on, because "a field has unsent text" is the store's
+    // sentence and not an observation: `probe-t0163-drawer.mjs` on this fixture
+    // logged one `/api/state` for `card-t0163-a` and none for `card-t0163-b` while
+    // `/api/digest` kept being polled, so the request was never issued rather than
+    // issued and dropped. `probe-t0163-veto.mjs` named the element -- type
+    // `number`, `aria-label` "Page", value "0", the only hit on the page.
+    // `probe-t0163-cause.mjs` ran the isolation: with that one input's value
+    // cleared in the DOM and nothing else changed, the poll fetched
+    // `card-t0163-b` and the head moved; untouched in the same run, it did not.
+    // What would have changed the conclusion: the drawer moving while the fetch
+    // count stayed at one, which would have put the defect back in the drawer.
     await open(page)
     let moved = false
     // The payload moves under the drawer the way a peer's write moves it: a new
