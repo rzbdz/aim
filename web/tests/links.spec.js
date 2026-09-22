@@ -170,9 +170,29 @@ test.describe('identifiers and summaries are ways in', () => {
     await expect(page.locator('.el-table__body')).toContainText('T-0002')
   })
 
-  test('the plan disagreement count opens the disagreements', async ({ page }) => {
+  /**
+   * The clause is that the plan's drift count is a way in. The *word* is not the
+   * clause.
+   *
+   * This test was written against a sentence that read "disagreement", and the
+   * pane no longer says that word anywhere -- T-0190 removed it on purpose, and
+   * its own spec (`card-t0190-plan-drift.spec.js:130`) asserts the absence:
+   * `expect(body).not.toMatch(/disagreement\(s\)/)`. So the filter below was
+   * asking for a link that must not exist, and it timed out for the length of its
+   * budget rather than failing on an assertion.
+   *
+   * Measured on the served bundle 2026-09-22, same fixture as this file:
+   * `.el-alert a` draws exactly one link, `attention page` -> `#/attention#drift`,
+   * and `filter({ hasText: 'disagreement' })` matches 0 elements. (The pane's
+   * other drift card, `#plan-drift-differs`, is titled "Plan and store differ on
+   * 1 field(s)" -- "differ", not "disagree".) The destination, the `#drift` card
+   * it lands on and every assertion after this line are unchanged; the address is
+   * the half that had drifted, and the two panes cannot both be right while this
+   * line stands.
+   */
+  test('the plan drift count opens the drift rows on the attention page', async ({ page }) => {
     await page.goto('/#/plan')
-    await page.locator('.el-alert a').filter({ hasText: 'disagreement' }).click()
+    await page.locator('.el-alert a').first().click()
     await expect(page).toHaveURL(/#\/attention#drift/)
     const drift = page.locator('#drift')
     await expect(drift).toBeVisible()
