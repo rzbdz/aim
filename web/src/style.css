@@ -235,3 +235,16 @@ body {
 .aim-sticky-head.el-card { overflow: visible; }
 .aim-sticky-head > .el-card__header { position: sticky; top: 0; z-index: 3;
                                       background: var(--el-bg-color); }
+
+/* -- Help & concepts ------------------------------------------------------ */
+.aim-help-concept + .aim-help-concept { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--aim-line); }
+.aim-help-concept h3 { margin: 0 0 6px; font-size: 14px; }
+.aim-help-concept p { margin: 0 0 8px; font-size: 13px; line-height: 1.6; }
+.aim-help-links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
+.aim-help-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.aim-help-table th { text-align: left; font-weight: 600; padding: 7px 10px; border-bottom: 1px solid var(--aim-line); }
+.aim-help-table td { padding: 9px 10px; border-bottom: 1px solid var(--aim-line-soft); vertical-align: top; line-height: 1.55; }
+.aim-help-table tr:last-child td { border-bottom: 0; }
+.aim-help-consequence { border-left: 2px solid var(--aim-accent); padding-left: 8px; }
+.aim-phase-chip-link { text-decoration: none; }
+.aim-phase-chip-link:focus-visible { outline: 2px solid var(--aim-accent); outline-offset: 2px; border-radius: 4px; }

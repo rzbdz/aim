@@ -2,24 +2,24 @@
 import { computed, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBoard } from './stores/board'
+import { phaseConcept } from './concepts'
 import OwnerAvatar from './components/OwnerAvatar.vue'
+import PhaseChip from './components/PhaseChip.vue'
 
 const ctx = inject('ctx')
 const board = useBoard()
 const route = useRoute()
 const views = ctx.views
 const current = computed(() => views.find((v) => v.key === route.meta.view))
-const phaseType = computed(() => (board.phase.includes('SEALED') || board.phase === 'COMMIT' ? 'warning'
+/**
+ * The header says the phase in English and in full sentences, because it is the
+ * one line that tells the leader what they may do next. The protocol value is in
+ * the tooltip and one link away on Help & concepts; it is not the label.
+ */
+const phase = computed(() => phaseConcept(board.phase))
+const phaseType = computed(() => (['SEALED_DIVERGENT', 'COMMIT', 'SYNTHESIS'].includes(board.phase) ? 'warning'
   : board.phase === '-' ? 'info' : 'success'))
 const stamp = computed(() => (board.doc?.generated_at || '').replace('T', ' ').slice(0, 19))
-const phaseCopy = computed(() => ({
-  SEALED_DIVERGENT: 'Positions are being formed independently',
-  COMMIT: 'Positions are being committed',
-  SYNTHESIS: 'A third party is mapping the disagreement',
-  CROSS_EXAMINE: 'Positions are being cross-examined',
-  RESOLVE: 'The leader is deciding',
-  CLOSED: 'The record is closed',
-}[board.phase] || 'No active phase'))
 const counts = computed(() => {
   const open = board.tasks.filter((t) => !board.terminal.includes(t.status)).length
   return { open, late: board.overdue.length, blocked: board.tasks.filter((t) => t.status === 'blocked').length }
@@ -31,6 +31,9 @@ const navGroups = computed(() => {
     { title: 'Conversation', keys: ['chat'] },
     { title: 'Insight', keys: ['reports'] },
     { title: 'Governance', keys: ['barrier', 'plan'] },
+    // Concepts last, and in the nav rather than hidden behind a "?": the reader
+    // who needs it is the one who does not yet know what to look for.
+    { title: 'Reference', keys: ['help'] },
   ].map((group) => ({
     title: group.title,
     views: group.keys.map((key) => byKey.get(key)).filter(Boolean),
@@ -68,9 +71,11 @@ const navGroups = computed(() => {
 
     <el-container>
       <el-header height="auto" class="aim-header">
-        <el-tooltip :content="`Internal phase: ${board.phase}`" placement="bottom">
-          <el-tag :type="phaseType" effect="dark" size="small" round>{{ phaseCopy }}</el-tag>
-        </el-tooltip>
+        <!-- The chip is the same component the audit page uses: one place knows
+             what a phase is called, and one place knows that a tooltip around a
+             link must not eat the key that activates it. -->
+        <PhaseChip :phase="board.phase" :type="phaseType" effect="dark" round link />
+        <span class="aim-dim aim-header-phase" style="font-size:11.5px">{{ phase.summary }}</span>
         <span v-if="board.withheld" class="aim-dim" style="font-size:11.5px">
           {{ board.withheld }} withheld from this view
         </span>

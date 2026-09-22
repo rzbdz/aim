@@ -12,7 +12,22 @@ export const STATUS_TYPE = {
   backlog: 'info', ready: 'primary', doing: 'warning', review: 'primary',
   done: 'success', blocked: 'danger', dropped: 'info',
 }
-export const PRIORITY_TYPE = { high: 'danger', medium: 'warning', low: 'info' }
+/**
+ * The priority vocabulary, as `bin/aim` defines it. Only entries the tool can
+ * actually write appear here: the board derives its options from the payload, and
+ * this map is the *colour* for a value that is there. A fallback of `info` covers
+ * anything a future vocabulary adds, which is honest -- an unknown priority is
+ * drawn as unknown rather than as a middle level nobody recorded.
+ */
+export const PRIORITY_TYPE = { high: 'danger', normal: 'warning', low: 'info' }
+
+/** The status vocabulary, same rule: the colour for a value, never a list of them. */
+export const STATUS_LABEL = {
+  backlog: 'backlog', ready: 'ready', doing: 'in progress', review: 'in review',
+  done: 'done', blocked: 'blocked', dropped: 'dropped',
+}
+export const statusLabel = (status) => STATUS_LABEL[status] || status
+
 export const MAIL_STATE_TYPE = { acked: 'success', claimed: 'warning', unread: 'info' }
 
 export const color = (status) => STATUS_COLOR[status] || '#94a3b8'

@@ -93,7 +93,6 @@ function taskActionLabel(task) {
 async function runAction(name, argv) {
   actionBusy.value = name
   actionError.value = ''
-  actionResult.value = ''
   const result = await api.command(argv)
   actionBusy.value = ''
   if (result.rc !== 0) {

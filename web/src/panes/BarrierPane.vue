@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
+import { PHASES, phaseLabel } from '../concepts'
+import PhaseChip from '../components/PhaseChip.vue'
 
 const board = useBoard()
 const { filters, activeCount, clear } = useQueryFilters({
@@ -28,12 +30,13 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
 
 <template>
   <el-tabs v-model="filters.channel" v-if="channels.length">
-    <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id" :label="`#${ch.id} — ${ch.phase}`">
+    <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id"
+                   :label="`#${ch.id} — ${phaseLabel(ch.phase)}`">
       <el-descriptions :column="3" border size="small" style="margin-bottom:14px">
         <el-descriptions-item label="topic" :span="2">{{ ch.topic }}</el-descriptions-item>
         <el-descriptions-item label="leader">{{ ch.leader }}</el-descriptions-item>
         <el-descriptions-item label="phase">
-          <el-tag type="warning" effect="dark">{{ ch.phase }}</el-tag> round {{ ch.round }}
+          <PhaseChip :phase="ch.phase" effect="dark" link /> round {{ ch.round }}
         </el-descriptions-item>
         <el-descriptions-item label="participants">{{ (ch.participants || []).join(', ') }}</el-descriptions-item>
         <el-descriptions-item label="work items in the store">{{ ch.tasks_recorded }}</el-descriptions-item>
@@ -103,9 +106,11 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
               <el-option value="barrier" label="barrier" />
               <el-option value="form" label="form" />
             </el-select>
+            <!-- The list is the dictionary's, not a copy: a filter that offers a
+                 phase the tool cannot reach is a filter that can only return nothing. -->
             <el-select v-model="filters.phase" placeholder="phase" clearable>
-              <el-option v-for="phase in ['SEALED_DIVERGENT', 'COMMIT', 'SYNTHESIS', 'CROSS_EXAMINE', 'RESOLVE', 'CLOSED']"
-                         :key="phase" :value="phase" :label="phase" />
+              <el-option v-for="phase in PHASES" :key="phase.key" :value="phase.key"
+                         :label="`${phase.label} (${phase.key})`" />
             </el-select>
             <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
           </div>
@@ -117,7 +122,13 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
           <el-table-column prop="class" label="class" width="110">
             <template #default="{ row }"><el-tag size="small" type="danger" effect="plain">{{ row.class }}</el-tag></template>
           </el-table-column>
-          <el-table-column prop="phase" label="phase" width="150" />
+          <el-table-column label="phase" width="150">
+            <template #default="{ row }">
+              <el-tooltip :content="row.phase" placement="top" :show-after="200">
+                <span>{{ phaseLabel(row.phase) }}</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column prop="reason" label="reason" min-width="320" />
         </el-table>
         <el-empty v-if="!refusalRows.length" description="no refusal matches these filters" />
@@ -127,7 +138,7 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
         <template #header>phase history — only the leader moves it</template>
         <el-timeline>
           <el-timeline-item v-for="(h, i) in ch.history" :key="i" :timestamp="h.at" placement="top">
-            <el-tag size="small" effect="dark" type="warning">{{ h.phase }}</el-tag>
+            <PhaseChip :phase="h.phase" effect="dark" link />
             <span class="aim-dim"> by {{ h.by }}{{ h.note ? ` — ${h.note}` : '' }}</span>
           </el-timeline-item>
         </el-timeline>
