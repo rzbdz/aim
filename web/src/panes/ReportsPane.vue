@@ -220,11 +220,11 @@ const flow = computed(() => {
   // recorded day.
   //
   // It stops short of the headline, and that gap is a fact about the store rather
-  // than a defect in the line: 65 closes carry a day and 131 cards carry the done
-  // status, because 66 of them were recorded done without a move event to date
+  // than a defect in the line: 65 closes carry a day and 139 cards carry the done
+  // status, because 74 of them were recorded done without a move event to date
   // them. A curve cannot be drawn through a date that does not exist, so the
-  // levels are stated on the chart (`doneLevels` below) and the difference is
-  // named in words. Drawing the missing 66 as a straight line to today would be
+  // levels are stated on the chart (`chartLevels` below) and the difference is
+  // named in words. Drawing the missing 74 as a straight line to today would be
   // the invention this whole file exists to refuse.
   //
   // `carries` is the store's own total minus the window's own closes, rather than
@@ -236,17 +236,26 @@ const flow = computed(() => {
   const carries = Math.max(0, storeCloses - done)
   const closes = cumulative.map((n) => carries + n)
 
-  // The two standing figures the curve cannot reach, as levels on the same axis.
+  // The levels the chart draws, which are *always* the fabric's, whichever scope
+  // the headline row is read in.
   //
-  // `done` is a status and can be set with no event at all; `undone` is not a
-  // trajectory either -- it does not move with the window, it is what is left.
-  // Both are therefore drawn as reference lines and not as series, because a
-  // series invites a reader to watch something move that does not move.
-  // `gapped` counts the done cards the recorded-day line cannot carry.
-  const doneLevels = {
-    done: tally.value.done,
-    undone: tally.value.undone,
-    gapped: Math.max(0, tally.value.done - storeCloses),
+  // This is the one figure on the page that cannot follow the reader's choice, and
+  // the reason is arithmetic rather than preference: `series` is folded by the
+  // server over the whole store, so the curve is a fabric curve, and a `visible`
+  // level drawn against it would be a subtraction between two different boards --
+  // 131 done against a curve standing at 65 is a 66-card gap that is really 74 plus
+  // a 8-card difference between who may read what. The page already refuses
+  // unlabelled totals that change with who reads them; a *level* is the same claim.
+  //
+  // So the chart states the fabric's numbers and says so in its legend, and the
+  // headline row keeps following the radio. The two agree whenever the seat can
+  // read the whole board, which is the common case, and when they do not, the
+  // chart's own sentence is what explains why.
+  const fabric = board.boardScope.fabric || tally.value
+  const chartLevels = {
+    done: fabric.done,
+    undone: fabric.undone,
+    gapped: Math.max(0, fabric.done - storeCloses),
   }
 
   // The same running total for opens, because one cumulative line says what was
@@ -280,7 +289,7 @@ const flow = computed(() => {
 
   const lastEvent = events.value.at(-1)
   const quietMinutes = lastEvent ? (Date.now() - lastEvent.ts) / BUCKET_MS : null
-  return { cells, cumulative, openedCumulative, closes, storeCloses, carries, doneLevels,
+  return { cells, cumulative, openedCumulative, closes, storeCloses, carries, chartLevels,
            start, end: endBucket, opened, done, gap, burst, lastEvent, quietMinutes }
 })
 
@@ -347,7 +356,26 @@ const flowOption = computed(() => {
     // the numbers mean; a reader who picks "last 24 h" is asking for the day's
     // shape, and the curve is what gives it to them.
     yAxis: { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
-             splitLine: { lineStyle: { opacity: 0.18 } } },
+             // The axis has to span everything drawn on it, and the levels are
+             // drawn on it.
+             //
+             // They are not data -- they are `markLine` reference lines -- and
+             // ECharts *deletes* a reference line whose target falls outside the
+             // axis extent rather than clamping it to the edge: `markLineFilter`
+             // runs every item through `coordSys.containData(item.coord)` and
+             // filters the item out when it answers false. Measured, which is the
+             // only way this is visible at all: with the axis auto-scaled to this
+             // window's own data, the top was 70, so the `done` level at 139 and
+             // the `carries` level at 74 were both silently absent from the
+             // rendered SVG while `undone` at 22 drew correctly. No error, no
+             // warning, and the legend still lists nothing about them.
+             //
+             // That is the same shape as the crash this chart was fixed for -- a
+             // reader cannot tell a line that was never drawn from one that has
+             // nothing to say -- which is why the extent is now computed from the
+             // levels rather than left to the data. `minInterval` still holds the
+             // ticks to whole items.
+             max: (v) => Math.max(v.max, f.chartLevels.done, f.carries) },
     // Different mark shapes as well as different colours: the series have to be
     // told apart by a reader who is not being shown the legend's colours.
     series: [
@@ -371,10 +399,10 @@ const flowOption = computed(() => {
           lineStyle: { color: '#f59e0b', type: 'dotted', width: 1.5 },
           label: { formatter: `${f.carries} closed before this window`, fontSize: 10, position: 'insideStartTop' },
           data: [
-            { yAxis: f.doneLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
-              label: { formatter: `done ${f.doneLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
-            { yAxis: f.doneLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
-              label: { formatter: `undone ${f.doneLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
+            { yAxis: f.chartLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
+              label: { formatter: `done ${f.chartLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
+            { yAxis: f.chartLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
+              label: { formatter: `undone ${f.chartLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
             { yAxis: f.carries },
           ],
         } },
@@ -400,8 +428,8 @@ const flowSummary = computed(() => {
   if (f.closes.length) {
     parts.push(`the curve is the store's dated closes: ${f.carries} before this window, ${f.closes.at(-1)} by the end of it`)
   }
-  if (f.doneLevels.gapped) {
-    parts.push(`the dashed done line sits ${f.doneLevels.gapped} above the curve, because that many cards carry the done status with no recorded move to date them, and a curve cannot be drawn through a date that does not exist`)
+  if (f.chartLevels.gapped) {
+    parts.push(`the dashed done line sits ${f.chartLevels.gapped} above the curve, because that many cards carry the done status with no recorded move to date them, and a curve cannot be drawn through a date that does not exist`)
   }
   if (f.gap) parts.push(`longest quiet run ${f.gap.minutes} min (${clock(f.gap.from)}–${clock(f.gap.to)})`)
   if (f.burst) parts.push(`busiest minute ${clock(f.burst.t)}: ${f.burst.opened} opened`)

@@ -51,10 +51,11 @@ function flow(windowMinutes) {
   const storeCloses = perDay.reduce((n, row) => n + (row.done || 0), 0)
   const carries = Math.max(0, storeCloses - done)
   const closes = cumulative.map((n) => carries + n)
-  const doneLevels = { done: scope.done, undone: scope.undone, gapped: Math.max(0, scope.done - storeCloses) }
+  const fabric = state.reports.board_scope.fabric
+  const chartLevels = { done: fabric.done, undone: fabric.undone, gapped: Math.max(0, fabric.done - storeCloses) }
   let opening = 0
   const openedCumulative = cells.map((c) => (opening += c.opened))
-  return { cells, cumulative, openedCumulative, closes, storeCloses, carries, doneLevels, opened, done, start, end: endBucket }
+  return { cells, cumulative, openedCumulative, closes, storeCloses, carries, chartLevels, opened, done, start, end: endBucket }
 }
 
 function option(f, windowMinutes) {
@@ -66,6 +67,7 @@ function option(f, windowMinutes) {
     legend: { data: ['opened', 'done', 'closes, the whole store', 'opened cumulative', 'closed cumulative'], top: 0, textStyle: { fontSize: 11 } },
     xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, interval: every } },
     yAxis: { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
+             max: (v) => Math.max(v.max, f.chartLevels.done, f.carries),
              splitLine: { lineStyle: { opacity: 0.18 } } },
     series: [
       { name: 'opened', type: 'bar', stack: 'perbucket', symbol: 'circle', symbolSize: 6,
@@ -78,10 +80,10 @@ function option(f, windowMinutes) {
           lineStyle: { color: '#f59e0b', type: 'dotted', width: 1.5 },
           label: { formatter: `${f.carries} closed before this window`, fontSize: 10, position: 'insideStartTop' },
           data: [
-            { yAxis: f.doneLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
-              label: { formatter: `done ${f.doneLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
-            { yAxis: f.doneLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
-              label: { formatter: `undone ${f.doneLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
+            { yAxis: f.chartLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
+              label: { formatter: `done ${f.chartLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
+            { yAxis: f.chartLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
+              label: { formatter: `undone ${f.chartLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
             { yAxis: f.carries },
           ] } },
       { name: 'opened cumulative', type: 'line', step: 'end', symbol: 'none',
@@ -103,10 +105,10 @@ for (const w of [15, 60, 1440]) {
     const polylines = (svg.match(/<path /g) || []).length
     const label = f.carries
     console.log(`OK window=${w}: svg ${svg.length} B, ${polylines} path(s), ` +
-      `curve ${f.closes[0]} -> ${f.closes.at(-1)}, levels done=${f.doneLevels.done} undone=${f.doneLevels.undone} carries=${f.doneLevels.gapped} gapped`)
+      `curve ${f.closes[0]} -> ${f.closes.at(-1)}, levels done=${f.chartLevels.done} undone=${f.chartLevels.undone} carries=${f.chartLevels.gapped} gapped`)
     if (f.closes.at(-1) !== f.storeCloses) { console.log('  MISMATCH: last point != storeCloses'); bad += 1 }
-    for (const [what, v] of [['done', f.doneLevels.done], ['undone', f.doneLevels.undone], ['curve end', f.storeCloses]]) {
-      if (!svg.includes(String(v))) { console.log(`  MISSING TEXT: ${what}=${v} is not on the rendered chart`); bad += 1 }
+    for (const [what, v] of [['done', f.chartLevels.done], ['undone', f.chartLevels.undone], ['curve end', f.storeCloses]]) {
+      if (!svg.includes(String(v))) { console.log(`  MISSING LEVEL: ${what}=${v} was filtered out of the rendered chart`); bad += 1 }
     }
   } catch (e) {
     bad += 1
