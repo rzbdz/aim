@@ -116,8 +116,8 @@ const option = computed(() => {
         markLine: {
           symbol: 'none', silent: true,
           data: [{ xAxis: days(lo, today()) }],
-          lineStyle: { color: '#f87171', type: 'dashed' },
-          label: { formatter: 'today', color: '#f87171' },
+          lineStyle: { color: '#ef4444', type: 'dashed' },
+          label: { formatter: 'today', color: '#ef4444' },
         },
       },
     ],

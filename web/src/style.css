@@ -3,12 +3,57 @@
    timelines, selects, progress - is Element Plus, configured rather than
    reimplemented. Telling those apart is the difference between a theme and a
    rewrite. */
+/* Light is the default palette. The dark values are the ones this board was
+   drawn in first, and they are kept verbatim under `html.dark` so that picking
+   a side is a class on <html> and not a second stylesheet to maintain.
+
+   Every colour that needs to appear at several opacities is stored as bare RGB
+   channels, so `rgb(var(--aim-accent-rgb) / .42)` works and a single token
+   carries the whole family. */
 :root {
+  --aim-dim: #5b6b83;
+  --aim-line: rgba(15, 23, 42, .14);
+  --aim-line-soft: rgba(15, 23, 42, .08);
+  --aim-radius: 12px;
+  --aim-accent: #0369a1;
+  --aim-accent-rgb: 3 105 161;
+  --aim-muted-rgb: 100 116 139;
+  --aim-danger: #b91c1c;
+  --aim-warn: #b45309;
+  --aim-warn-rgb: 180 83 9;
+  --aim-info: #0369a1;
+  --aim-info-rgb: 3 105 161;
+  --aim-mark-from: #0284c7;
+  --aim-mark-to: #7c3aed;
+  --aim-mark-ink: #ffffff;
+  --aim-owner-human: #0284c7;
+  --aim-owner-codex: #059669;
+  --aim-owner-claude: #7c3aed;
+  --aim-owner-agent: #64748b;
+  --aim-shadow-card: 0 1px 2px rgba(15, 23, 42, .08);
+  --aim-shadow-composer: 0 -6px 18px -12px rgba(15, 23, 42, .25);
+}
+html.dark {
   --aim-dim: #8b9cb6;
   --aim-line: rgba(148, 163, 184, .16);
   --aim-line-soft: rgba(148, 163, 184, .09);
-  --aim-radius: 12px;
   --aim-accent: #38bdf8;
+  --aim-accent-rgb: 56 189 248;
+  --aim-muted-rgb: 148 163 184;
+  --aim-danger: #fca5a5;
+  --aim-warn: #fbbf24;
+  --aim-warn-rgb: 251 191 36;
+  --aim-info: #7dd3fc;
+  --aim-info-rgb: 125 211 252;
+  --aim-mark-from: #38bdf8;
+  --aim-mark-to: #a78bfa;
+  --aim-mark-ink: #08111f;
+  --aim-owner-human: #38bdf8;
+  --aim-owner-codex: #34d399;
+  --aim-owner-claude: #a78bfa;
+  --aim-owner-agent: #94a3b8;
+  --aim-shadow-card: 0 1px 2px rgba(0, 0, 0, .22);
+  --aim-shadow-composer: 0 -6px 18px -12px rgba(0, 0, 0, .45);
 }
 html, body, #app { height: 100%; margin: 0; }
 body {
@@ -18,7 +63,7 @@ body {
 .el-card { --el-card-border-color: var(--aim-line); border-radius: var(--aim-radius); }
 .el-card__header { padding: 11px 16px; font-size: 12.5px; font-weight: 600; letter-spacing: .01em; }
 .el-table { --el-table-border-color: var(--aim-line-soft); --el-table-header-bg-color: transparent;
-            --el-table-row-hover-bg-color: rgba(148, 163, 184, .06); font-size: 12.5px; }
+            --el-table-row-hover-bg-color: rgb(var(--aim-muted-rgb) / .06); font-size: 12.5px; }
 .el-table th.el-table__cell { font-weight: 600; color: var(--aim-dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
 /* A tag is a label, not a siren: Element Plus ships saturated by default and a
    board with forty siren-coloured labels on it is unreadable. */
@@ -29,8 +74,8 @@ body {
 .aim-aside { border-right: 1px solid var(--aim-line); display: flex; flex-direction: column; }
 .aim-brand { padding: 16px 18px 12px; }
 .aim-brand h1 { font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px; letter-spacing: .01em; }
-.aim-mark { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, #38bdf8, #a78bfa);
-            display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #08111f; }
+.aim-mark { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, var(--aim-mark-from), var(--aim-mark-to));
+            display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--aim-mark-ink); }
 .aim-brand .aim-sub { font-size: 11px; color: var(--aim-dim); margin-top: 8px; line-height: 1.7; word-break: break-all; }
 .aim-aside .el-menu { border-right: 0; }
 .aim-aside .el-menu-item-group__title {
@@ -41,7 +86,7 @@ body {
   padding: 14px 14px 5px;
 }
 .aim-aside .el-menu-item { height: 38px; line-height: 38px; font-size: 12.5px; margin: 1px 8px; border-radius: 8px; }
-.aim-aside .el-menu-item.is-active { background: rgba(56, 189, 248, .12); color: var(--aim-accent); }
+.aim-aside .el-menu-item.is-active { background: rgb(var(--aim-accent-rgb) / .12); color: var(--aim-accent); }
 .aim-links { margin-top: auto; padding: 12px 14px 16px; border-top: 1px solid var(--aim-line-soft); font-size: 11.5px; }
 .aim-header { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--aim-line); }
 .aim-main { padding: 18px 22px 64px; overflow: auto; }
@@ -81,7 +126,7 @@ body {
 .aim-deferred { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; font-size: 12px; }
 .aim-deferred .el-button { margin-left: 0; padding: 0 4px; height: auto; }
 .aim-clickable { cursor: pointer; }
-.aim-clickable:hover { background: rgba(148, 163, 184, .05); }
+.aim-clickable:hover { background: rgb(var(--aim-muted-rgb) / .05); }
 .aim-action-panel { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .aim-action-panel .el-button { margin-left: 0; }
 .aim-action-panel h4 { margin: 0 0 2px; }
@@ -103,7 +148,7 @@ body {
 .aim-comment p { margin: 5px 0 0; }
 .aim-thread-filters { margin-bottom: 8px; }
 .aim-thread-filters .el-select { width: 128px; }
-.aim-anchor-message { border-color: rgba(56, 189, 248, .75); box-shadow: 0 0 0 2px rgba(56, 189, 248, .18); }
+.aim-anchor-message { border-color: rgb(var(--aim-accent-rgb) / .75); box-shadow: 0 0 0 2px rgb(var(--aim-accent-rgb) / .18); }
 @media (max-width: 1000px) {
   .aim-attention-columns { grid-template-columns: 1fr; }
   .aim-attention-row { grid-template-columns: 70px minmax(0, 1fr) auto; }
@@ -112,18 +157,18 @@ body {
 /* ---------------------------------------------------------------- kanban */
 .aim-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 10px; }
 .aim-col { min-width: 272px; flex: 1 0 272px; border: 1px solid var(--aim-line); border-radius: var(--aim-radius);
-           background: rgba(148, 163, 184, .035); }
+           background: rgb(var(--aim-muted-rgb) / .035); }
 .aim-col > header { display: flex; align-items: center; gap: 8px; padding: 11px 13px; }
 .aim-col > header .aim-count { margin-left: auto; font-size: 11px; color: var(--aim-dim);
-                               background: rgba(148, 163, 184, .1); border-radius: 999px; padding: 1px 8px; }
+                               background: rgb(var(--aim-muted-rgb) / .1); border-radius: 999px; padding: 1px 8px; }
 .aim-colbody { padding: 0 10px 12px; display: flex; flex-direction: column; gap: 9px; max-height: 66vh; overflow-y: auto; }
 /* A flex column shrinks its children by default, which squashed every card to
    the height of its first line. Cards are not elastic. */
 .aim-colbody > * { flex: 0 0 auto; }
 .aim-card { cursor: grab; border-radius: 10px; padding: 11px 12px; background: var(--el-bg-color);
-            border: 1px solid var(--aim-line); box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
+            border: 1px solid var(--aim-line); box-shadow: var(--aim-shadow-card);
             transition: border-color .12s ease, transform .12s ease; }
-.aim-card:hover { border-color: rgba(56, 189, 248, .42); transform: translateY(-1px); }
+.aim-card:hover { border-color: rgb(var(--aim-accent-rgb) / .42); transform: translateY(-1px); }
 .aim-card:active { cursor: grabbing; }
 .aim-card .aim-id { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--aim-dim); letter-spacing: .02em; }
 .aim-card .aim-title { display: block; font-size: 13px; line-height: 1.45; font-weight: 600; margin: 4px 0 0;
@@ -133,12 +178,12 @@ body {
 .aim-card .aim-accept { margin-top: 9px; font-size: 11.5px; color: var(--aim-dim); line-height: 1.5;
                         display: flex; gap: 6px; align-items: flex-start; }
 .aim-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
-.aim-flag.late { color: #fca5a5; }
-.aim-flag.blocked { color: #fca5a5; }
+.aim-flag.late { color: var(--aim-danger); }
+.aim-flag.blocked { color: var(--aim-danger); }
 .aim-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--aim-line);
             color: var(--aim-dim); white-space: nowrap; }
-.aim-chip.draft { color: #fbbf24; border-color: rgba(251, 191, 36, .35); }
-.aim-chip.seed { color: #7dd3fc; border-color: rgba(125, 211, 252, .28); }
+.aim-chip.draft { color: var(--aim-warn); border-color: rgb(var(--aim-warn-rgb) / .35); }
+.aim-chip.seed { color: var(--aim-info); border-color: rgb(var(--aim-info-rgb) / .28); }
 
 /* ------------------------------------------------------------- messages */
 .aim-daysep { text-align: center; color: var(--aim-dim); font-size: 10.5px; letter-spacing: .1em; margin: 16px 0 10px; }
@@ -148,12 +193,12 @@ body {
 .aim-dim { color: var(--aim-dim); }
 .aim-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
 .aim-scroll { max-height: 72vh; }
-.aim-late { color: #fca5a5; }
+.aim-late { color: var(--aim-danger); }
 .aim-stat .el-statistic__number { font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
 .aim-stat .el-statistic__head { font-size: 11px; color: var(--aim-dim); text-transform: uppercase; letter-spacing: .06em; }
 .aim-thread { padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
-.aim-thread:hover { background: rgba(148, 163, 184, .06); }
-.aim-thread.on { background: rgba(56, 189, 248, .1); border-color: rgba(56, 189, 248, .3); }
+.aim-thread:hover { background: rgb(var(--aim-muted-rgb) / .06); }
+.aim-thread.on { background: rgb(var(--aim-accent-rgb) / .1); border-color: rgb(var(--aim-accent-rgb) / .3); }
 
 /* -------------------------------------------------------- conversation layout */
 /* The chat owns a bounded viewport. The composer is a flex sibling of the
@@ -212,7 +257,7 @@ body {
 .aim-body.markdown-body code { background: var(--el-fill-color); font-size: 12px; }
 .aim-body.markdown-body pre code { background: none; font-size: 12px; line-height: 1.55; }
 .aim-body.markdown-body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
-.aim-body.markdown-body blockquote { border-left: 2px solid rgba(56, 189, 248, .5); color: var(--aim-dim); }
+.aim-body.markdown-body blockquote { border-left: 2px solid rgb(var(--aim-accent-rgb) / .5); color: var(--aim-dim); }
 .aim-body.markdown-body hr { border-top: 1px solid var(--aim-line); background: none; }
 .aim-body.markdown-body img { max-width: 100%; }
 /* The two things you must not lose while reading a 10,000px report: which
@@ -229,7 +274,7 @@ body {
   background: var(--el-bg-color-page);
   border-top: 1px solid var(--aim-line);
 }
-.aim-composer .el-card { box-shadow: 0 -6px 18px -12px rgba(0, 0, 0, .45); }
+.aim-composer .el-card { box-shadow: var(--aim-shadow-composer); }
 /* A chart taller than the screen loses its legend and its title off the top, so
    the card header travels with you. Same reason the reader's head is sticky. */
 .aim-sticky-head.el-card { overflow: visible; }

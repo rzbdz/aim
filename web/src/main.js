@@ -11,8 +11,11 @@ import { createPinia } from 'pinia'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+// Element Plus scopes its dark variables to `.dark`, so this import is inert
+// until something puts that class on <html>. Keeping it here is what makes the
+// palette a class flip rather than a second bundle.
 import 'element-plus/theme-chalk/dark/css-vars.css'
-import 'github-markdown-css/github-markdown-dark.css'
+import 'github-markdown-css/github-markdown-light.css'
 import * as Icons from '@element-plus/icons-vue'
 
 import './style.css'

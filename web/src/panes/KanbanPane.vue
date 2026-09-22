@@ -139,7 +139,7 @@ function openTask(task) {
               <span class="aim-flag blocked"><el-icon><Lock /></el-icon>{{ b }}</span>
             </template>
             <span v-if="t.priority" class="aim-flag"
-                  :style="{ color: t.priority === 'high' ? '#fca5a5' : 'inherit' }">
+                  :style="{ color: t.priority === 'high' ? 'var(--aim-danger)' : 'inherit' }">
               <el-icon><Top v-if="t.priority === 'high'" /><Bottom v-else /></el-icon>{{ t.priority }}
             </span>
           </div>

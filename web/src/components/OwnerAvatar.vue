@@ -7,8 +7,20 @@ const board = useBoard()
 const kind = computed(() => board.agents[props.id]?.kind || 'agent')
 const model = computed(() => board.agents[props.id]?.model || '')
 const initials = computed(() => (props.id || '?').replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase())
-/** Colour by kind, so a glance tells a human from an agent from a stranger. */
-const tint = computed(() => ({ human: '#38bdf8', codex: '#34d399', claude: '#a78bfa', claude_code: '#a78bfa' }[kind.value] || '#94a3b8'))
+/**
+ * Colour by kind, so a glance tells a human from an agent from a stranger.
+ *
+ * The tint is drawn as *text* on a wash of itself, so it has to clear contrast
+ * on whatever background the palette is using -- the bright pastels that read
+ * well on a near-black page are unreadable on white. The values live with the
+ * palette and are swapped by the same class as everything else.
+ */
+const tint = computed(() => ({
+  human: 'var(--aim-owner-human)',
+  codex: 'var(--aim-owner-codex)',
+  claude: 'var(--aim-owner-claude)',
+  claude_code: 'var(--aim-owner-claude)',
+}[kind.value] || 'var(--aim-owner-agent)'))
 </script>
 
 <template>
