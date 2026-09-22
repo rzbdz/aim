@@ -28,13 +28,14 @@ that is imported empty, and it is invisible to a byte-level check because the
 string is well-formed.
 
 Both of those were fixed in the writer. What is left here is the one shape the
-writer cannot fix, and it is on two surfaces: `json_payload` accepts `risks` and
-publishes two sections out of it, and two of its three callers pass `{}`
-(`aimboard/cli.py:98` and `:894`). Measured on the served routes, one process:
-`GET /board.json` -> risks 0/decisions 0 where `render --json` on the same tree
--> 13/16. So the two foreign-tool surfaces a reader can actually reach carry a
-section the writer would fill. That one is an expectation, not a check, because
-the fix is in a file this one does not own; see `expect_broken` below.
+writer cannot fix, because it is a caller and not the writer: `json_payload`
+accepts `risks` and publishes two sections out of it, and two of its three
+callers pass `{}` (`aimboard/cli.py:98` and `:894`). The one of those a reader
+actually reaches is the export. `GET /board.json` was measured empty the same way,
+but it is the legacy route: nothing in the app links it, and `/api/state`, which
+`web/src/App.vue:260` does link, is `api.payload` -- a function with no `risks`
+key at all. That one is an expectation, not a check, because the fix is in a file
+this one does not own; see `expect_broken` below.
 
 Neither check is a regex over the exporter's output, because a regex is the same
 guess as the writer made. The check is a parser disagreeing with the writer, so
@@ -56,7 +57,9 @@ BOARD = ROOT / "bin" / "aimboard.py"
 STAMP = "2026-09-22T09:43:41.552Z"
 # The writer is imported directly for the one check whose subject cannot be a
 # subprocess: that the coverage line is *absent* when there is nothing to cover.
-# `tests/test_state_json.py:57` does the same thing for the same reason.
+# `tests/test_state_json.py:167-168` calls `api.payload` in process for the same
+# reason -- one input is cheaper to arrange than an http surface that only ever
+# offers the input the live tree happens to have.
 sys.path.insert(0, str(ROOT))
 
 passed = broken = failed = 0
@@ -215,16 +218,20 @@ def check_json_coverage():
           f"export {len(doc['tasks'])}, board {len(board['tasks'])}")
     # `json_payload` accepts `risks` and publishes two sections out of it
     # (exporters.py), and two of its three callers hand it `{}`: the export
-    # (cli.py:98) and the served route a browser reaches by clicking csv/ical in
-    # the app header (cli.py:894, `web/src/App.vue:261-262`). Measured, one
-    # process, one second: `GET /board.json` -> risks 0/decisions 0 while
-    # `render --json` on the same tree -> 13/16. So both foreign-tool surfaces
-    # carry a section the writer would fill and the caller never fills. The fix
-    # is one loader per call site in cli.py, which is not this file's to make, so
-    # the defect is asserted as present the way T-0201's two were: this PASSES
-    # while it exists and FAILS once wired, which is when it is deleted and the
-    # card closed. The served half is checked by tests/test_aimboard.py:532-546,
-    # which already drives /board.json; this file owns the `aimboard export` half.
+    # (cli.py:98) and the legacy route (cli.py:894). Measured, one process, one
+    # second: `GET /board.json` -> risks 0/decisions 0 while `render --json` on the
+    # same tree -> 13/16. The fix is one loader per call site in cli.py, which is
+    # not this file's to make, so the defect is asserted as present the way
+    # T-0201's two were: this PASSES while it exists and FAILS once wired, which is
+    # when it is deleted and the card closed. This file owns the `aimboard export`
+    # half only; the clip in the measurement above is deliberate, because the other
+    # half is narrower than it first reads and one claim I made about it was wrong:
+    # `web/src/App.vue:260` links json to `/api/state`, which is `api.payload`, and
+    # that function publishes no `risks` key at all (`aimboard/api.py:375`; grep for
+    # one and you get zero hits) -- so `cli.py:894` is not a route the app header
+    # reaches, and `tests/test_aimboard.py:533-535` drives it only as far as
+    # `"tasks" in legacy and "phases" in legacy`. Wiring it publishes a section no
+    # surface in the app links; the export half above is the reachable one.
     measured = bool(doc["risks"]) and bool(doc["decisions"])
     board_has = bool(board.get("risks")) and bool(board.get("decisions"))
     expect_broken("the JSON export carries the plan's risks and decisions",
