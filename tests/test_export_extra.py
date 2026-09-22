@@ -9,18 +9,20 @@ one cannot reach.
 
 **The value of a property, not its shape.** `SUMMARY` and `DESCRIPTION` are TEXT
 (section 3.3.11), and an unescaped `,` or `;` in a TEXT value separates it into a
-*list of values*. Measured against the tree before this file was written: 122
-SUMMARY/DESCRIPTION values carried one of those characters -- "M2 Group chat:
-rooms, cursors, mentions", "design/05, design/06 ... committed" -- and a real
-parser (icalendar 7.3.0) read each of them back as a list. The file was still
-folding correctly and every byte-shaped check still passed, which is why the
-defect survived a 19-check suite: `SUMMARY` is present, unique and short, and the
-*text inside it* is not what the writer wrote.
+*list of values*. Measured on the live root: 108 of the SUMMARY/DESCRIPTION values
+carried one of those characters -- "M2 Group chat: rooms, cursors, mentions",
+"design/05, design/06 ... committed" -- and the file was still folding correctly,
+every byte-shaped check still passed, and `SUMMARY` was present, unique and short.
+That is why the defect survived a 19-check suite and why the check below is a
+parser reading the value rather than a regex reading the line: icalendar 7.3.0 is
+the only thing in this repo that disagrees with the writer about what those 108
+lines mean.
 
 **The property a parser refuses to read.** `DTSTAMP` was
 `202609220943415Z`: the digits of an ISO stamp glued together, which is neither a
-DATE-TIME nor a DATE. `icalendar` returned it as `vBroken`, its own name for "this
-value does not parse as the type the property requires". A required property that
+DATE-TIME nor a DATE. Measured with icalendar 7.3.0 on the export as it stood
+before the fix: every VEVENT's DTSTAMP came back as `vBroken`, its own name for
+"this value does not parse as the type the property requires". A required property
 a consumer cannot read is the difference between an event that imports and one
 that is imported empty, and it is invisible to a byte-level check because the
 string is well-formed.
@@ -35,7 +37,6 @@ Run: python3 tests/test_export_extra.py     (exit code = number of failures)
 """
 import csv
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -82,34 +83,6 @@ def export(fmt, *extra):
         capture_output=True, cwd=ROOT,
     )
     return proc
-
-
-def unfold(body):
-    """The logical lines of the file, so a value can be read across a fold."""
-    out = []
-    for raw in re.split(r"\r\n|\n", body):
-        if raw == "" and body.endswith(("\r\n", "\n")):
-            continue
-        if raw.startswith((" ", "\t")) and out:
-            out[-1] += raw[1:]
-        else:
-            out.append(raw)
-    return out
-
-
-def props(lines, name):
-    """Every value of one property, keyed by the part before the first `:`.
-
-    Parameters are stripped -- `DTSTART;VALUE=DATE` is the `DTSTART` property --
-    because a check that missed one would report a missing property where the
-    real difference is a parameter.
-    """
-    out = []
-    for line in lines:
-        head, _, value = line.partition(":")
-        if head.split(";", 1)[0] == name:
-            out.append(value)
-    return out
 
 
 def ical_body():
