@@ -590,6 +590,135 @@ one question the ledger exists to answer.
 
 ---
 
+# Part IV-c — The state machines, and the relations between them
+
+Part IV is a list of defects. This is the *set* view, because the leader asked
+for it directly — *状态机，范畴的关系* — and because the defects are better
+explained by the shape of the set than one at a time. There are **eight** machines
+in this fabric. Two are enforced, two are partial, and four are prose or absent.
+
+| # | machine | store | edges | who may move it | where enforced | mark |
+|---|---|---|---|---|---|---|
+| 1 | **phase** | `manifest.barrier.phase` | `TRANSITIONS` `bin/aim:46` — **7 edges over 6 phases**, `CLOSED` terminal | leader only (`require_leader:830`) | `advance:1450` checks the edge; at a **phase boundary** `_check_rules`/`_check_keys` also fire | **ENFORCED** |
+| 2 | **task status** | `channels/<ch>/tasks.jsonl` | `TASK_FLOW` `:116` — **16 edges over 7 statuses**, `done`/`dropped` terminal | owner, or the `kind=="human"` exemption | `task move:2114` | **ENFORCED at move, absent at birth** |
+| 3 | **seal** | `seals/<a>.json` | one-way: unsealed → sealed | any participant | quorum is **file existence** (`:1476`) | **RECORDED, not enforced** |
+| 4 | **membership** | `manifest.participants` | add / remove, both leader-only; both write a ledger row | leader only | `channel add/remove` (`:688`,`:735`) — real barriers, measured | **ENFORCED** |
+| 5 | **task visibility** | derived | published ⇄ draft, by hand | owner / leader | three implementations that **disagree** (§4.4) | **ENFORCED, three ways** |
+| 6 | **channel kind/lifecycle** | derived | empty → active → dormant | nobody | computed at `aimboard/fabric.py:58`, **dropped by the payload projection** | **PROSE — computed and discarded** |
+| 7 | **obligation** (who owes the leader an action) | none | — | — | 6 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249-313`) | **ABSENT by design, on the record** |
+| 8 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
+
+Measured for #4, on a throwaway root — this is the machine that is *better* than
+its documentation:
+
+    channel add --as lead --channel ch --agent ghost   -> REFUSED: not a registered agent
+    channel add --as otherh --channel ch --agent beta  -> REFUSED: may not add a member
+    channel add --as lead --channel ch --agent alpha   -> channel_member_noop row, rc 0
+    channel remove --as lead --channel ch --agent lead -> REFUSED: 'lead' leads 'ch'.
+        Removing the leader would leave the channel with nobody who may move its
+        phase or its membership, which is not a state this file can express.
+
+Every branch is a refusal or a ledger row, and the rows carry `member` and the
+resulting `members` list (`channel_member_added/removed/noop`). The one thing the
+machine does not bound: **a channel may have zero participants.** Measured: two
+`channel remove`s leave `participants: []` with `leader: lead`, the channel still
+listed, still advanceable by the leader, and the removed participant refused
+(`'alpha' is not a participant in ch`). A leader who is not a participant can
+create one too — `new-channel --participants alpha,beta --leader lead` is
+accepted, so the manifest can hold a leader who is not on the roster.
+
+## IV-c.1 The relations between the machines
+
+The machines are not independent; four of them read each other, and two of those
+reads are the load-bearing ones in the whole system:
+
+    phase  ──read by──▶  task visibility   (DIVERGENCE_PHASES gates drafts)
+           ──read by──▶  say routing      (channel_say / private_say)
+           ──read by──▶  room publication (room_published)
+           ──read by──▶  seal acceptance  (a seal during COMMIT is a commitment)
+    membership ──read by──▶ task visibility (a participant may see their drafts)
+               ──read by──▶ mail gate       (a stranger is walled off)
+    task status ──read by──▶ obligation     (a `done` card owes nobody an action)
+
+**The phase machine is the only one every other machine consults**, which is why
+Part IV's row 1 (`fabric.py:281`) and row 7 (`bin/aim:51`, the rule-changing
+edge) both cost more than they look: they are defects in the one table four
+others read. Measured: `PHASE_RULES[phase]` is read at **seventeen** sites in
+`bin/aim` (counted by occurrence outside comments; `:142`, `:152`, `:859`,
+`:1267`, `:1402`, `:1527-1531`, `:1548`, `:1553`, `:1566`, `:1575`, `:3883`,
+`:3890`, `:4134`), and the `channel_say` half of it is deliberately
+single-sourced — `bin/aim:1215-1233` records a case where a second copy of that
+one bit had drifted and a `say` in `COMMIT` printed `note recorded` and exited 0
+while `log.jsonl` was never created.
+
+**And each machine is written down more than once.** Counted by parsing, not by
+grep:
+
+| vocabulary | copies | identical today? |
+|---|---|---|
+| the divergence set | `bin/aim:130`, `const.py:5`, `a2a.py:758` | **yes** (3/3) |
+| inside `bin/aim` itself | `PHASE_RULES`' `read_others=False` rows encode the same three again | **yes** |
+| the phase list | `bin/aim:37`, `web/src/concepts.js:22` — hand-copied, all six keys, compared and equal | **yes** |
+| the status list | `bin/aim:116`, `const.py:8`; `a2a.py:326` is a *different* vocabulary (A2A `TaskState`) bridged deliberately at `STATUS_TO_STATE` `a2a.py:673` | yes for the first two |
+| the task machine | `bin/aim:117`, `web/src/panes/HelpPane.vue:291` (`FLOW_FALLBACK`) | **yes** — compared field by field, all seven rows equal |
+| the phase machine | `bin/aim:46`, `web/src/concepts.js:349` (`TRANSITIONS`) | **yes** — all 7 edges equal, but the Vue copy adds prose `unlocks`/`why` per edge |
+| terminal set | `TASK_FLOW`'s two empty edges, `const.TERMINAL` (`{done, dropped}`) | **yes** — and the `done/doing/review` colour map in `const.STATUS_COLOR` carries no terminality, so it is not a third copy |
+
+**They all agree, and that is the finding, not the exoneration.** The table above
+is six facts, each written down **two to four times**, in two languages, and this
+repo already has the receipt for what happens when one of them lands in only
+some of the copies. `TASK_EVENTS` (`bin/aim:127`, the eight event names a card may
+carry) is declared and **read by nothing** — `grep TASK_EVENTS` finds the
+declaration and no reader — so the store's `tasks.jsonl` carries exactly those
+eight and never a stray one (`created 97, moved 249, commented 91, published 35,
+assigned 15, dropped 2, linked 1, retracted 1`), while `ledger.jsonl` next to it
+carries `seal`, `phase`, `push`, `refusal`,
+`task_published_during_divergence`, `channel_member_added/removed/noop` and
+`friction` under the same word *event*. The event vocabulary is a ninth machine
+with no enforcer at all, and nothing has gone wrong with it **because the
+copies that are read are the ones that write**.
+
+**Two of the eight cannot be seen from the page.** #6 is computed on every
+`load_fabric` and dropped by `aimboard/api.py:363`'s projection, which keeps
+`id, topic, phase, round, leader, synthesizer, participants, history, sealed,
+chain, tasks_recorded, tasks_store_exists, tasks_unknown_events, refusals,
+concessions, friction` and **not** `kind`, `state`, `traffic`, `last_activity` or
+`idle_days`. Verified against the live payload: all five channels have none of
+those keys. So the answer to *"is this channel a real project or scratch, and is
+it alive"* exists in the fold, is computed on every page load, and reaches no
+reader — not the JSON, not the CLI (`aim status --channel dev` prints the phase,
+the leader, the rules and the participants, and no lifecycle), and not the page.
+
+## IV-c.2 The relations between the categories
+
+*范畴的关系* — the objects and their cardinalities, measured:
+
+    agent  1 ──n  session     (a name may be re-registered with --force; no liveness check)
+    agent  n ──n  channel     (participation; a channel may hold zero participants)
+    channel 1 ──1  project    (there is no project object; §2.1 is what that costs)
+    channel 1 ──n  task       (ids are per-channel; the *board* keys them per-root — the collision)
+    task   1 ──1  owner       (nullable: an unowned card short-circuits two actor rules)
+    task   1 ──n  event       (tasks.jsonl is an event log, folded on read)
+    agent  1 ──1  seal        (a seal is per **participant per channel**, not per task:
+                               channels/hello/seals/{claude-session1,codex,codex-orangement}.json)
+    message n ──n  channel    (public log, private log, outbox — three stores under one word)
+    refusal n ──1  action     (every die() writes one; the class is `barrier|form|unrecorded`)
+
+**Two of these are lossy in the direction a reader would not guess.** `channel
+n─n task` loses work silently (§2.1: an id space per channel, merged per root, so
+the second project's copy is gone and the survivor is chosen by `sorted()`). And
+`task 1─n event` is lossy *on the read side only*: the store keeps all eight
+kinds, and the one consumer that draws them keeps two (`created`, `moved→done`),
+so the five newest records in the live store appear on no card — reported
+separately as the tail violation.
+
+**The rest are honest one-to-manys with the consequence stated somewhere.** A
+nullable owner is what makes two actor rules short-circuit; a per-channel seal is
+why the quorum is per participant and not per card; `n─1 action` is why the
+refusal class, and not the action, is the thing a reader can count on.
+
+---
+
 # Part V — The judgement
 
 **The core is sound and the ceremony around it is not.** Three things are real:
