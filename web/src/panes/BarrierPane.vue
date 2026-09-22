@@ -435,10 +435,30 @@ export default { name: 'BarrierPane' }
         </el-table>
       </el-card>
 
-      <el-card shadow="never" style="margin-bottom:14px">
+      <!--
+        An empty section is one line, and that line is the header's.
+
+        Measured on the T-0192 fixture (viewer `human`, 1440x1000), this card was
+        123px with nothing in it: `.aim-filterbar` carries a 12px `margin-bottom`
+        (`style.css:178`) that the header paid even with no filter drawn in it, and
+        the body underneath spent its own 20px padding twice around one sentence.
+        The 60px a reader should pay for a section with nothing in it is not
+        reachable from inside a body -- an `el-card` renders `.el-card__body`
+        whether or not there is anything to put in it -- so with nothing recorded
+        the body is not drawn, and the reason moves up beside the count as the
+        card's one line. That is also the honest shape: the controls are gone
+        because there is nothing to filter, not hidden behind a click.
+      -->
+      <el-card shadow="never" style="margin-bottom:14px"
+               :body-style="(ch.refusals || []).length ? '' : 'display:none'">
         <template #header>
-          <div class="aim-filterbar">
+          <div class="aim-filterbar" :style="(ch.refusals || []).length ? '' : 'margin-bottom:0'">
             <span>refusals — {{ refusalsOf(ch).length }} of {{ (ch.refusals || []).length }} record(s)</span>
+            <!-- The reason, in place of the controls: with nothing recorded there
+                 is nothing to filter, so the selects are not drawn at all. -->
+            <span v-if="!(ch.refusals || []).length" class="aim-dim" style="font-weight:400">
+              nothing has been refused in this channel — no one has yet wanted something the phase forbids.
+            </span>
             <template v-if="(ch.refusals || []).length">
               <el-input v-model="filters.q" placeholder="search action or reason" clearable />
               <el-select v-model="filters.agent" placeholder="agent" clearable>
@@ -459,20 +479,11 @@ export default { name: 'BarrierPane' }
           </div>
         </template>
         <!--
-          An empty section is one line, and offers no filters.
-
-          Measured before this, `#dev` and `s2-scratch2` (2 seals, 0 refusals):
-          the refusal card was 497px, of which the table body ("No Data") was 109
-          and three selects plus a search box were another ~180 -- controls over a
-          list the record cannot fill. The header keeps the counting sentence in
-          both branches, because "0 of 0 record(s)" and "no refusal matches these
-          filters" are different facts and the reader can only tell them apart if
-          the number is still on the page.
+          The empty branch moved into the header above, so the body holds only
+          rows. What is left here is the other empty-ish case: a non-empty ledger
+          that the reader's filters match none of.
         -->
-        <p v-if="!(ch.refusals || []).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
-          nothing has been refused in this channel — no one has yet wanted something the phase forbids.
-        </p>
-        <p v-else-if="!refusalsOf(ch).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
+        <p v-if="(ch.refusals || []).length && !refusalsOf(ch).length" class="aim-dim" style="font-size:12px;margin:0">
           no refusal matches these filters.
         </p>
         <el-table v-else :data="refusalsOf(ch)" size="small" class="aim-refusal-table">
