@@ -1896,11 +1896,31 @@ against the tree:
 
 | layer, as `design/08` names it | the directory | what is actually there |
 |---|---|---|
-| `skills/` — "how an agent knows to use any of this" | **exists**, 2 files | `AGENTS.md` and `skills/aim/SKILL.md`. The note's own verdict — *"half"* — is generous: neither is installable, versioned or shared |
+| `skills/` — "how an agent knows to use any of this" | **exists**, 2 files | `skills/aim/SKILL.md` and `skills/aim/install.sh` — and `install.sh` answers the note's own complaint, which this row carried forward as a measurement (see below) |
 | `protocols/` — "A2A and MCP (adapters, no rules)" | **absent** | the code is `aimboard/a2a.py` (1480 lines) and `aimboard/mcp.py` (204), and both live **inside** what the note calls the services layer |
 | `tools/` — "`aim` — the verbs, one implementation" | **absent** | `bin/aim`, 4911 lines, at the repo root |
 | `services/` — "the fabric: log, ledger, task store, rooms, gate" | **absent** | `aimboard/`, 25 Python modules |
-| `dashboard/` — "the human's view" | **absent** | `web/`, 40 files and 10833 lines, plus `aimboard/cli.py` as its server |
+| `dashboard/` — "the human's view" | **absent** | `web/src`, 40 files and 10833 lines (the `.vue` + `.js` subset; `web/src` whole is 41 files / 11463, and `web/` is 211 files), plus `aimboard/cli.py` as its server |
+
+**The `skills/` row was the one row here doing the thing this document keeps
+catching.** It said *"`AGENTS.md` and `skills/aim/SKILL.md`. The note's own
+verdict — *'half'* — is generous: neither is installable, versioned or shared."*
+Measured:
+
+- The two files in `skills/` are `SKILL.md` and **`install.sh`**. `AGENTS.md` is
+  at the repo root and always has been.
+- `install.sh` is tracked at this document's own commit
+  (`git cat-file -e 4bcb0cb:skills/aim/install.sh` → present), and it does all
+  three of the things the sentence says are missing: `--print-version` prints
+  the tree revision and both sha256s; a real run puts byte-identical `SKILL.md`
+  into `$CLAUDE_HOME/skills/aim/` and `$CODEX_HOME/skills/aim/` from the one
+  source and symlinks `aim`/`aimboard` onto PATH; `--uninstall` removes exactly
+  those two. Its header names this section's complaint **verbatim** — *"It is not
+  installable … not versioned with the tool … and it is written for a reader who
+  is already inside the repo"*. That is `design/08 §2`'s own prose about the
+  state *before* the script, quoted in this table as a description of the state
+  after it.
+
 
 **So the five-layer picture is a design that was never given the shape it
 describes** — and the interesting question is not that the directories are
@@ -1957,20 +1977,39 @@ control, and the design says outright that it is not enforceable.
 **Measured against that, the whole system is doing the half it can do, and doing
 it well, on a case that never arrived.** Part V records the arithmetic: 280
 recorded refusals, 150 of them concerning a peer's draft in a divergence phase,
-and **not one channel that held work has ever entered a phase where the barrier
-is open.** So the contact-control machinery has been exercised 280 times as
-*refusal* and zero times as *permission*. What that means is not that the fabric
-is broken. It means the measured evidence is all pre-barrier, and the design's
-own sentence about the other half — not enforceable, arguably not measurable —
-is the reason no amount of further measurement here will close the gap.
+and **in `channels/` not one channel that held work has ever entered a phase
+where the barrier is open** — five channels, every one of them `≤ COMMIT` or
+at `SYNTHESIS`, three of the four that hold any tasks (`barrier-v0`,
+`hello`, `dev`) at the divergence phases `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS`,
+and only one (`hello`) at `COMMIT` with a substantial store (491 task rows).
+`.dbg/channels/c` is tracked, sits at `CROSS_EXAMINE`, and holds two public
+cross-examination messages with `echo_ratio: 0.0` — but **no `tasks.jsonl`**,
+so by §1.5's own definition of "held work" it is not a counter-example. So
+the contact-control machinery has been exercised 280 times as *refusal* on a
+channel with work in it and zero times as *permission* on a channel with work
+in it; the case it was built for has never arrived. What that means is not
+that the fabric is broken. It means the measured evidence is all pre-barrier,
+and the design's own sentence about the other half — not enforceable, arguably
+not measurable — is the reason no amount of further measurement here will
+close the gap.
 
 This is the part of the leader's question (*"到底如何开始，如何progress，如何人机交互，
 如何结束"*) that the code cannot answer, and the SOP should say so plainly rather
 than imply it with a census: **the start is `aim init`; progress is the phase
-machine; the human's interaction is a read-only dashboard and five leader-only
-verbs; and the end is a phase (`CLOSED`) that the tool makes reachable and
-nothing ever asks for.** Four of those five are machine-enforced. The one that is
-not is *when to stop*, and no amount of contact control can make it so.
+machine; the human's interaction is a read-only dashboard by default with an
+opt-in `--allow-write` write path to seven allowlisted commands (four of them
+requiring the leader, one of those seven being `advance`); and the end is a
+phase (`CLOSED`) that the tool makes reachable and nothing ever asks for.**
+Four of those five are machine-enforced. The one that is not is *when to stop*,
+and no amount of contact control can make it so. *(The earlier bullet said
+"the human's interaction is a read-only dashboard and five leader-only
+verbs"; `aim say` enumerates five verbs and `aim channel` four — the count
+"five" was a guess, and with `--allow-write` the dashboard is not strictly
+read-only — `cli.py:440`'s `writable = {"say", "push", "confirm", "task",
+"advance", "request-advance", "reveal"}` is the truth of the sentence, and
+`advance` is gated by `require_leader` in `bin/aim` but reachable from the
+browser with the flag turned on. The check belongs in the allowlist comment,
+not on the wire.)*
 
 ## 6.3 What the architecture gets right, stated as measurements
 
@@ -1980,31 +2019,94 @@ stated anywhere as a rule:
 1. **The task store is an append-only event log with a fold on read.** `fold_tasks`
    (`aimboard/fold.py:61`) has no writer, recomputes board state from
    `tasks.jsonl` on every load, and has a retraction branch (`:104-121`) rather
-   than a delete path. Measured: **no board file exists anywhere in the tree.**
-   That is why the `edited` event (§IV-c, and T-0246) is a whole-board bug rather
-   than a rendering glitch — a name the fold has no branch for is a name that
-   silently does not exist, and there is no second copy to disagree with it.
-2. **The ledger is hash-chained and the check is a reader, not a writer.**
+   than a delete path. Measured: the *dashboard's* copy of the fold opens no
+   store for writing (see §6.1's zero-writer finding), and there is no board
+   file anywhere that a renderer mutates. The strongest form of the claim needs
+   one caveat: `bin/aim:1666` defines a **second** `fold_tasks`, so "the store is
+   a fold on read" is true of two implementations, not of one — and no file in
+   the tree is *written* by either. The `edited` event (§IV-c, and T-0246) is a
+   whole-**record** bug and not a whole-board one: the fold has no branch for
+   that name, so the one card that emits it loses that one field silently while
+   its `created`/`moved` branches still fire. (The earlier sentence said
+   "whole-board"; the measured effect is one card, and the sentence reached past
+   its own evidence.)
+2. **The ledger is hash-chained, and the check is a reader, not a writer.**
    `aim verify` walks `prev`/`hash` on every chained file and returns rc 1 on a
-   broken chain. It is the only mechanism in this repo that *detects* rather than
-   *prevents*, and it detects correctly — measured in §1.2, where a hand-written
-   seal passes the advance and is caught afterwards by `verify`.
-3. **One writer, many readers, and the readers are wrong in the same direction.**
-   §6.1's zero-writer-call-sites finding is the positive half. The negative half
-   is §4.4's: the *read* rule was copied rather than shared, three times, and two
-   of the three copies disagree with the third about a card that names no
-   channel.
+   broken chain — measured in §1.2, where a hand-written seal passes the advance
+   and is caught afterwards by `verify` (`TAMPER ledger.jsonl:6 content does not
+   match its hash`, `chain BROKEN`). It is **not the only** mechanism in this
+   repo that *detects* rather than *prevents*; at least four others read and
+   never write: `fold.drift` (`aimboard/fold.py:284`, *"Where the plan and the
+   store disagree"*); the task-id allocator (`bin/aim:1810-1860`) which calls it
+   and so *avoids* the colliding id rather than protecting it; `fabric`'s
+   `tasks_unknown_events` (`aimboard/fabric.py:269`) — the count the board
+   publishes and, per §4.6, nothing renders; and `bin/aim-doctor`, whose own
+   header says the tripwire lives outside the tool it watches. Plus the
+   conformance check at `tests/test_a2a_conformance.py:438`, which parses
+   `_visible_to` out of `bin/aim`'s source and compares it against
+   `a2a.TASK_VISIBILITY_RULE` — the crude check that would have caught the
+   disagreement below. The sentence was reaching for "the reader is the only
+   *chain* check", which is closer to true and still not what it said.
+3. **One writer, many readers, and *one* reader is wrong where the others are
+   right.** §6.1's zero-writer finding is the positive half, and it holds.
+   The negative half is bigger than §4.4 stated and simpler than it implied:
+   the copies do not disagree about the *predicate* — all three spell
+   owner-or-creator — and they do not disagree about T-0041's stranger case.
+   **They disagree about which phase governs a card that names no channel, and
+   the disagreement is not symmetric.** §4.4 measured it on the live board as
+   `rpc \ board = {T-0018, T-0027}` — a delta of two. Re-measured at this tree
+   against the fabric directly, `gate.visible_tasks`'s hidden count against
+   `a2a.hidden_count`'s, over the same 180 tasks:
+
+   | viewer | `gate.visible_tasks` hidden | `a2a.hidden_count` | delta |
+   |---|---|---|---|
+   | `a` (participant of nothing) | 73 | **0** | 73 |
+   | `codex` | 49 | **36** | 13 |
+   | `claude-session1` | 32 | **30** | 2 |
+   | `human` | 0 | 0 | 0 |
+
+   and end-to-end on a throwaway root with one draft: `GET /api/state?as=c`
+   (a registered stranger) → `tasks []`, `withheld_tasks 1`; `POST /rpc?as=c`
+   `ListTasks` → `["T-0001"]`. **So the board is not the conservative half and
+   `/rpc` is not the leaky one — `/rpc` is the generous one, and the board
+   withholds strictly more, for every viewer that is not the leader.** The two
+   differ where a card carries no channel: `gate.visible_tasks` resolves it to
+   `gate.gate_channel`'s fallback (a real channel's phase), and `list_tasks`
+   resolves `by_id.get("")` to `{}`, whose `phase` is `None`, and
+   `None not in DIVERGENCE_PHASES` is `True` at `a2a.py:792`. Note that
+   `hidden_count` is a pure function over dicts: it asks `task_visible` with
+   `by_id.get(task["context_id"] or task["channel"] or "", {})`, so it inherits
+   the `{}` default and returns **0** where the board returns 73.
+   `hidden_count`'s own docstring says it exists "so the two halves of D17 can be
+   asserted against the *same* rule instead of against two rules that happen to
+   agree today" — and it is not called by anything in the tree.
+
 
 ## 6.4 The judgement this part adds
 
 **The architecture is a two-verb system wearing a five-layer diagram, and the
 diagram is why the rules drifted.** Everything that must be true for the fabric
 to work is enforced in `bin/aim`; everything that is *convenient* is a read in
-`aimboard/`; and the design note's clean layer boundaries were never built, so
-the access rule crossed from the writer's layer into a reader's layer and got
-copied there. The five-layer diagram is not a false description of intent — it is
-a description of a refactor that did not happen, and the cost of not doing it is
-exactly §4.4.
+`aimboard/` — *almost*: the dashboard's `POST /api/command` can run `advance`
+and `task` from a browser when the server was started with `--allow-write`
+(`cli.py:440`, see §6.2), so "convenient is a read" is the design intent and
+not the reachable surface. And the five-layer diagram is not a false
+description of intent — it is a description of a refactor that did not happen.
+
+The causal sentence this section used to end on — *the access rule crossed from
+the writer's layer into a reader's layer and got copied there, and the cost is
+exactly §4.4* — is the part the falsifier corrected, and the correction is a
+real one. What §4.4 actually measures is not a *copied predicate* but two
+**call sites** resolving the same question differently: every copy spells
+owner-or-creator the same way; the disagreement is `gate.gate_channel`'s
+fallback (a real channel declares the barring phase) against `list_tasks`'s
+`by_id.get("") → {}` (no channel means no phase means open), for a card that
+names no channel. §4.4 named `T-0018`/`T-0027`; §6.3(3) re-measured it as a
+73/0 gap for a stranger on this same root. It is a difference in **one line of
+argument**, not a second copy of the rule — which is why §4.4's "one rule, one
+owner" verdict needs to be restated as "one rule, three call sites, one gap".
+The diagram's cost is real and it is not quite the cost this section used to
+name.
 
 **The design philosophy is sound and its reach is stated correctly by its own
 author.** `design/00` says contamination control is not enforceable, and the
