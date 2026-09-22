@@ -75,14 +75,30 @@ const STATE = {
     'T-0193': SEED('T-0193', { status: 'done', start: '2026-09-21', due: '2026-09-22' }),
     'T-0194': SEED('T-0194', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
     'T-0195': SEED('T-0195', { status: 'doing', start: '2026-09-21', due: '2026-09-22' }),
-    // 3 recorded items: one genuinely completed, one in progress, one in review.
-    'T-0196': RECORDED('T-0196', { status: 'done', start: '2026-09-24', due: '2026-09-25', moved: 'done' }),
-    'T-0197': RECORDED('T-0197', { status: 'doing', start: '2026-09-24', due: '2026-09-25' }),
-    'T-0198': RECORDED('T-0198', { status: 'review', start: '2026-09-24', due: '2026-09-25' }),
+    // 3 recorded items, one genuinely completed, one in progress, one in review.
+    // They are in M1, the milestone the plan pane's progress clause is about: a
+    // milestone that holds *both* universes is the only one where "the merged board
+    // would read 7/11 here" is a sentence with a referent. A milestone holding only
+    // the record cannot show the difference this file asserts.
+    'T-0196': RECORDED('T-0196', { status: 'done', start: '2026-09-24', due: '2026-09-25', milestone: 'M1', moved: 'done' }),
+    'T-0197': RECORDED('T-0197', { status: 'doing', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
+    'T-0198': RECORDED('T-0198', { status: 'review', start: '2026-09-24', due: '2026-09-25', milestone: 'M1' }),
+    // M2's own three recorded items, and they carry **no dates on purpose**. The
+    // date is what the Gantt counts, and the three tests on that pane are exact
+    // counts over `board.dated` (11 dated bar(s), 3 on the record, 8 plan seeds).
+    // A dated item here would move every one of them and the two clauses would
+    // then be asserting different fixtures. An undated item draws no bar and is
+    // counted by no dated number; it is still a row the plan pane's arithmetic is
+    // over, which is the half of M2 this fixture needs.
+    'T-0199': RECORDED('T-0199', { status: 'done', start: '', due: '', milestone: 'M2', moved: 'done' }),
+    'T-0200': RECORDED('T-0200', { status: 'doing', start: '', due: '', milestone: 'M2' }),
+    'T-0201': RECORDED('T-0201', { status: 'review', start: '', due: '', milestone: 'M2' }),
   },
   reports: {
     series: [], throughput: [], blocked: [], median_cycle: null,
-    recorded: 3, seed_only: 8, with_history: 1,
+    // Six recorded rows and eight dated seeds: the dated merge is 11 (the Gantt's
+    // clause), the record over both milestones is 6 (the plan pane's).
+    recorded: 6, seed_only: 8, with_history: 1,
   },
   conversation: { channels: [], rooms: [], mail: [] },
   channels: [],

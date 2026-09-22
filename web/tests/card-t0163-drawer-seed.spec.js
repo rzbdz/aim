@@ -37,11 +37,12 @@
  *
  * 1. `TaskDecisionDrawer.vue:recordTask()` builds the `task new` argv for a plan
  *    seed. `bin/aim task new` (bin/aim:3318-3331) accepts `--estimate`, `--tag`
- *    (repeatable) and `--blocked-by`; the builder sends none of the three, so a
- *    seed carrying 5 points, two tags and a dependency is recorded without them.
- *    The check is not "the argv looks right": the argv the drawer actually POSTs
- *    is replayed against the real `bin/aim` in a throwaway `AIM_ROOT`, and the
- *    `created` event that comes back must carry every field. The tool is the
+ *    (repeatable) and `--blocked-by`, and the check is that all three are in what
+ *    the drawer sent -- when the file was written the builder sent none of them,
+ *    so a seed carrying 5 points, two tags and a dependency was recorded without
+ *    them. The check is not "the argv looks right": the argv the drawer actually
+ *    POSTs is replayed against the real `bin/aim` in a throwaway `AIM_ROOT`, and
+ *    the `created` event that comes back must carry every field. The tool is the
  *    oracle, not this file.
  *
  * 2. `App.vue:drawerTask` resolves the open id out of `board.tasks` on every
@@ -59,9 +60,12 @@
  * ---------------------------------------------------------------------------
  * VERDICT, re-measured 2026-09-22T11:36Z against bundle 59b99a9+dirty (built
  * 11:36:51Z, `/api/revision` stale false) and three times before it: all three
- * tests pass, with no annotation left in the file. The revisions and the two
- * defects named in the 11:07Z/11:12Z read below are kept as history, because
- * what they record is *why* each marker came off.
+ * tests pass, with no annotation left in the file. The "measured" paragraph above
+ * describes `870b282+dirty`, the bundle all three markers were written against;
+ * each item below says what the defect was and which commit closed it, because
+ * that is the record of why each marker existed. No assertion in this file was
+ * changed at any point -- only markers were removed, and only on the JSON
+ * reporter's own evidence that the body had started passing.
  *
  * 1. Acceptance 1 passes, and the marker at this test's head came off for the
  *    reason the JSON reporter gives for any annotated test whose body now
