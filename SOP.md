@@ -404,7 +404,7 @@ applied to registration.
 
 # Part III — The methodology: how to check a claim
 
-This is the part that lets the leader *verify the judgement*. Six rules, each
+This is the part that lets the leader *verify the judgement*. Seven rules, each
 of which this repo has been burned by at least once.
 
 **1. Ask which of the three marks a claim carries, and demand the command.**
@@ -421,9 +421,23 @@ hiding a live product defect.**
 
 **3. A suite that nothing repeats is not a green.**
 Measured 2026-09-23: every scripted runner green (`selftest.sh` 199/0,
-`conformance.py` 41/41, 30 python suites) **while `npx playwright test` was red
-2 runs in 3** and `tests/test_a2a_reference_client.py` was red outright. The
-README's five-command list is not the test suite. Enumerate `tests/` yourself.
+`conformance.py` 41/41, all 29 `tests/test_*.py` files rc 0) **while
+`npx playwright test` flaked on one test**, and a thirtieth python file could
+not be run at all. The README's five-command list is not the test suite.
+Enumerate `tests/` yourself — and count what you enumerate: `tests/test_*.py` is
+29 files, `tests/*.py` is 33, and the difference is three `attack_*.py` scripts
+plus `conformance.py`, which are reports and a runner rather than suites.
+
+A later pass refined both halves, and the refinement is the lesson: at `9fc4d7d`
+the full suite was **175 passed / 1 failed**, and the re-run was **176 passed** —
+so the rate is load-dependent and a single green proves nothing. The one red
+reproduces 3/3 alone and 1-in-2 in a full run. And the file that "cannot be run"
+(`tests/test_a2a_reference_client.py`) is not a failing test on this box at all:
+its shebang delegates to `/tmp/a2a-ref-venv/bin/python`, which does not exist, so
+it returns **rc 2 by absence**. It is a real defect with an alarm that will stay
+silent here until someone builds that venv. **Report which of red-by-assertion
+and red-by-absence you are looking at, because they call for opposite responses
+— one is a fix, the other is a missing environment.**
 
 **4. Name the revision.** Read `/api/revision` before filing anything. If
 `stale` is true the page was not built from the source you are reading; if it is
@@ -439,6 +453,27 @@ space, and as `remaining` in the burndown.
 **6. The three `attack_*.py` scripts exit 0 on defects.** They print a table and
 return success. They are reports. If anything scripts their exit code it will
 read a DEFECT as a pass.
+
+**7. Give the verifier the instruction "falsify this", not "check this".**
+Every number in Parts I, II and IV was re-derived from primary data by an
+independent reader whose instruction was to try to break it. Six came back wrong
+and three claims came back over-argued — **and all nine were mine.** Nothing was
+falsified in substance.
+
+| what was wrong | how a falsifier caught it |
+|---|---|
+| "the alphabet, *rather than recency or authority*" | it re-measured which copy was older: for 5 of 6 ids recency picked the same one, so the "rather than" claimed a contrast the data cannot show |
+| "serves them *by id, title and body*" | it read the serialiser and found `a2a_task` never emits `title` or `body` — the mechanism was right and the sentence sold more |
+| ledger totals 352/31/343 | it re-counted and got 354/33/345, because the ledger had grown since I wrote the sentence |
+
+The pattern across all three: **the measurement was sound and the sentence was
+not.** A verifier asked to *confirm* would have agreed with each; the instruction
+to falsify is what makes the difference, and it is cheap — one word in the
+prompt. Two corollaries the same pass established: give the falsifier the
+*command*, not the conclusion (every verifier that re-ran the numbers found drift
+I could not have seen by re-reading); and when a number is a **snapshot of
+something that grows** — a mail store, a ledger — say so in the sentence, because
+otherwise the next reader measures a different tree and concludes you lied.
 
 ---
 
