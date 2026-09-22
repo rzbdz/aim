@@ -105,13 +105,49 @@ verifies.
 Measured on 8777: the payload carries `write = {enabled: false, as: ''}`, so
 `board.canWrite` is false (`web/src/stores/board.js:302`) and
 `PhaseApprovalCard.vue:49,54` draws *approve* and *decline* both disabled with an
-explanation at `:60`. The attention pane has two pending `request` rows in
-`channels/hello/log.jsonl` — one is stale, one is live — and neither can be acted
-on from the page, because the server was started without `--allow-write`. That is
-`AGENTS.md`'s own caution working as designed; it is also the state the leader
-will find if they open the board to approve something. A board on the canonical
-port with no write seat is a read-only board, and the SOP has to say so at the
-point where the leader expects a button.
+explanation at `:60`. The attention pane holds one pending `request` row — the
+log carries two, and `board.phaseRequests` filters out the stale one on
+`currentPhase === fromPhase` (`web/src/stores/board.js:463-480`) — and it cannot
+be acted on from the page, because the server was started without
+`--allow-write`. That is `AGENTS.md`'s own caution working as designed; it is
+also the state the leader will find if they open the board to approve something.
+A board on the canonical port with no write seat is a read-only board, and the
+SOP has to say so at the point where the leader expects a button.
+
+### 1.3.1 Both of the leader's buttons post a command the tool refuses [V]
+
+Start the board the way `AGENTS.md:9` says and the disabled state goes away. The
+buttons still do not work, and the reason is the phase machine the barrier is
+built on. Measured on a verified throwaway root, channel forced to `COMMIT` — the
+phase the live `hello` is in, with a live pending `COMMIT -> CROSS_EXAMINE`
+request on the board right now:
+
+| button | argv, verbatim from the component | result |
+|---|---|---|
+| Approve (`OverviewPane.vue:474`) | `advance --channel ch --to CROSS_EXAMINE --note …` | **rc 2** `illegal transition COMMIT -> CROSS_EXAMINE (allowed: ['SYNTHESIS'])` |
+| Decline (`OverviewPane.vue:483-485`) | `say --channel ch --kind note --subject … --body …` | **rc 2** `channel_say is False — the public channel is closed` |
+
+**Approve is refused because the request names the wrong edge.** The button
+posts `request.targetPhase`; `COMMIT`'s only legal edge is `SYNTHESIS`
+(`bin/aim:46`). So a leader who opens the board to *approve the advance that was
+asked for* is answered with a form refusal naming an edge nobody requested.
+
+**Decline is refused because a decline is a public act, and the phase it would be
+declined in is defined by the public channel being shut.** `channel_say` is
+`False` in `SEALED_DIVERGENT`, `COMMIT` and `SYNTHESIS` (`bin/aim:56-58`).
+`note` is in `CROSS_EXAMINE_KINDS` (`bin/aim:66-74`), so it is a public speech
+act and `SAY_PRIVATE_KINDS` — derived precisely so such a kind is *"refused by
+name — not quietly downgraded"* — refuses it out loud. That machinery is correct
+and deliberate. Measured: the **identical** argv in `CROSS_EXAMINE` succeeds
+(rc 0, `m0001 human -> note`). So the decline is expressible only *after* the
+thing it wants to decline has already been granted.
+
+**And the suite never caught it, because it mocks the answer.**
+`web/tests/card-t0165-row-feedback.spec.js:182-185` stubs `/api/command` to
+return rc 1 unconditionally, so the test asserts that a refusal is *drawn* and
+has never once asserted that a decline *succeeds*. That is the **stale** cell of
+the marker table in Part III: the acceptance was recorded against a mock that
+makes it unfalsifiable.
 
 ## 1.4 The work item
 
