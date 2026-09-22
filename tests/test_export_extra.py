@@ -13,19 +13,28 @@ one cannot reach.
 carried one of those characters -- "M2 Group chat: rooms, cursors, mentions",
 "design/05, design/06 ... committed" -- and the file was still folding correctly,
 every byte-shaped check still passed, and `SUMMARY` was present, unique and short.
-That is why the defect survived a 19-check suite and why the check below is a
-parser reading the value rather than a regex reading the line: icalendar 7.3.0 is
-the only thing in this repo that disagrees with the writer about what those 108
-lines mean.
+That is why the defect survived a 19-check suite. The check below reads the value
+through a parser instead, because the parser is the only party here that can tell
+the writer what its own escape rules mean; a regex would be one more guess of the
+same kind the writer already made.
 
 **The property a parser refuses to read.** `DTSTAMP` was
 `202609220943415Z`: the digits of an ISO stamp glued together, which is neither a
 DATE-TIME nor a DATE. Measured with icalendar 7.3.0 on the export as it stood
-before the fix: every VEVENT's DTSTAMP came back as `vBroken`, its own name for
+before the fix: all 117 VEVENTs' DTSTAMP came back as `vBroken`, its own name for
 "this value does not parse as the type the property requires". A required property
 a consumer cannot read is the difference between an event that imports and one
 that is imported empty, and it is invisible to a byte-level check because the
 string is well-formed.
+
+Both of those were fixed in the writer. What is left here is the one shape the
+writer cannot fix, and it is on two surfaces: `json_payload` accepts `risks` and
+publishes two sections out of it, and two of its three callers pass `{}`
+(`aimboard/cli.py:98` and `:894`). Measured on the served routes, one process:
+`GET /board.json` -> risks 0/decisions 0 where `render --json` on the same tree
+-> 13/16. So the two foreign-tool surfaces a reader can actually reach carry a
+section the writer would fill. That one is an expectation, not a check, because
+the fix is in a file this one does not own; see `expect_broken` below.
 
 Neither check is a regex over the exporter's output, because a regex is the same
 guess as the writer made. The check is a parser disagreeing with the writer, so
@@ -169,14 +178,17 @@ def check_json_coverage():
           set(doc["tasks"]) == set(board["tasks"]),
           f"export {len(doc['tasks'])}, board {len(board['tasks'])}")
     # `json_payload` accepts `risks` and publishes two sections out of it
-    # (exporters.py), and the export path is the one caller that hands it `{}`
-    # (cli.py:98, where the render path at cli.py:64 reads plan/*.json first). So
-    # a foreign tool reads an export whose `risks` and `decisions` are empty
-    # while the board's own JSON carries the plan's -- a format claiming a
-    # section it never carries. The fix is one call in cli.py, which is not this
-    # file's to make, so the defect is asserted as present the way T-0201's two
-    # were: this PASSES while it exists and FAILS the moment it is wired, which
-    # is when the expectation is deleted and the card closed.
+    # (exporters.py), and two of its three callers hand it `{}`: the export
+    # (cli.py:98) and the served route a browser reaches by clicking csv/ical in
+    # the app header (cli.py:894, `web/src/App.vue:261-262`). Measured, one
+    # process, one second: `GET /board.json` -> risks 0/decisions 0 while
+    # `render --json` on the same tree -> 13/16. So both foreign-tool surfaces
+    # carry a section the writer would fill and the caller never fills. The fix
+    # is one loader per call site in cli.py, which is not this file's to make, so
+    # the defect is asserted as present the way T-0201's two were: this PASSES
+    # while it exists and FAILS once wired, which is when it is deleted and the
+    # card closed. The served half is checked by tests/test_aimboard.py:532-546,
+    # which already drives /board.json; this file owns the `aimboard export` half.
     measured = bool(doc["risks"]) and bool(doc["decisions"])
     board_has = bool(board.get("risks")) and bool(board.get("decisions"))
     expect_broken("the JSON export carries the plan's risks and decisions",
@@ -184,7 +196,7 @@ def check_json_coverage():
                   f"export risks {len(doc['risks'])}/decisions {len(doc['decisions'])}, "
                   f"board risks {len(board.get('risks') or [])}/"
                   f"decisions {len(board.get('decisions') or [])}; "
-                  f"the writer is fine, cli.cmd_export passes it an empty dict")
+                  f"the writer is fine, cli.py:98 and cli.py:894 pass it an empty dict")
 
 
 def main():
