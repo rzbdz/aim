@@ -848,19 +848,25 @@ one question the ledger exists to answer.
 
 Part IV is a list of defects. This is the *set* view, because the leader asked
 for it directly — *状态机，范畴的关系* — and because the defects are better
-explained by the shape of the set than one at a time. There are **eight** machines
-in this fabric. Two are enforced, two are partial, and four are prose or absent.
+explained by the shape of the set than one at a time. There are **eleven**
+machines in this fabric. Five are enforced, two are partial, and four are prose
+or absent. (An earlier pass counted eight; a reader re-deriving the list from
+the code found the two enforced machines the eight missed — room publication
+and push‑ack — and the event vocabulary the document already called a ninth.)
 
 | # | machine | store | edges | who may move it | where enforced | mark |
 |---|---|---|---|---|---|---|
-| 1 | **phase** | `manifest.barrier.phase` | `TRANSITIONS` `bin/aim:46` — **7 edges over 6 phases**, `CLOSED` terminal | leader only (`require_leader:830`) | `advance:1450` checks the edge; at a **phase boundary** `_check_rules`/`_check_keys` also fire | **ENFORCED** |
-| 2 | **task status** | `channels/<ch>/tasks.jsonl` | `TASK_FLOW` `:116` — **16 edges over 7 statuses**, `done`/`dropped` terminal | owner, or the `kind=="human"` exemption | `task move:2114` | **ENFORCED at move, absent at birth** |
-| 3 | **seal** | `seals/<a>.json` | one-way: unsealed → sealed | any participant | quorum is **file existence** (`:1476`) | **RECORDED, not enforced** |
+| 1 | **phase** | `manifest.barrier.phase` | `TRANSITIONS` `bin/aim:46` — **7 edges over 6 phases**, `CLOSED` terminal | leader only (`require_leader:830`) | `advance` checks the edge (`:1450`), and the **phase-boundary guard** is `assert_barrier_defensible` (`bin/aim:556`, called `:1075`, `:1473`) — there is no `_check_rules`/`_check_keys` in the tree | **ENFORCED** |
+| 2 | **task status** | `channels/<ch>/tasks.jsonl` | `TASK_FLOW` `:117` — **16 edges over 7 statuses**, `done`/`dropped` terminal | owner, or the `kind=="human"` exemption | `task move:2114` | **ENFORCED at move, absent at birth** |
+| 3 | **seal** | `seals/<a>.json` | **not one-way** — measured: a second `seal` by the same agent in the same phase succeeds, overwrites the file, and writes a *second* `seal` ledger row with a different digest. Last-write-wins on disk, both writes on the ledger | any participant | quorum is **file existence** (`:1476`); nothing checks that a seal was written once | **RECORDED, not enforced — and not even one-way** |
 | 4 | **membership** | `manifest.participants` | add / remove, both leader-only; both write a ledger row | leader only | `channel add/remove` (`:688`,`:735`) — real barriers, measured | **ENFORCED** |
 | 5 | **task visibility** | derived | published ⇄ draft, by hand | owner / leader | three implementations that **disagree** (§4.4) | **ENFORCED, three ways** |
-| 6 | **channel kind/lifecycle** | derived | empty → active → dormant | nobody | computed at `aimboard/fabric.py:58`, **dropped by the payload projection** | **PROSE — computed and discarded** |
-| 7 | **obligation** (who owes the leader an action) | none | — | — | 6 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249-313`) | **ABSENT by design, on the record** |
-| 8 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
+| 6 | **room publication** | `rooms/<rid>.json` (a `room_published` ledger row) | draft → published, author-or-leader only, deliberately | author / leader | `_load_room_or_die:2758` refuses a non-author reading a draft in `DIVERGENCE_PHASES`; `cmd_room_publish:2941` refuses a bystander opening it | **ENFORCED** — and missing from this table's earlier eight |
+| 7 | **push delivery** | outbox (`outbox/<peer>/*.json`, fields `ts`/`claimed_at`/`acked_at`) | sent → claimed → acked | the addressee | `:3525` refuses confirming an unread push (`cls="form"`); `aim outbox` exits 4 on an un-acked demanded message | **ENFORCED** — and missing from the earlier eight |
+| 8 | **channel kind/lifecycle** | derived | empty → active → dormant | nobody | computed at `aimboard/fabric.py:58`, **dropped by the payload projection** | **PROSE — computed and discarded** |
+| 9 | **obligation** (who owes the leader an action) | none | — | — | 5 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249,263,276,291,313`) | **ABSENT by design, on the record** |
+| 10 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
+| 11 | **event vocabulary** | the `event` field of a task/ledger row | — | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing** | **PROSE — a writer is not a reader** |
 
 Measured for #4, on a throwaway root — this is the machine that is *better* than
 its documentation:
@@ -883,16 +889,28 @@ accepted, so the manifest can hold a leader who is not on the roster.
 
 ## IV-c.1 The relations between the machines
 
-The machines are not independent; four of them read each other, and two of those
-reads are the load-bearing ones in the whole system:
+The machines are not independent; almost every one is read somewhere, and two of
+those reads are the load-bearing ones in the whole system:
 
     phase  ──read by──▶  task visibility   (DIVERGENCE_PHASES gates drafts)
            ──read by──▶  say routing      (channel_say / private_say)
-           ──read by──▶  room publication (room_published)
+           ──read by──▶  room publication (a draft in a divergence phase)
            ──read by──▶  seal acceptance  (a seal during COMMIT is a commitment)
     membership ──read by──▶ task visibility (a participant may see their drafts)
                ──read by──▶ mail gate       (a stranger is walled off)
+               ──read by──▶ room publication (a non-participant is refused the room)
+               ──read by──▶ seal acceptance  (only a participant may seal)
     task status ──read by──▶ obligation     (a `done` card owes nobody an action)
+    push delivery ──read by──▶ session      (an ack names *which* session read it, T-0242)
+
+Two reads I expected and did **not** find, measured rather than assumed, because
+a relation that is absent is as load-bearing as one that is present: **the task
+status machine does not read the phase machine.** `cmd_task_move:2114` reads
+`TASK_FLOW` and nothing else — the task machine and the phase machine are
+genuinely independent, so a card can be created and closed in `SEALED_DIVERGENT`
+with the barrier up. And **the seal machine's only membership read is its own
+`:1365`** — `_load_room_or_die`'s participant check at `:2747` is the room
+machine's, not the seal's.
 
 **The phase machine is the only one every other machine consults**, which is why
 Part IV's row 1 (`fabric.py:281`) and row 7 (`bin/aim:51`, the rule-changing
@@ -901,7 +919,9 @@ others read. Measured: `PHASE_RULES` is evaluated at **sixteen** sites in
 `bin/aim` — counted as `ast.Name` nodes, i.e. the places the table is actually
 read, `:142`, `:152`, `:859`, `:1267`, `:1402`, `:1527`, `:1528`, `:1529`,
 `:1531`, `:1548`, `:1553`, `:1566`, `:1575`, `:3883`, `:3890`, `:4134` (the
-definition at `:56` excluded). A count of the *text* gives a different number
+definition at `:56` excluded; a naive walk that does not subtract the definition
+reports seventeen). A count of the *text*
+gives a different number
 every way you slice it — 24 lines mention it, 5 of those in comments and 2 in
 docstrings — which is why the count here is of evaluations and not of
 occurrences, and the `channel_say` half of it is deliberately
@@ -920,11 +940,12 @@ grep:
 | the status list | `bin/aim:116`, `const.py:8`; `a2a.py:326` is a *different* vocabulary (A2A `TaskState`) bridged deliberately at `STATUS_TO_STATE` `a2a.py:673` | yes for the first two |
 | the task machine | `bin/aim:117`, `web/src/panes/HelpPane.vue:291` (`FLOW_FALLBACK`) | **yes** — compared field by field, all seven rows equal |
 | the phase machine | `bin/aim:46`, `web/src/concepts.js:349` (`TRANSITIONS`) | **yes** — all 7 edges equal, but the Vue copy adds prose `unlocks`/`why` per edge |
+| the phase *access* table | `PHASE_RULES`' `read_others`/`channel_say`/`private_say`, `web/src/concepts.js:331` (`PHASE_ACCESS`, same 6 rows, keys renamed `read`/`say`/`private`) | **yes** (verified row by row) |
 | terminal set | `TASK_FLOW`'s two empty edges, `const.TERMINAL` (`{done, dropped}`) | **yes** — and the `done/doing/review` colour map in `const.STATUS_COLOR` carries no terminality, so it is not a third copy |
 
 **They all agree, and that is the finding, not the exoneration.** The table above
-is six facts, each written down **two to four times**, in two languages, and this
-repo already has the receipt for what happens when one of them lands in only
+is seven facts, each written down **two to four times**, in two languages, and
+this repo already has the receipt for what happens when one of them lands in only
 some of the copies. `TASK_EVENTS` (`bin/aim:127`, the eight event names a card may
 carry) is declared and **read by nothing** — `grep TASK_EVENTS` finds the
 declaration and no reader — so the store's `tasks.jsonl` carries exactly those
@@ -932,11 +953,17 @@ eight and never a stray one (`created 97, moved 249, commented 91, published 35,
 assigned 15, dropped 2, linked 1, retracted 1`), while `ledger.jsonl` next to it
 carries `seal`, `phase`, `push`, `refusal`,
 `task_published_during_divergence`, `channel_member_added/removed/noop` and
-`friction` under the same word *event*. The event vocabulary is a ninth machine
-with no enforcer at all, and nothing has gone wrong with it **because the
-copies that are read are the ones that write**.
+`friction` under the same word *event*. And a **card's** writer is already outside
+the eight: `cmd_task_edit` (`bin/aim:2255`, wired `:4613`) emits `"event":
+"edited"` at `:2330`, absent from `TASK_EVENTS`, `aimboard/fold.py` and every
+renderer — the live store shows only the eight because no `task edit` has run,
+which is luck, not mechanism. The event vocabulary is an eleventh machine with no
+enforcer at all, and the claim that "nothing has gone wrong because the copies
+that are read are the ones that write" is wrong for the one store that matters:
+its writer is *not* a copy of its declaration.
 
-**Two of the eight cannot be seen from the page.** #6 is computed on every
+**Two of the eleven cannot be seen from the page** — and they are not the same
+kind of invisible. Row 8, the channel lifecycle, is computed on every
 `load_fabric` and dropped by `aimboard/api.py:363`'s projection, which keeps
 `id, topic, phase, round, leader, synthesizer, participants, history, sealed,
 chain, tasks_recorded, tasks_store_exists, tasks_unknown_events, refusals,
@@ -946,6 +973,8 @@ those keys. So the answer to *"is this channel a real project or scratch, and is
 it alive"* exists in the fold, is computed on every page load, and reaches no
 reader — not the JSON, not the CLI (`aim status --channel dev` prints the phase,
 the leader, the rules and the participants, and no lifecycle), and not the page.
+And so does the event vocabulary's *absence of a reader* — no pane answers the
+question "did an `edited` ever land", because no pane would know the name.
 
 ## IV-c.2 The relations between the categories
 
@@ -955,20 +984,35 @@ the leader, the rules and the participants, and no lifecycle), and not the page.
     agent  n ──n  channel     (participation; a channel may hold zero participants)
     channel 1 ──1  project    (there is no project object; §2.1 is what that costs)
     channel 1 ──n  task       (ids are per-channel; the *board* keys them per-root — the collision)
-    task   1 ──1  owner       (nullable: an unowned card short-circuits two actor rules)
+    task   1 ──1  owner       (a **field**, `str`, on the card — nullable: an unowned card
+                               short-circuits two actor rules; measured, 246/246 owner values are strings)
     task   1 ──n  event       (tasks.jsonl is an event log, folded on read)
     agent  1 ──1  seal        (a seal is per **participant per channel**, not per task:
                                channels/hello/seals/{claude-session1,codex,codex-orangement}.json)
-    message n ──n  channel    (public log, private log, outbox — three stores under one word)
-    refusal n ──1  action     (every die() writes one; the class is `barrier|form|unrecorded`)
+    message n ──n  channel    (three stores, and the copy is worse than the word: `say`
+                               writes `log.jsonl` + `private/{agent}.jsonl`, `push` writes
+                               `outbox/{peer}/*.json`, and only the outbox third carries its
+                               own `channel` — the other two are filed by directory)
+    refusal n ──1  action     (every die() **with a channel set**; a channel-less verb writes
+                               none — `_record_refusal:280` returns early when `_CTX["channel"]`
+                               is falsy. A refusal is logged with `agent` already set and
+                               `action` spellable — measured: `say` before the channel is
+                               resolved writes `action=say, agent=`, after it writes
+                               `agent=ghost` — so the dropped fault is naming, not context)
+                               (the class on a *refusal* row is `barrier|form|unrecorded`;
+                               `class` is not a refusal field — 36 non-refusal rows carry
+                               `class: "barrier"` on purpose and 33 `push` rows carry
+                               `class: "record"`, which is in no vocabulary)
 
 **Two of these are lossy in the direction a reader would not guess.** `channel
 n─n task` loses work silently (§2.1: an id space per channel, merged per root, so
 the second project's copy is gone and the survivor is chosen by `sorted()`). And
-`task 1─n event` is lossy *on the read side only*: the store keeps all eight
-kinds, and the one consumer that draws them keeps two (`created`, `moved→done`),
-so the five newest records in the live store appear on no card — reported
-separately as the tail violation.
+`task 1─n event` is lossy *on the read side only*: the store keeps every kind a
+writer emits, and the one consumer that draws them keeps two (`created`,
+`moved→done`), so the five newest records in the live store appear on no card —
+reported separately as the tail violation. The read-side loss would be worse than
+it looks if a `task edit` had ever run: `edited` (`bin/aim:2330`) is a ninth kind
+and no consumer has heard of it.
 
 **The rest are honest one-to-manys with the consequence stated somewhere.** A
 nullable owner is what makes two actor rules short-circuit; a per-channel seal is
@@ -980,10 +1024,12 @@ refusal class, and not the action, is the thing a reader can count on.
 # Part V — The judgement
 
 **The core is sound and the ceremony around it is not.** Three things are real:
-the phase gate refuses and records refusals (137 `barrier` + 126 `form` refusals
-in the live tree, each with a reason); the seal chain detects tampering after the
-fact; and the task-actor rules genuinely stop a bystander from submitting
-another's card. Those are the load-bearing mechanisms and they work.
+the phase gate refuses and records refusals (**148 `barrier` + 126 `form`
+refusals** in the live tree today, each with a reason — re-measured, not carried:
+an earlier pass printed 137 `barrier`, which was an exact snapshot at its own
+commit and is stale here); the seal chain detects tampering after the fact; and
+the task-actor rules genuinely stop a bystander from submitting another's card.
+Those are the load-bearing mechanisms and they work.
 
 **What is not real is the layer that makes them mean something.** A quorum that a
 hand-written file satisfies, a claims schema nothing validates, an exemption any
