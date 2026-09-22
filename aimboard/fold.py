@@ -153,13 +153,17 @@ def report_data(tasks, milestones, as_of, days=14):
     series, throughput = [], {}
     for h in done.values():
         d = day_of(h["done"])
+        if d is None:
+            continue
+        d = d.isoformat()
         throughput[d] = throughput.get(d, 0) + 1
     for d in window:
-        series.append({"date": d.isoformat(),
+        key = d.isoformat()
+        series.append({"date": key,
                        "remaining": sum(1 for h in dated.values()
                                         if day_of(h["created"]) <= d
                                         and not (h["done"] and day_of(h["done"]) <= d)),
-                       "done": throughput.get(d, 0)})
+                       "done": throughput.get(key, 0)})
     blocked = [{"id": tid, "title": h["task"].get("title", ""),
                 "status": h["task"].get("status", ""), "owner": h["task"].get("owner", ""),
                 "blocked_by": h["task"].get("blocked_by") or []}
