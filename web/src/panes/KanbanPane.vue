@@ -2,12 +2,13 @@
 import { computed, inject, ref, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useBoard } from '../stores/board'
+import { isPromise, useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { isOverdue } from '../theme'
 import StatusTag from '../components/StatusTag.vue'
 import OwnerAvatar from '../components/OwnerAvatar.vue'
 import TaskLink from '../components/TaskLink.vue'
+import PromiseTag from '../components/PromiseTag.vue'
 
 const ctx = inject('ctx')
 const board = useBoard()
@@ -389,16 +390,31 @@ function openTask(task) {
             </span>
             <span v-if="t.milestone">{{ t.milestone }}</span>
             <template v-for="b in t.blocked_by || []" :key="b">
-              <span class="aim-flag blocked"><el-icon><Lock /></el-icon>{{ b }}</span>
+              <!-- T-0203: the state is a word before it is a hue. The lock is the
+                   decoration and says nothing on its own -- with author colours
+                   replaced (the reason `card-t0203-a11y.spec.js` emulates forced
+                   colours) an unnamed glyph is not a channel at all. -->
+              <span class="aim-flag blocked" title="blocked by this work item">
+                <el-icon aria-hidden="true"><Lock /></el-icon>blocked {{ b }}
+              </span>
             </template>
             <span v-if="t.priority" class="aim-flag"
                   :style="{ color: t.priority === 'high' ? 'var(--aim-danger)' : 'inherit' }">
               <el-icon><Top v-if="t.priority === 'high'" /><Bottom v-else /></el-icon>{{ t.priority }}
             </span>
           </div>
-          <div v-if="(t.tags || []).length || t.visibility === 'draft' || (t.provenance || '').includes('seed')"
+          <!-- T-0188 clause 3: the promise mark is the shared component, not a
+               chip this pane spells for itself. A per-pane rendering of one
+               concept is the second answer the store's `isPromise` exists to
+               prevent (`board.js:62`), and the card found the pane drawing
+               `<span class="aim-chip seed">plan seed</span>` -- indistinguishable
+               from a tag chip to a reader and invisible to a test that asks for
+               `.aim-promise`. The wrapper's own condition reads the predicate
+               too, so a card that draws the mark and a card the predicate calls a
+               promise cannot be two different sets. -->
+          <div v-if="(t.tags || []).length || t.visibility === 'draft' || isPromise(t)"
                style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">
-            <span v-if="(t.provenance || '').includes('seed')" class="aim-chip seed">plan seed</span>
+            <PromiseTag v-if="isPromise(t)" />
             <span v-if="t.visibility === 'draft'" class="aim-chip draft">draft</span>
             <span v-for="g in (t.tags || []).slice(0, 4)" :key="g" class="aim-chip">{{ g }}</span>
           </div>

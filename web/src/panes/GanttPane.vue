@@ -553,7 +553,7 @@ const option = computed(() => {
       // The offset series is invisible and carries the row's task, which is what
       // `onClick` opens and what the tooltip reads; the visible series is the
       // duration. Both are one stack, so the lane order is the row order.
-      { name: 'offset', type: 'bar', stack: 'gantt', silent: true, itemStyle: { color: 'transparent' }, data: offsetData },
+      { name: 'offset', type: 'bar', stack: 'gantt', silent: true, itemStyle: { color: 'transparent' }, data: offsets },
       ...series,
     ],
   }

@@ -236,7 +236,14 @@ const argvLine = (action) => {
       <TaskLink :id="row.id" />
       <strong>{{ row.field }}</strong>
       <span>{{ row.plan ?? 'the plan says nothing' }}</span>
-      <span><code class="aim-mono">not recorded</code>
+      <!-- The store's own word for this row is the predicate, and the row says
+           which half it is about: rendered with the cell alone, this row read as
+           a value a reader could compare (T-0190's defect one scope down), and
+           `store has not recorded` is not a sentence about anything. The words
+           `store has` are the landing page's drift row (`OverviewPane.vue:767`),
+           so the same fact is one phrase on both pages rather than two. -->
+      <span>the store has no record of this item:
+        <code class="aim-mono">not recorded</code>
         <PromiseTag title="Nothing recorded: this row is a plan promise the store has never seen." /></span>
     </article>
     <p v-if="driftRowsBelowBudget || driftExpanded" class="aim-dim"

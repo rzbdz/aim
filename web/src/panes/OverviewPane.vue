@@ -21,8 +21,44 @@ const ctx = inject('ctx')
 const drawer = ctx.service('taskDrawer')
 const api = ctx.service('api')
 const board = useBoard()
+/**
+ * Busy and refusal are keyed by the action, not held for the page.
+ *
+ * One `actionError` for a whole page is the defect T-0165 names: a receipt
+ * refused on a message row was drawn by `PhaseApprovalCard.vue:62` inside every
+ * phase-request card the reader never touched, because `:error` is a prop of
+ * that card and this pane passed it one page-wide string. Measured on a fixture
+ * of two requests and one message row (`web/tests/card-t0165-row-feedback.spec.js`):
+ * a `confirm` refusal came back on both request cards and nowhere on the row that
+ * asked for it, and an `advance` refusal for channel `alpha` came back on the
+ * `beta` card too.
+ *
+ * So the state is a map from the command's own identity to what it produced.
+ * The identity is not invented here: it is the string each control already
+ * compares against for its `loading` -- `confirm:<msg_id>` on a message row,
+ * `advance:<channel>:<ts>` and `reject:<channel>:<ts>` in
+ * `PhaseApprovalCard.vue:50,55` -- which is why the busy half of the card's
+ * acceptance already measured green and only the refusal half was red. The
+ * phase cards cannot borrow the row's identity or each other's: `ts` is the
+ * request's own timestamp and `channel` its own channel, and two requests on one
+ * channel cannot share a `ts`.
+ *
+ * The map is bounded rather than grown: a board left open for a day of failed
+ * clicks would otherwise hold one string per attempt forever. Clearing entries
+ * does not clear a refusal still on screen, because a card draws one only for
+ * its own key; that is what keeps the bound from lying about the record.
+ */
+const ERRORS_KEPT = 20
 const actionBusy = ref('')
-const actionError = ref('')
+const actionErrors = ref({})
+const errorFor = (name) => actionErrors.value[name] || ''
+
+const noteError = (name, message) => {
+  const next = { ...actionErrors.value, [name]: message }
+  const keys = Object.keys(next)
+  for (const stale of keys.slice(0, Math.max(0, keys.length - ERRORS_KEPT))) delete next[stale]
+  actionErrors.value = next
+}
 
 /**
  * Every count on this page is work, and work is on the record.
@@ -358,19 +394,44 @@ function taskActionLabel(task) {
 
 async function runAction(name, argv) {
   actionBusy.value = name
-  actionError.value = ''
+  noteError(name, '')
   const result = await api.command(argv)
   actionBusy.value = ''
   if (result.rc !== 0) {
-    actionError.value = result.stderr || result.stdout || `aim exited ${result.rc}`
+    // Keyed on the way out as well as on the way in. The name is computed from
+    // the row or the card the reader clicked and not from the command's argv, so
+    // a control that derives the identity differently from this call would record
+    // its refusal under a key nothing draws -- the same silence as the page-wide
+    // string, one indirection later.
+    noteError(name, result.stderr || result.stdout || `aim exited ${result.rc}`)
     return
   }
   await board.load()
 }
 
-async function confirmMessage(message) {
-  await runAction('confirm', ['confirm', '--msg-id', message.msg_id, '--note', 'confirmed from attention page'])
-}
+/** The identity a message row's own controls use, and the one its refusal is filed under. */
+const confirmKey = (msgId) => `confirm:${msgId}`
+const confirmArgv = (msgId) => ['confirm', '--msg-id', msgId, '--note', 'confirmed from attention page']
+
+/**
+ * Which rows offer the receipt, and therefore which rows may draw its refusal.
+ *
+ * Both cards that draw a demand draw the button only under a condition, and a
+ * row that offers no control must not annotate a failure it did not initiate --
+ * which is the clause the card states as "a failure in one action does not
+ * disable or annotate unrelated rows". The predicate is written once so the
+ * button and the alert cannot disagree about which row is the one that asked.
+ * `Latest conversation` has no viewer condition because it is a transcript of
+ * what arrived, not a list of what the reader owes.
+ */
+const canConfirm = (row) => row.shape === 'direct' && Boolean(row.ack_required) && !row.acked_at
+
+/**
+ * The chain card draws the receipt only for the seat the demand is addressed to
+ * (`unacked` is the whole fabric's list, not the viewer's), so only those rows
+ * may draw what that command returned.
+ */
+const isAddressee = (item) => item.to === board.viewer
 
 async function approvePhase(request) {
   await runAction(`advance:${request.channel}:${request.ts}`, [
@@ -437,7 +498,9 @@ async function rejectPhase(request, reason) {
       <template #header><span>Leader decisions</span><RouterLink to="/barrier">audit barrier</RouterLink></template>
       <PhaseApprovalCard v-for="request in board.phaseRequests"
                          :key="`${request.channel}:${request.ts}:${request.from}`"
-                         :request="request" :busy="actionBusy" :error="actionError"
+                         :request="request" :busy="actionBusy"
+                         :error="errorFor(`advance:${request.channel}:${request.ts}`)
+                           || errorFor(`reject:${request.channel}:${request.ts}`)"
                          @approve="approvePhase" @reject="rejectPhase" />
     </el-card>
 
@@ -445,7 +508,19 @@ async function rejectPhase(request, reason) {
          This card is the receipts tile opened out: same predicate, same rows, so
          the number at the top and this list cannot disagree. Every row is
          addressed `to` the viewer and unacked, and the button beside it is the
-         one command that answers it — the same `confirm` the Chat reader runs. -->
+         one command that answers it — the same `confirm` the Chat reader runs.
+
+         The row carries its own refusal, and the refusal is drawn *inside* the
+         `<article>`: `role="button"` makes that element the innermost one holding
+         the text, and a wrapper placed outside it would be attributed to the page
+         rather than to the row that asked for the action -- which is the question
+         the card asks. It is the last child so the grid's auto-placement keeps
+         every earlier cell where `.aim-attention-row` (style.css:173) puts it,
+         and it spans the row with an inline `grid-column`, the shell stylesheet
+         being another task's file. The `<pre>` is where the mono class and the
+         error colour live: on the alert they would make the alert itself the
+         innermost element holding the text, and the surface the card reads would
+         then be Element's wrapper rather than this pane's row. -->
     <el-card v-if="receiptsOwed.length" id="receipts-owed" shadow="never" class="aim-receipts-card">
       <template #header>
         <span>{{ receiptsOwed.length }} message(s) addressed to you, unacked</span>
@@ -463,10 +538,14 @@ async function rejectPhase(request, reason) {
         <span>{{ row.from }} → {{ row.to }}</span>
         <el-tag size="small" type="warning" effect="plain">unacked</el-tag>
         <el-button size="small" text
-                   :loading="actionBusy === `confirm:${row.msg_id}`"
-                   @click.stop="runAction(`confirm:${row.msg_id}`, ['confirm', '--msg-id', row.msg_id, '--note', 'confirmed from attention page'])">
+                   :loading="actionBusy === confirmKey(row.msg_id)"
+                   @click.stop="runAction(confirmKey(row.msg_id), confirmArgv(row.msg_id))">
           confirm receipt
         </el-button>
+        <el-alert v-if="errorFor(confirmKey(row.msg_id))" type="error" :closable="false" show-icon
+                  style="grid-column:1 / -1" title="The tool refused this action">
+          <pre class="aim-mono">{{ errorFor(confirmKey(row.msg_id)) }}</pre>
+        </el-alert>
       </article>
       <p v-if="receiptsOwed.length > RECEIPTS_DRAWN" class="aim-dim" style="font-size:12px;margin-bottom:0">
         {{ receiptsOwed.length - RECEIPTS_DRAWN }} more than this card draws. The count above is the record's.
@@ -527,11 +606,19 @@ async function rejectPhase(request, reason) {
         <span>{{ item.from }} → {{ item.to }}</span>
         <el-tag v-if="item.to === board.viewer" size="small" type="warning" effect="dark">addressed to you</el-tag>
         <el-tag v-else size="small" effect="plain">another seat</el-tag>
-        <el-button v-if="item.to === board.viewer" size="small" text
-                   :loading="actionBusy === `confirm:${item.msg_id}`"
-                   @click.stop="runAction(`confirm:${item.msg_id}`, ['confirm', '--msg-id', item.msg_id, '--note', 'confirmed from attention page'])">
+        <el-button v-if="isAddressee(item)" size="small" text
+                   :loading="actionBusy === confirmKey(item.msg_id)"
+                   @click.stop="runAction(confirmKey(item.msg_id), confirmArgv(item.msg_id))">
           confirm receipt
         </el-button>
+        <!-- Drawn under the same condition as the button: a row showing "another
+             seat" offers no receipt, so a refusal that arrived while the reader
+             was on this page must not be read as that row's. -->
+        <el-alert v-if="isAddressee(item) && errorFor(confirmKey(item.msg_id))"
+                  type="error" :closable="false" show-icon
+                  style="grid-column:1 / -1" title="The tool refused this action">
+          <pre class="aim-mono">{{ errorFor(confirmKey(item.msg_id)) }}</pre>
+        </el-alert>
       </article>
     </el-card>
 
@@ -625,11 +712,20 @@ async function rejectPhase(request, reason) {
           </RouterLink>
           <el-tag size="small" effect="plain">{{ message.shape }}</el-tag>
           <span>{{ (message.ts || '').slice(0, 16).replace('T', ' ') }}</span>
-          <el-button v-if="message.shape === 'direct' && message.ack_required && !message.acked_at"
-                     size="small" :loading="actionBusy === `confirm:${message.msg_id}`"
-                     @click="runAction(`confirm:${message.msg_id}`, ['confirm', '--msg-id', message.msg_id, '--note', 'confirmed from attention page'])">
+          <el-button v-if="canConfirm(message)"
+                     size="small" :loading="actionBusy === confirmKey(message.msg_id)"
+                     @click="runAction(confirmKey(message.msg_id), confirmArgv(message.msg_id))">
             confirm receipt
           </el-button>
+          <!-- The same key the row above the fold files under, because it is the
+               same command on the same message: one action, one refusal, wherever
+               the reader took it from. The condition is the button's, so a logged
+               `acked` row -- which offers nothing -- never explains a failure. -->
+          <el-alert v-if="canConfirm(message) && errorFor(confirmKey(message.msg_id))"
+                    type="error" :closable="false" show-icon
+                    style="grid-column:1 / -1" title="The tool refused this action">
+            <pre class="aim-mono">{{ errorFor(confirmKey(message.msg_id)) }}</pre>
+          </el-alert>
         </article>
       </el-card>
     </div>

@@ -134,6 +134,79 @@ const busy = ref('')
 const refusal = reactive({ channel: '', text: '' })
 
 /**
+ * The ask, for the seat the tool's own refusal names.
+ *
+ * `require_leader` refuses everyone but the leader and says the way round it --
+ * "agents may ask with: aim request-advance ..." (`bin/aim:818-833`) -- so a page
+ * that shows a participant whose move this is owes them that command rather than
+ * a disabled button. It is the same act in the other direction, and it is
+ * recorded in the channel's *public* log (`cmd_request_advance`, `bin/aim:1480`)
+ * rather than in a private one, because a request is not a position.
+ *
+ * The two write conditions are `canAdvance`'s, for the same reason: the endpoint
+ * drops any `--as` in argv and appends the server's own, so the argv has to be
+ * postable *as this reader* or the printed command is not the command that runs.
+ * When it is not -- a read-only server, or a writer who is somebody else -- this
+ * renders nothing and the sentence below the branch says why, which is the
+ * distinction the leader's own branch already keeps.
+ */
+const isParticipant = (ch) => (ch?.participants || []).includes(board.viewer)
+const canRequest = (ch) => Boolean(advanceArgv(ch)) && !isLeader(ch)
+  && isParticipant(ch) && board.canWrite && board.writer === board.viewer
+
+/**
+ * What the request says, defaulting to something the record can stand behind.
+ *
+ * `--reason` is `required=True` (`bin/aim:4419`) and its text is appended to the
+ * channel log verbatim, so an empty box is not an option the command has. The
+ * default names the phase rather than the enum: a reader of the log has the
+ * english label beside every phase chip on the page, and the raw key in prose is
+ * the thing `boards.spec.js:467` exists to keep off this pane.
+ */
+const requestNote = ref('')
+const defaultReason = (ch) => `this channel is at ${phaseLabel(ch.phase)} and the next move is the leader's`
+const requestReason = (ch) => requestNote.value.trim() || defaultReason(ch)
+
+/**
+ * The printed ask and the posted ask are one function, as on the leader's card.
+ *
+ * The reason is quoted with `JSON.stringify` rather than joined with spaces: an
+ * unquoted sentence is a command that cannot be pasted into a shell, and a
+ * printed command that differs from the posted one is the defect both of these
+ * functions exist to prevent.
+ */
+function requestArgv(ch) {
+  const to = nextPhase(ch)
+  if (!ch?.id || !to || !board.viewer) return null
+  return ['request-advance', '--as', board.viewer, '--channel', ch.id, '--to', to,
+          '--reason', requestReason(ch)]
+}
+const requestText = (ch) => {
+  const argv = requestArgv(ch)
+  if (!argv) return ''
+  return `aim request-advance --as ${board.viewer} --channel ${ch.id} --to ${nextPhase(ch)} `
+    + `--reason ${JSON.stringify(requestReason(ch))}`
+}
+
+const requestBusy = ref('')
+/** The same write path and the same verbatim-refusal rule as `advance`. */
+async function requestAdvance(ch) {
+  const argv = requestArgv(ch)
+  if (!argv || !canRequest(ch)) return
+  requestBusy.value = ch.id
+  refusal.channel = ch.id
+  refusal.text = ''
+  const response = await api.command(argv)
+  requestBusy.value = ''
+  if (response.rc !== 0) {
+    refusal.text = (response.stderr || response.stdout || `aim exited ${response.rc}`).trim()
+    return
+  }
+  requestNote.value = ''
+  await board.load()
+}
+
+/**
  * The page's purpose, in one sentence, above everything it shows.
  *
  * The measurement that put it here: `/#/barrier` held 5400px of content under
@@ -339,6 +412,39 @@ export default { name: 'BarrierPane' }
           <span class="aim-mono">{{ board.writer || '(nobody)' }}</span> and the tool requires
           <span class="aim-mono">{{ ch.leader }}</span>.
         </p>
+        <!--
+          The other side of the same coin: a participant has no advance to run,
+          but they do have an ask, and the tool's own refusal names it -- "agents
+          may ask with: aim request-advance ..." (`bin/aim:818-833`). So this
+          branch carries the ask and no argv that starts a phase move.
+
+          It is deliberately NOT the leader's argv with a longer word: the printed
+          command is `aim request-advance ...`, which reaches the same reader as
+          a way round the gate without a button the tool would refuse. The
+          `REQUEST-ADVANCE` chip is the visible half of that -- the same shape
+          `barrier-leader.spec.js:302` measures on the leader's card, drawn for
+          the seat that has no advance at all.
+        -->
+        <div v-else-if="canRequest(ch)" class="aim-leader-request"
+             style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+          <el-tag class="aim-request-chip" size="small" type="warning" effect="plain">REQUEST-ADVANCE</el-tag>
+          <el-input v-model="requestNote" class="aim-request-note" size="small"
+                    :placeholder="defaultReason(ch)" clearable style="width:280px" />
+          <span style="flex:1" />
+          <div class="aim-leader-argv aim-mono" style="word-break:break-word">{{ requestText(ch) }}</div>
+          <el-button class="aim-advance-copy" size="small" text
+                     @click="copyAdvance($event, ch)">copy</el-button>
+          <el-button class="aim-advance-request" size="small" type="primary"
+                     :loading="requestBusy === ch.id" @click="requestAdvance(ch)">
+            ask the leader
+          </el-button>
+        </div>
+        <p v-else-if="isParticipant(ch) && advanceArgv(ch)" class="aim-dim" style="font-size:12px;margin:0">
+          the next move is <span class="aim-mono">{{ ch.leader }}</span>'s, and this dashboard cannot
+          even ask: it is read-only, or it writes as
+          <span class="aim-mono">{{ board.writer || '(nobody)' }}</span> rather than as
+          <span class="aim-mono">{{ board.viewer }}</span>.
+        </p>
         <p v-else-if="!nextPhase(ch)" class="aim-dim" style="font-size:12px;margin:0">
           {{ phaseConcept(ch.phase).consequence }}
         </p>
@@ -348,15 +454,29 @@ export default { name: 'BarrierPane' }
         </el-alert>
       </el-card>
 
-      <el-card shadow="never" style="margin-bottom:14px">
-        <template #header>the chain — every file the record is made of</template>
-        <!-- Every section on this page answers "and if it is empty?" the same
-             way: one line. The chain is the one a reader is most likely to meet
-             empty, because a channel with no moves yet has no file to hash. -->
-        <p v-if="!chainRows.length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
-          no file in this channel has a record yet — there is nothing to hash.
-        </p>
-        <el-table v-else :data="chainRows" size="small">
+      <!--
+        Every section on this page answers "and if it is empty?" the same way:
+        one line, and the line is the header's. Measured on the T-0192 fixtures
+        (viewer `human`, 1440x1000), the empty sections stood at 84px (this one),
+        111px (seals) and 84px (phase history) against the refusals card's 44px
+        after the same treatment: an `el-card` renders a 20px-padded body around
+        one sentence, and the sentence belongs beside the heading that names the
+        thing it says is empty. The chain is the section a reader is most likely
+        to meet empty, because a channel with no moves yet has no file to hash --
+        and the caveat paragraph below goes with the body, because there is no
+        chain to caveat when there is no chain.
+      -->
+      <el-card shadow="never" style="margin-bottom:14px"
+               :body-style="chainRows.length ? '' : 'display:none'">
+        <template #header>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>the chain — every file the record is made of</span>
+            <span v-if="!chainRows.length" class="aim-dim" style="font-size:12px;font-weight:400">
+              no file in this channel has a record yet — there is nothing to hash.
+            </span>
+          </div>
+        </template>
+        <el-table :data="chainRows" size="small">
           <el-table-column prop="file" label="file" width="200" />
           <el-table-column label="state" width="120">
             <template #default="{ row }">
@@ -390,15 +510,20 @@ export default { name: 'BarrierPane' }
         claims, at, digest) and the claims appear only when their row is opened,
         which is what a reader who wants the digest wants, in that order.
       -->
-      <el-card shadow="never" style="margin-bottom:14px">
-        <template #header>seals — a digest each participant committed to before reading the peer's</template>
-        <!-- An empty section is one line, the same rule the refusal card keeps:
-             a header over an `el-table`'s "No Data" box is 100px of chrome
-             answering a question nobody asked. -->
-        <p v-if="!(ch.sealed || []).length" class="aim-dim" style="font-size:12px;margin:8px 0 0">
-          nobody has sealed here yet — no position has been frozen, so there is no digest to audit.
-        </p>
-        <el-table v-else :data="ch.sealed" size="small" class="aim-seal-table">
+      <el-card shadow="never" style="margin-bottom:14px"
+               :body-style="(ch.sealed || []).length ? '' : 'display:none'">
+        <template #header>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>seals — a digest each participant committed to before reading the peer's</span>
+            <!-- The reason, in place of the table: with nothing sealed there is no
+                 digest to audit, and a header over an `el-table`'s "No Data" box
+                 is chrome answering a question nobody asked. -->
+            <span v-if="!(ch.sealed || []).length" class="aim-dim" style="font-size:12px;font-weight:400">
+              nobody has sealed here yet — no position has been frozen, so there is no digest to audit.
+            </span>
+          </div>
+        </template>
+        <el-table :data="ch.sealed" size="small" class="aim-seal-table">
           <el-table-column prop="agent" label="agent" width="180" />
           <el-table-column label="sealed" width="100">
             <template #default="{ row }">
@@ -504,8 +629,20 @@ export default { name: 'BarrierPane' }
         </el-table>
       </el-card>
 
-      <el-card shadow="never">
-        <template #header>phase history — every move, and who made it</template>
+      <el-card shadow="never"
+               :body-style="(ch.history || []).length ? '' : 'display:none'">
+        <template #header>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>phase history — every move, and who made it</span>
+            <!-- The last section to keep this rule, and the one where the empty
+                 case is not a fault: a channel that has never moved has no move
+                 to record, which is why the phase it is sitting in is the whole
+                 answer to "how did it get here". -->
+            <span v-if="!(ch.history || []).length" class="aim-dim" style="font-size:12px;font-weight:400">
+              this channel has not moved yet — the phase it is in now is the one it opened in.
+            </span>
+          </div>
+        </template>
         <el-timeline>
           <el-timeline-item v-for="(h, i) in ch.history" :key="i" :timestamp="h.at" placement="top">
             <PhaseChip :phase="h.phase" effect="dark" link />
