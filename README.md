@@ -269,6 +269,8 @@ bash tests/selftest.sh                        # 87 assertions, all of them refus
 python3 tests/conformance.py                  # 33 checks over real concurrent processes
 python3 -m pip install -r requirements-mcp.txt
 python3 tests/test_mcp.py                     # the official SDK, in memory
+npm --prefix web install
+npm --prefix web run test:e2e                # Playwright: scroll and no forced reload
 ```
 
 The self-test is the specification. Every `REFUSED` in it is the feature.

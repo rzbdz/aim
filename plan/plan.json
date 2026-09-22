@@ -1498,6 +1498,25 @@
       ],
       "accept": "tests/attack_gate_sweep.py reports no verb whose *position text* reaches a peer with nothing in the ledger: either the text is refused (class barrier) or a record naming the pair, the message id and the bytes is appended without the body. Blocked on D19 for the second of those two.",
       "move_reason": "found by the structural sweep rather than by hand, after two holes of the same shape were found one at a time. The sweep is the deliverable worth keeping: it asks every verb instead of the verbs somebody thought of"
+    },
+    {
+      "id": "T-0148",
+      "title": "Pin the conversation reader's scroll and no-forced-refresh contract in a real browser",
+      "owner": "codex",
+      "status": "done",
+      "priority": "high",
+      "estimate": 1,
+      "start": "2026-09-22",
+      "due": "2026-09-22",
+      "blocked_by": [],
+      "milestone": "M9",
+      "visibility": "published",
+      "tags": [
+        "dashboard",
+        "conversation",
+        "testing"
+      ],
+      "accept": "a Playwright test opens #/chat, scrolls the main document pane, asserts messages are not nested inside a broken scroller, waits through one digest interval, and verifies no page navigation or remount occurs; measured with 1/1 passing"
     }
   ]
 }

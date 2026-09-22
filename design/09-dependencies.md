@@ -57,6 +57,7 @@ changes a decision below.
 | utils | `vueuse/vueuse` | 22,377 | surveyed, not adopted: nothing in the front-end needs it yet |
 | kernel shape | `cordiverse/cordis` | 8,712 | **cited, not installed** — the plugin/service container the kernel copies (npm `cordis` 4.0.0-rc.10, the container behind Koishi, `koishijs/koishi` 6,216) |
 | chat UI | `advanced-chat/vue-advanced-chat` | 2,081 | **surveyed, NOT YET ADOPTED — see §4** |
+| browser tests | `microsoft/playwright` | 96,476 | **adopted** — the Chat pane scroll/no-reload regression test (measured 2026-09-22) |
 | gantt | `frappe/gantt` | 6,124 | surveyed, not adopted: MIT, but it draws from its own task list and knows nothing about the gate or the draft/published split; also see §5 |
 | gantt | `dhtmlx/gantt` | 1,853 | surveyed, rejected: GPL or paid, and a licence that reaches into the fabric is not a dependency, it is a constraint on the product |
 | A2A | `a2aproject/A2A` | 25,873 | **adopted as the standard** (design/07) |
