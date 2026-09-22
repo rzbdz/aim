@@ -238,15 +238,22 @@ phase simply has no membership rule attached to the task verbs.
   is `{workspace, add, remove}`
 
 **No live channel has ever reached `CROSS_EXAMINE`, `RESOLVE` or `CLOSED`.** The
-furthest any real channel got is `barrier-v0` at `SYNTHESIS`. Measured now:
+furthest any real channel got is `barrier-v0` at `SYNTHESIS`. Re-measured at
+`7def563` (the ledger counts move between sessions; the phase column does not,
+which is itself the point):
 
 | channel | phase | seals | private | public | ledger |
 |---|---|---|---|---|---|
-| `barrier-v0` | SYNTHESIS | 2 | 4 | 2 | 5 |
-| `hello` | COMMIT | 3 | 9 | 2 | **320** |
+| `barrier-v0` | SYNTHESIS | 2 | 4 | 2 | 6 |
+| `hello` | COMMIT | 3 | 9 | 2 | **348** |
 | `dev` | SEALED_DIVERGENT | 0 | 0 | 0 | 1 |
 | `s2-scratch` | SEALED_DIVERGENT | 1 | 2 | 0 | 2 |
 | `s2-scratch2` | SEALED_DIVERGENT | 0 | 1 | 0 | 1 |
+
+The `hello` ledger grew 320 → 348 while this document was being written — every
+row of it a refusal or a phase row from the same work the document describes. The
+census is the one place where a number that moves is *evidence* rather than
+drift: five channels, none above `COMMIT` after two days of real use.
 
 The channel named *"aim development"* is empty; the channel named *"Transport
 test"* holds the work. The record says so plainly — that is what the census is
