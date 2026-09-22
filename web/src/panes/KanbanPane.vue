@@ -173,6 +173,56 @@ const page = ref(0)
 /** What the filters select, before the page bound: the pager's total. */
 const matched = computed(() => board.tasks.filter(visible).length)
 
+/**
+ * A column header's number, in the two universes that number can mean.
+ *
+ * The badge was `(cols[st] || []).length`, and that was wrong twice over. It is
+ * the count of *cards drawn on this page* (`cols` is sliced by the page bound at
+ * `:218-228`), so a column of ninety with `per=25` said 25; and the set it
+ * counted is the merge, so the `done` column's number carried promises whose only
+ * evidence is `plan/plan.json`. Measured on this tree
+ * (`fabric.load_fabric(root, ['plan/*.json'], date(2026,9,22))`, 177 rows): 87
+ * promises, 72 of them `status: done` in the plan file and 15 `dropped`, and a
+ * seed has no events at all -- against 90 recorded rows whose `done` is 67. So
+ * the `done` column read a number that was the plan file's arithmetic beside a
+ * status tag, in a column whose cards the reader counts as work.
+ *
+ * The split is drawn the way every other two-universe number on this board is
+ * drawn: the record first and named (`on the record`), the promise half beside
+ * it and named (`planned`), which is `GanttPane`'s header idiom and the reason
+ * `PromiseTag` prints a word rather than only a hue -- a reader who cannot see
+ * the colour still reads which half they are looking at.
+ *
+ * Both numbers are over `visible` (the filter the reader set) and **not** over
+ * `cols`, which is the page as well. A bound stated in a column header would be
+ * the bound drawn once per column, and worse here: `visible` is this method's own
+ * predicate rather than a computed, so the two numbers cannot be read as "of a
+ * total" -- the column is bounded and `GanttPane.vue:634-637` is the pane that
+ * states a window (`N shown`, `of M dated`) because its chart is bounded by
+ * height. That is the same choice `ItemsPane.vue:457` makes (`{{ rows.length }}
+ * of {{ board.tasks.length }}` -- membership over the merge, the page stated by
+ * the pager below), with this pane's own two halves named and the pager's own
+ * numbers left to the pager (`:490-492`).
+ *
+ * The two halves are published as one number and one clause on purpose, rather
+ * than handed to `StatusTag`'s `count` prop: that prop draws a bare number beside
+ * the status name, which is exactly the shape that cannot say which universe it
+ * counted. `components/StatusTag.vue:10` has nothing passing it today, and the
+ * fix here is the sentence, not the slot.
+ */
+const colCounts = computed(() => {
+  const next = {}
+  for (const status of board.statuses) {
+    const all = (board.byStatus[status] || []).filter(visible)
+    const promises = all.filter(isPromise).length
+    next[status] = { promises, recorded: all.length - promises }
+  }
+  return next
+})
+/** One column's pair, so the template reads one object per header rather than a
+ *  fallback per clause -- the two numbers have to come from the same fold. */
+const colCount = (status) => colCounts.value[status] || { promises: 0, recorded: 0 }
+
 const cols = computed(() => {
   const next = {}
   let seen = 0
@@ -332,7 +382,19 @@ function openTask(task) {
     <section v-for="st in board.statuses" :key="st" class="aim-col">
       <header>
         <StatusTag :status="st" />
-        <span class="aim-count">{{ (cols[st] || []).length }}</span>
+        <!-- The two halves of this column, named (`colCounts`, `:177-224`). The
+             second clause is drawn only when the column holds one: `0 planned` on
+             the other five is a number about a set that is empty, in a header
+             whose whole job is to say how much is in the column, and the absence
+             already says it. It is the same asymmetry `GanttPane.vue:721-727`
+             keeps for its undated split -- and the reason `data-promises="0"` is
+             published here where the visual clause is not, so a test can ask the
+             count the screen declines to print. -->
+        <span class="aim-count" data-recorded>
+          {{ colCount(st).recorded }} on the record<span
+            v-if="colCount(st).promises" class="aim-dim" data-promises>
+            · {{ colCount(st).promises }} planned</span>
+        </span>
       </header>
       <VueDraggable :model-value="cols[st] || []" :group="{ name: 'tasks' }" :data-status="st"
                     class="aim-colbody" :animation="140" @end="onMoved($event, st)">

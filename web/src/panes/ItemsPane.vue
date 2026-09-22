@@ -6,6 +6,7 @@ import { useQueryFilters } from '../composables/useQueryFilters'
 import { listQuery } from '../composables/useTaskDrawer'
 import { PRIORITY_TYPE, STATUS_TYPE, isOverdue } from '../theme'
 import TaskLink from '../components/TaskLink.vue'
+import PromiseTag from '../components/PromiseTag.vue'
 
 const ctx = inject('ctx')
 const board = useBoard()
@@ -41,10 +42,33 @@ const unowned = (task) => (task.owner || '') === ''
 /**
  * How much work nobody has taken, so the filter above is a number and not an
  * invitation to an empty list: T-0227's queue is only visible if the reader can
- * see that there is one. It is the same predicate the filter applies, over the
- * whole board, so the count and the rows it leads to cannot disagree.
+ * see that there is one.
+ *
+ * Read over `board.recorded`, not `board.tasks`, and the difference is the whole
+ * point of the clause the number is about. Measured on this tree
+ * (`fabric.load_fabric(root, ['plan/*.json'], date(2026,9,22))`, 177 rows):
+ * `store only` 90, `seed only (not yet in the store)` 87, and exactly **1** row
+ * with no owner -- `T-0245`, `store only`. So the fix is latent today, which is
+ * why the number looks the same either way and why the set still has to be right:
+ * a plan line with no owner is the plan's *file* saying nothing about who, not
+ * work nobody has picked up. A promise cannot be taken at all -- the tool's own
+ * sentence, quoted in `HelpPane.vue:221-223`: a seed the store has no record of
+ * cannot be moved, assigned or recorded, and `aim` answers "no such task". Counted
+ * over the merge, the next plan line with no owner would arrive here as an untaken
+ * work item that no reader can take, which is a queue that does not exist.
+ *
+ * The *mark* on a row stays unconditional, and the filter with it: an unowned
+ * promise row must still say so in its cell (`data-unassigned`, `:552`), and
+ * `?unassigned=1` still filters the merged list this number is drawn under
+ * (`matches`, `:174`). This clause is only about the number, which claims a queue
+ * -- so the number is the record's and the rows it lands on are the list's, and
+ * the row's own promise mark (`:541`) is what tells the reader which of those
+ * rows is not work. A second clause naming the promise half (`N unassigned, M of
+ * them a plan line`) is not printed: the promise half of this set is 0 today, and
+ * a clause that is always zero is decoration; the row-level marks are where the
+ * split is falsifiable.
  */
-const unassignedCount = computed(() => board.tasks.filter(unowned).length)
+const unassignedCount = computed(() => board.recorded.filter(unowned).length)
 
 /**
  * Whether this dashboard could actually run `aim task claim` for this item.
@@ -488,8 +512,35 @@ async function applyDecision(task, decision) {
           </el-tooltip>
         </template>
       </el-table-column>
+      <!-- T-0188 clause 3, on this pane's row: the status cell was the last place
+           a promise's plan-authored status was painted as an outcome. Measured on
+           this tree (`fabric.load_fabric(root, ['plan/*.json'], date(2026,9,22))`,
+           177 rows, 87 promises of which 72 are `status: done` in `plan/plan.json`
+           and 15 are `dropped`): this pane drew all 177 with the same `effect="dark"`
+           completion tag, so 72 rows whose only evidence is a line in the plan file
+           were indistinguishable from a closed work item -- in a list the reader
+           reaches from a link that promises work items. The pane imported
+           `isPromise` (`:4`) and read it for a promise's decision argv (`:333`) but
+           never marked the row, which is the gap `web/tests/card-t0188-gantt-seeds.spec.js`
+           measures from outside as "Items marks 0 of its 87 promise rows".
+           `KanbanPane`'s card carries the same one-line rule (`<PromiseTag
+           v-if="isPromise(t)" />` in the card's own marks row), and it is the
+           shared `<PromiseTag />` rather than a chip this pane spells for itself:
+           two marks for one concept is two answers, and `components/PromiseTag.vue:11`
+           is where that rule is written down.
+           The tag itself stays: a promise does have a status, the plan authored it,
+           and hiding it would leave the cell blank rather than honest. What changes
+           is that the cell now says whose text it is -- the mark and the status
+           colour are two channels, so a reader who cannot see the hue still reads
+           `planned` in words (`components/PromiseTag.vue:24-26`, and the same
+           reasoning this pane's sibling writes at `KanbanPane.vue:455`). -->
       <el-table-column prop="status" label="status" width="104" sortable>
-        <template #default="{ row }"><el-tag size="small" :type="STATUS_TYPE[row.status] || 'info'" effect="dark">{{ row.status }}</el-tag></template>
+        <template #default="{ row }">
+          <span class="aim-status-cell">
+            <el-tag size="small" :type="STATUS_TYPE[row.status] || 'info'" effect="dark">{{ row.status }}</el-tag>
+            <PromiseTag v-if="isPromise(row)" />
+          </span>
+        </template>
       </el-table-column>
       <el-table-column prop="owner" label="owner" width="260" sortable>
         <template #default="{ row }">
@@ -570,13 +621,17 @@ async function applyDecision(task, decision) {
                    background class="aim-pager" />
 
     <!-- The queue T-0227 is about, said once as a number that leads to it. The
-         count is the same predicate the checkbox filters on, so the signal and
-         the list cannot disagree; at zero it is words and not a link, because a
-         link to an empty list reads as work that is not there. -->
+         number is the record's (`unassignedCount`, `:71`): what it claims is that
+         work exists nobody has taken, and a plan line with no owner is not work and
+         cannot be taken. What it links to is the merged list filtered to unowned
+         rows, which is the list the reader was already looking at -- so the link
+         lands where the reader is and the row-level mark (`[data-unassigned]`) is
+         what says which of those rows are promises. At zero it is words and not a
+         link, because a link to an empty list reads as work that is not there. -->
     <div class="aim-list-foot">
       <RouterLink v-if="unassignedCount" :to="{ path: '/items', query: listQuery('unassigned', '1') }"
                   class="aim-task-link" data-unassigned-signal
-                  title="Work with no owner on the record: nobody has taken it.">
+                  title="Work with no owner on the record: nobody has taken it. Counted over recorded items only; a plan promise with no owner is not work anybody can take.">
         {{ unassignedCount }} unassigned
       </RouterLink>
       <span v-else class="aim-dim" style="font-size:11.5px" data-unassigned-signal data-zero="1">
@@ -598,4 +653,10 @@ async function applyDecision(task, decision) {
    height, so a one-line sentence does not reserve the second line's space. */
 .aim-accept { margin-top: 2px; color: var(--aim-dim); font-size: 11.5px; line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* The status cell, now that it can hold two facts rather than one. The mark sits
+   beside the tag and wraps under it rather than being clipped by the column's
+   104px: a promise's `planned` chip on a second line is still readable, and the
+   alternative -- widening the column for every row -- pays for 87 promises with
+   every reader's horizontal space. */
+.aim-status-cell { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 </style>

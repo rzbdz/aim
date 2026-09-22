@@ -332,9 +332,32 @@ const upcomingMilestones = computed(() => Object.values(board.milestones)
     // whose items are all promises is a milestone at zero, and drawing 87% of a
     // plan file as progress is the same lie as "15 overdue".
     const tasks = board.recorded.filter((task) => task.milestone === milestone.id)
-    const done = tasks.filter((task) => board.terminal.includes(task.status)).length
-    return { ...milestone, done, total: tasks.length,
-             pct: tasks.length ? Math.round(100 * done / tasks.length) : 0 }
+    // A dismissed item is in neither figure, which is the server's own rule for
+    // this exact question -- `aimboard/api.py:461`, `scored = total -
+    // counts.get("dropped", 0)`, under the comment that counting it done
+    // "flatters the board" while counting it undone "keeps a card that was
+    // deliberately closed open forever". `terminal` is `["done","dropped"]`
+    // (`aimboard/const.py:11`), so `terminal.includes` alone read a dismissal as
+    // a completion. Subscripting the one member out rather than retyping
+    // `["done"]` is `api.py:453`'s reasoning applied here: the authority stays
+    // with the constant, and the expression says which of its members it means.
+    //
+    // Measured 2026-09-22 on this tree, `/api/state` folded at `date(2026,9,22)`:
+    // 90 recorded items across 10 milestones, and exactly one of the 90 is
+    // `dropped` -- T-0174, which names no milestone at all. So all ten milestones
+    // score the same either way today and the defect this rule closes is latent,
+    // not live. What it closes: a milestone whose only recorded item was dismissed
+    // scored `done/total` `1/1`, `pct 100`, and the `pct < 100` filter below then
+    // removed it from "Next milestones" entirely -- a dismissed card drawn as a
+    // milestone reaching completion. Rounded towards done is the one direction this
+    // page must never round in, which is why the denominator moves with the
+    // numerator here: an all-dismissed milestone scores 0 of 0, fails the filter's
+    // `milestone.total` test, and is drawn as nothing rather than as progress.
+    const finished = board.terminal.filter((status) => status !== 'dropped')
+    const scored = tasks.filter((task) => task.status !== 'dropped')
+    const done = scored.filter((task) => finished.includes(task.status)).length
+    return { ...milestone, done, total: scored.length,
+             pct: scored.length ? Math.round(100 * done / scored.length) : 0 }
   })
   .filter((milestone) => milestone.total && milestone.pct < 100)
   .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'))

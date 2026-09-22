@@ -191,10 +191,36 @@ const phase = computed(() => phaseConcept(board.phase))
 const phaseType = computed(() => (['SEALED_DIVERGENT', 'COMMIT', 'SYNTHESIS'].includes(board.phase) ? 'warning'
   : board.phase === '-' ? 'info' : 'success'))
 const stamp = computed(() => (board.doc?.generated_at || '').replace('T', ' ').slice(0, 19))
-const counts = computed(() => {
-  const open = board.tasks.filter((t) => !board.terminal.includes(t.status)).length
-  return { open, late: board.overdue.length, blocked: board.tasks.filter((t) => t.status === 'blocked').length }
-})
+/**
+ * The one count on every screen, over the record, and it says which set it read.
+ *
+ * It used to be `board.tasks` and `board.overdue` -- the plan file merged with
+ * the record -- so the numbers above every pane were partly a count of `plan/*.json`
+ * lines, in the same voice as work, with no authority word anywhere. That is the
+ * set the store's own comment calls out (`stores/board.js`, the block above
+ * `recordedOverdue`: "the panes that draw the merged board on purpose -- Items,
+ * Kanban, Gantt, Plan -- keep reading `tasks`; this is for the page that counts"),
+ * reached from the one surface that is on *every* page.
+ *
+ * Measured 2026-09-22 on this tree, `/api/state` folded at `date(2026,9,22)`:
+ * 177 rows, of which 87 are plan seeds -- 72 of them reading `status: done` and 15
+ * `dropped` from the plan text, none of them with an event behind them -- and 90
+ * are recorded. Both counts happen to be right today: 22 rows of the merge are not
+ * terminal and all 22 are `store only`, and the 3 late rows are all `store only`.
+ * The verdict does not rest on that: a number that is right by coincidence of the
+ * fold is one plan edit away from counting promises as work, and the header never
+ * told the reader which of the two universes it had counted.
+ *
+ * So the work numbers read `recorded`, and the promises are printed beside them as
+ * promises rather than dropped -- a reader who wants the plan's size still gets it,
+ * in the one line that does not read as work.
+ */
+const counts = computed(() => ({
+  open: board.recorded.filter((t) => !board.terminal.includes(t.status)).length,
+  late: board.recordedOverdue.length,
+  blocked: (board.recordedByStatus.blocked || []).length,
+  promises: board.seedOnly.length,
+}))
 const navGroups = computed(() => {
   const byKey = new Map(views.map((view) => [view.key, view]))
   return [
@@ -243,7 +269,13 @@ const deferredByFailure = computed(() => board.deferredReason === 'the server co
         <h1><span class="aim-mark">aim</span> board</h1>
         <div class="aim-sub">
           <div>{{ board.doc?.root?.split('/').pop() || '…' }} · {{ board.doc?.as_of }}</div>
-          <div>{{ counts.open }} open · {{ counts.late }} late · {{ counts.blocked }} blocked</div>
+          <!-- The record's numbers first and named, then the plan's count in its
+               own word. `on the record` is the same phrase `OverviewPane.vue:155`
+               puts on the work signals, because it is the same distinction: a
+               promise has no item to move, so it is not a number to act on. -->
+          <div>{{ counts.open }} open · {{ counts.late }} late · {{ counts.blocked }} blocked
+            — on the record</div>
+          <div v-if="counts.promises">{{ counts.promises }} plan promise(s), not work</div>
         </div>
       </div>
       <el-menu :default-active="route.path" router @select="navOpen = false">

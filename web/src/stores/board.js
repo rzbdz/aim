@@ -334,7 +334,26 @@ export const useBoard = defineStore('board', {
       const rest = [...held].filter((p) => !PRIORITY_ORDER.includes(p)).sort()
       return ordered.length || rest.length ? [...ordered, ...rest] : [...PRIORITY_ORDER]
     },
-    overdue() {
+    /**
+     * Overdue over the merge, and it is named for the merge on purpose.
+     *
+     * It was `overdue`, which said a work word over the set that holds the plan's
+     * promises, and its one consumer was the shell header -- the count above every
+     * pane. Measured 2026-09-22 on this tree, `/api/state` folded at
+     * `date(2026,9,22)`: 177 rows, 87 of them `seed only` and 90 recorded, and the
+     * two overdue numbers coincide today (3 rows, all three `store only`). A name
+     * is not allowed to depend on that coincidence: the merge is the right set to
+     * *draw* -- Gantt draws both lanes from `dated`, which is the same merge -- and
+     * the wrong set to count in a sentence about work, so a caller that reaches
+     * this getter is now reaching for a name that says what it got.
+     *
+     * There is no `web/src` consumer today (the header reads `recordedOverdue`
+     * below, and the panes call `isOverdue` per row). It stays because `dated`
+     * beside it stays: the two are the merge's own overdue/dated pair, and a pane
+     * that deliberately draws the merged board should not have to re-fold
+     * `this.tasks` by hand to say which of its bars are late.
+     */
+    mergedOverdue() {
       return this.tasks.filter((t) => isOverdue(t.due, t.status, this.terminal))
     },
     dated() {
@@ -474,19 +493,26 @@ export const useBoard = defineStore('board', {
      * and every reader must tolerate that rather than assume a shape.
      */
     boardScope: (s) => s.doc?.reports?.board_scope || {},
-    /** Open blockers, as edges rather than as flags. */
-    blockerEdges() {
-      const by = Object.fromEntries(this.tasks.map((t) => [t.id, t]))
-      const edges = []
-      for (const t of this.tasks) {
-        for (const b of t.blocked_by || []) {
-          const other = by[b] || { id: b, title: '(not in this view)', status: '?' }
-          edges.push({ id: t.id, title: t.title, blockedBy: other.id, since: other.title,
-                       done: this.terminal.includes(other.status) || other.status === '?' })
-        }
-      }
-      return edges
-    },
+    // A `blockerEdges` getter stood here: one row per `blocked_by` edge with a
+    // `done:` flag, and the bug was in the flag. It read
+    // `this.terminal.includes(other.status)`, and `terminal` is `["done","dropped"]`
+    // (`aimboard/const.py:11`) -- so an edge counted as closed when the blocking
+    // item was *dismissed* as well as when it was finished. Both halves also came
+    // off the merge: the `by` map was `this.tasks` and the `done` test was the same
+    // merged status a seed authors in `plan/*.json` (measured 2026-09-22: 87 of the
+    // board's 177 rows are `seed only`, and 72 of those read `status: done` with no
+    // event behind them), so a plan line could close a dependency nothing had done.
+    //
+    // Deleted rather than renamed, because nothing reads it: `grep -rn blockerEdges
+    // web/src web/tests` returns this file and nothing else. The one consumer the
+    // name ever had was a pane that drew the edges itself, and the two surfaces that
+    // need the relation today ask their own question instead -- `reports.blocked`
+    // for the server's own view (`boardScope` above) and `openBlockerIds` in
+    // `ItemsPane.vue` / `TaskDecisionDrawer.vue` for a row's open blockers, where
+    // the rule is "not terminal" rather than "done", which is the question a reader
+    // of a blocker actually has. Nothing is lost by removing a third answer that
+    // nothing asked for; if an edge list is wanted again it should be written over
+    // `recorded` and say so in its name.
   },
   actions: {
     async init(api) {
