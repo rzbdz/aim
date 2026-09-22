@@ -45,7 +45,7 @@ const router = createRouter({
     { path: '/', redirect: () => `/${ctx.views[0]?.key || 'overview'}` },
     ...ctx.views.map((v) => ({
       path: `/${v.key}`, name: v.key, component: v.component,
-      meta: { title: v.title, titleZh: v.titleZh, view: v.key },
+      meta: { title: v.title, view: v.key },
     })),
     { path: '/:pathMatch(.*)*', component: { render: () => h('p', { class: 'aim-dim' }, 'no such pane') } },
   ],
@@ -56,10 +56,14 @@ app.provide('ctx', ctx)
 app.component('VChart', ctx.service('VChart'))
 
 board.init(ctx.service('api')).then(() => {
-  // Ask the server whether the *record* moved, rather than reloading the page.
-  // A dashboard that reloads itself throws away your scroll position and your
-  // place in a long message; a banner lets you finish the sentence first.
-  setInterval(() => board.checkDigest(), 15000)
+  // The record is a live thing: a peer writes, the digest changes, and the board
+  // catches up on its own. There is no refresh button to press and no "the record
+  // has moved" banner, because a refresh is not an error and the reader did not
+  // ask to be interrupted. The two things that *do* interrupt a reader -- unsent
+  // text in a field, and a scroll position someone chose deliberately -- are
+  // protected inside the store, which defers and says so quietly instead of
+  // reloading the page under their hands.
+  setInterval(() => board.checkDigest(), 2500)
 })
 
 app.mount('#app')

@@ -1,12 +1,16 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useBoard } from '../stores/board'
-import { PRIORITY_TYPE, STATUS_TYPE, color, days, today } from '../theme'
+import { useQueryFilters } from '../composables/useQueryFilters'
+import TaskDecisionDrawer from '../components/TaskDecisionDrawer.vue'
+import { STATUS_TYPE, color, days, isOverdue, today } from '../theme'
 
 const board = useBoard()
 const selected = ref(null)
 const drawer = ref(false)
-const milestone = ref('all')
+const { filters, activeCount, clear } = useQueryFilters({
+  q: '', owner: '', status: '', milestone: 'all', tag: '', onlyLate: false,
+})
 
 /**
  * A gantt, drawn by ECharts as a stacked bar: an invisible "offset" series holds
@@ -29,8 +33,20 @@ const allDated = computed(() => board.dated.slice().sort((a, b) => {
     return ka < kb ? -1 : ka > kb ? 1 : 0
 }))
 const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone).filter(Boolean))].sort())
+const matches = (task) => {
+  if (filters.q) {
+    const needle = filters.q.toLowerCase()
+    if (!`${task.id} ${task.title} ${task.accept || ''}`.toLowerCase().includes(needle)) return false
+  }
+  if (filters.owner && task.owner !== filters.owner) return false
+  if (filters.status && task.status !== filters.status) return false
+  if (filters.milestone !== 'all' && task.milestone !== filters.milestone) return false
+  if (filters.tag && !(task.tags || []).includes(filters.tag)) return false
+  if (filters.onlyLate && !isOverdue(task.due, task.status, board.terminal)) return false
+  return true
+}
 const rows = computed(() => {
-  const dated = allDated.value.filter((t) => milestone.value === 'all' || t.milestone === milestone.value)
+  const dated = allDated.value.filter(matches)
   const seen = new Set()
   return dated.map((t) => {
     const first = !seen.has(t.milestone)
@@ -110,18 +126,30 @@ const option = computed(() => {
 function onClick(p) {
   if (p.data?.task) { selected.value = p.data.task; drawer.value = true }
 }
-const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due))
+const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due && matches(t)))
 </script>
 
 <template>
   <el-card shadow="never" class="aim-sticky-head">
     <template #header>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="aim-filterbar">
         <span>timeline — {{ rows.length }} of {{ allDated.length }} dated item(s), {{ span.lo }} → {{ span.hi }}</span>
-        <el-select v-model="milestone" size="small" style="width:150px">
+        <el-input v-model="filters.q" size="small" placeholder="search id, title, acceptance" clearable />
+        <el-select v-model="filters.owner" size="small" placeholder="owner" clearable>
+          <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />
+        </el-select>
+        <el-select v-model="filters.status" size="small" placeholder="status" clearable>
+          <el-option v-for="status in board.statuses" :key="status" :value="status" :label="status" />
+        </el-select>
+        <el-select v-model="filters.milestone" size="small" placeholder="milestone">
           <el-option value="all" label="every milestone" />
           <el-option v-for="m in milestones" :key="m" :value="m" :label="m" />
         </el-select>
+        <el-select v-model="filters.tag" size="small" placeholder="tag" clearable>
+          <el-option v-for="tag in board.tags" :key="tag" :value="tag" :label="tag" />
+        </el-select>
+        <el-checkbox v-model="filters.onlyLate">overdue only</el-checkbox>
+        <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
         <span style="flex:1" />
         <span v-for="st in board.statuses" :key="st" style="display:flex;align-items:center;gap:4px;font-size:11.5px">
           <span :style="{ width: '9px', height: '9px', borderRadius: '2px', background: color(st) }" />
@@ -142,28 +170,5 @@ const undated = computed(() => board.tasks.filter((t) => !t.start && !t.due))
     </el-tag>
   </el-card>
 
-  <el-drawer v-model="drawer" :title="selected?.id" size="46%">
-    <template v-if="selected">
-      <h3 style="margin-top:0">{{ selected.title }}</h3>
-      <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="status"><el-tag :type="STATUS_TYPE[selected.status]" effect="dark">{{ selected.status }}</el-tag></el-descriptions-item>
-        <el-descriptions-item label="owner">{{ selected.owner || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="priority"><el-tag :type="PRIORITY_TYPE[selected.priority]" effect="plain">{{ selected.priority }}</el-tag></el-descriptions-item>
-        <el-descriptions-item label="estimate">{{ selected.estimate ?? '—' }} day(s)</el-descriptions-item>
-        <el-descriptions-item label="start">{{ selected.start || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="due">{{ selected.due || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="milestone">{{ selected.milestone || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="blocked by">{{ (selected.blocked_by || []).join(', ') || 'nothing' }}</el-descriptions-item>
-        <el-descriptions-item label="acceptance" :span="2">{{ selected.accept || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="provenance" :span="2">{{ selected.provenance || '—' }}</el-descriptions-item>
-      </el-descriptions>
-      <div v-if="(selected.comments || []).length" style="margin-top:14px">
-        <h4>comments</h4>
-        <div v-for="(c, i) in selected.comments" :key="i" class="aim-msg">
-          <header><strong>{{ c.by }}</strong><span class="aim-dim">{{ c.ts }}</span></header>
-          <div>{{ c.body }}</div>
-        </div>
-      </div>
-    </template>
-  </el-drawer>
+  <TaskDecisionDrawer v-model="drawer" :task="selected" />
 </template>

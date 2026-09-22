@@ -2,7 +2,6 @@
 export default {
   key: 'barrier',
   title: 'Audit & barrier',
-  titleZh: '审计与屏障',
   hint: 'phases, seals, refusals, and the chain all of it is written into',
   order: 70,
   icon: 'Lock',

@@ -2,7 +2,6 @@
 export default {
   key: 'plan',
   title: 'Plan & risks',
-  titleZh: '计划与风险',
   hint: 'milestones, risks, decisions and the non-goals',
   order: 80,
   icon: 'Notebook',

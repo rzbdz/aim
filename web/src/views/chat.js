@@ -2,7 +2,6 @@
 export default {
   key: 'chat',
   title: 'Conversations',
-  titleZh: '会话',
   hint: 'what was said, and only what this viewer may read',
   order: 50,
   icon: 'ChatDotRound',

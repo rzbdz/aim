@@ -1,18 +1,33 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useBoard } from '../stores/board'
-import { MAIL_STATE_TYPE } from '../theme'
+import { useQueryFilters } from '../composables/useQueryFilters'
 
 const board = useBoard()
-const tab = ref('')
+const { filters, activeCount, clear } = useQueryFilters({
+  channel: '', q: '', agent: '', refusalClass: '', phase: '',
+})
 const channels = computed(() => board.doc?.channels || [])
-const current = computed(() => channels.value.find((c) => c.id === (tab.value || channels.value[0]?.id)) || {})
+const current = computed(() =>
+  channels.value.find((c) => c.id === (filters.channel || channels.value[0]?.id)) || {})
 const chainRows = computed(() => Object.entries(current.value.chain || {})
   .map(([file, s]) => ({ file, ...s })))
+const refusalRows = computed(() => (current.value.refusals || []).filter((row) => {
+  if (filters.q) {
+    const needle = filters.q.toLowerCase()
+    if (!`${row.agent} ${row.action} ${row.reason}`.toLowerCase().includes(needle)) return false
+  }
+  if (filters.agent && row.agent !== filters.agent) return false
+  if (filters.refusalClass && row.class !== filters.refusalClass) return false
+  if (filters.phase && row.phase !== filters.phase) return false
+  return true
+}))
+const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
+  .map((row) => row.agent).filter(Boolean))].sort())
 </script>
 
 <template>
-  <el-tabs v-model="tab" v-if="channels.length">
+  <el-tabs v-model="filters.channel" v-if="channels.length">
     <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id" :label="`#${ch.id} — ${ch.phase}`">
       <el-descriptions :column="3" border size="small" style="margin-bottom:14px">
         <el-descriptions-item label="topic" :span="2">{{ ch.topic }}</el-descriptions-item>
@@ -77,8 +92,25 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
       </el-card>
 
       <el-card shadow="never" style="margin-bottom:14px">
-        <template #header>refusals — intent, not just outcome</template>
-        <el-table :data="ch.refusals" size="small">
+        <template #header>
+          <div class="aim-filterbar">
+            <span>refusals — {{ refusalRows.length }} of {{ (ch.refusals || []).length }} record(s)</span>
+            <el-input v-model="filters.q" placeholder="search action or reason" clearable />
+            <el-select v-model="filters.agent" placeholder="agent" clearable>
+              <el-option v-for="agent in refusalAgents" :key="agent" :value="agent" :label="agent" />
+            </el-select>
+            <el-select v-model="filters.refusalClass" placeholder="class" clearable>
+              <el-option value="barrier" label="barrier" />
+              <el-option value="form" label="form" />
+            </el-select>
+            <el-select v-model="filters.phase" placeholder="phase" clearable>
+              <el-option v-for="phase in ['SEALED_DIVERGENT', 'COMMIT', 'SYNTHESIS', 'CROSS_EXAMINE', 'RESOLVE', 'CLOSED']"
+                         :key="phase" :value="phase" :label="phase" />
+            </el-select>
+            <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
+          </div>
+        </template>
+        <el-table :data="refusalRows" size="small">
           <el-table-column prop="ts" label="at" width="200" />
           <el-table-column prop="agent" label="agent" width="160" />
           <el-table-column prop="action" label="attempted" min-width="240" />
@@ -88,7 +120,7 @@ const chainRows = computed(() => Object.entries(current.value.chain || {})
           <el-table-column prop="phase" label="phase" width="150" />
           <el-table-column prop="reason" label="reason" min-width="320" />
         </el-table>
-        <el-empty v-if="!(ch.refusals || []).length" description="no refusals recorded on this channel" />
+        <el-empty v-if="!refusalRows.length" description="no refusal matches these filters" />
       </el-card>
 
       <el-card shadow="never">

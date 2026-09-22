@@ -75,7 +75,7 @@ export class Context {
       path: v.path || v.key,
       name: `${name}-${v.key}`,
       component: v.component,
-      meta: { viewKey: v.key, title: v.title, titleZh: v.titleZh || v.title },
+      meta: { viewKey: v.key, title: v.title },
     })).concat(parent ? [] : [])
   }
 

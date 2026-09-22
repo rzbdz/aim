@@ -2,7 +2,6 @@
 export default {
   key: 'items',
   title: 'Work items',
-  titleZh: '工作项',
   hint: 'every work item, with the fields that make it verifiable',
   order: 40,
   icon: 'List',

@@ -1,9 +1,13 @@
 <script setup>
 import { computed } from 'vue'
 import { useBoard } from '../stores/board'
+import { useQueryFilters } from '../composables/useQueryFilters'
 import { STATUS_TYPE } from '../theme'
 
 const board = useBoard()
+const { filters, activeCount, clear } = useQueryFilters({
+  q: '', owner: '', status: '', blocker: '',
+})
 const option = computed(() => {
   const r = board.report
   const dates = (r.series || []).map((x) => x.date.slice(5))
@@ -21,6 +25,18 @@ const option = computed(() => {
   }
 })
 const burndownEmpty = computed(() => !(board.report.series || []).some((x) => x.done || x.remaining))
+const blockedRows = computed(() => (board.report.blocked || []).filter((row) => {
+  if (filters.q) {
+    const needle = filters.q.toLowerCase()
+    if (!`${row.id} ${row.title} ${(row.blocked_by || []).join(' ')}`.toLowerCase().includes(needle)) return false
+  }
+  if (filters.owner && row.owner !== filters.owner) return false
+  if (filters.status && row.status !== filters.status) return false
+  if (filters.blocker && !(row.blocked_by || []).includes(filters.blocker)) return false
+  return true
+}))
+const blockerOptions = computed(() => [...new Set((board.report.blocked || [])
+  .flatMap((row) => row.blocked_by || []))].sort())
 </script>
 
 <template>
@@ -47,8 +63,23 @@ const burndownEmpty = computed(() => !(board.report.series || []).some((x) => x.
   </el-card>
 
   <el-card shadow="never">
-    <template #header>what is waiting on what — {{ (board.report.blocked || []).length }} open blocker(s)</template>
-    <el-table :data="board.report.blocked || []" size="small">
+    <template #header>
+      <div class="aim-filterbar">
+        <span>what is waiting on what — {{ blockedRows.length }} of {{ (board.report.blocked || []).length }} blocker row(s)</span>
+        <el-input v-model="filters.q" placeholder="search blocked item" clearable />
+        <el-select v-model="filters.owner" placeholder="owner" clearable>
+          <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />
+        </el-select>
+        <el-select v-model="filters.status" placeholder="status" clearable>
+          <el-option v-for="status in board.statuses" :key="status" :value="status" :label="status" />
+        </el-select>
+        <el-select v-model="filters.blocker" placeholder="waiting on" clearable>
+          <el-option v-for="blocker in blockerOptions" :key="blocker" :value="blocker" :label="blocker" />
+        </el-select>
+        <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
+      </div>
+    </template>
+    <el-table :data="blockedRows" size="small">
       <el-table-column prop="id" label="blocked item" width="110" />
       <el-table-column prop="title" label="title" min-width="300" />
       <el-table-column prop="status" label="status" width="110">

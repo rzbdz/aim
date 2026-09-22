@@ -12,6 +12,14 @@ const current = computed(() => views.find((v) => v.key === route.meta.view))
 const phaseType = computed(() => (board.phase.includes('SEALED') || board.phase === 'COMMIT' ? 'warning'
   : board.phase === '-' ? 'info' : 'success'))
 const stamp = computed(() => (board.doc?.generated_at || '').replace('T', ' ').slice(0, 19))
+const phaseCopy = computed(() => ({
+  SEALED_DIVERGENT: 'Positions are being formed independently',
+  COMMIT: 'Positions are being committed',
+  SYNTHESIS: 'A third party is mapping the disagreement',
+  CROSS_EXAMINE: 'Positions are being cross-examined',
+  RESOLVE: 'The leader is deciding',
+  CLOSED: 'The record is closed',
+}[board.phase] || 'No active phase'))
 const counts = computed(() => {
   const open = board.tasks.filter((t) => !board.terminal.includes(t.status)).length
   return { open, late: board.overdue.length, blocked: board.tasks.filter((t) => t.status === 'blocked').length }
@@ -19,10 +27,10 @@ const counts = computed(() => {
 const navGroups = computed(() => {
   const byKey = new Map(views.map((view) => [view.key, view]))
   return [
-    { title: '工作', keys: ['overview', 'kanban', 'gantt', 'items'] },
-    { title: '会话', keys: ['chat'] },
-    { title: '洞察', keys: ['reports'] },
-    { title: '治理', keys: ['barrier', 'plan'] },
+    { title: 'Work', keys: ['attention', 'kanban', 'gantt', 'items'] },
+    { title: 'Conversation', keys: ['chat'] },
+    { title: 'Insight', keys: ['reports'] },
+    { title: 'Governance', keys: ['barrier', 'plan'] },
   ].map((group) => ({
     title: group.title,
     views: group.keys.map((key) => byKey.get(key)).filter(Boolean),
@@ -44,7 +52,7 @@ const navGroups = computed(() => {
         <el-menu-item-group v-for="group in navGroups" :key="group.title" :title="group.title">
           <el-menu-item v-for="v in group.views" :key="v.key" :index="`/${v.key}`">
             <el-icon><component :is="v.icon || 'Grid'" /></el-icon>
-            <span>{{ v.titleZh || v.title }}</span>
+            <span>{{ v.title }}</span>
           </el-menu-item>
         </el-menu-item-group>
       </el-menu>
@@ -60,7 +68,9 @@ const navGroups = computed(() => {
 
     <el-container>
       <el-header height="auto" class="aim-header">
-        <el-tag :type="phaseType" effect="dark" size="small" round>phase {{ board.phase }}</el-tag>
+        <el-tooltip :content="`Internal phase: ${board.phase}`" placement="bottom">
+          <el-tag :type="phaseType" effect="dark" size="small" round>{{ phaseCopy }}</el-tag>
+        </el-tooltip>
         <span v-if="board.withheld" class="aim-dim" style="font-size:11.5px">
           {{ board.withheld }} withheld from this view
         </span>
@@ -77,16 +87,23 @@ const navGroups = computed(() => {
       </el-header>
 
       <el-main :class="['aim-main', { 'aim-main-conversation': current?.key === 'chat' }]">
-        <el-alert v-if="board.stale" type="warning" :closable="false" show-icon style="margin-bottom:14px">
-          <template #title>
-            the record has moved since this page was drawn
-            <el-button size="small" type="warning" style="margin-left:8px" @click="board.load()">refresh</el-button>
-          </template>
-        </el-alert>
+        <!--
+          Not a warning. A refresh is not an error, and the board updates itself;
+          this line exists only for the case where it deliberately did not, so the
+          reader is told what is waiting and given one quiet way to take it now.
+        -->
+        <div v-if="board.deferred" class="aim-deferred">
+          <span class="aim-dim">
+            newer activity on the record — held back because {{ board.deferredReason }}.
+          </span>
+          <el-button size="small" text type="primary" @click="board.update({ force: true })">
+            update now
+          </el-button>
+        </div>
         <el-alert v-if="board.error" type="error" show-icon :closable="false" style="margin-bottom:14px"
                   :title="`the board could not be read: ${board.error}`" />
         <div class="aim-page">
-          <h2>{{ current?.titleZh || current?.title }}</h2>
+          <h2>{{ current?.title }}</h2>
           <span class="aim-sub">{{ current?.hint }}</span>
         </div>
         <el-skeleton v-if="!board.doc && board.loading" :rows="8" animated />

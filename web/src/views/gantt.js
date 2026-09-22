@@ -2,7 +2,6 @@
 export default {
   key: 'gantt',
   title: 'Gantt',
-  titleZh: '甘特图',
   hint: 'dates, dependencies and milestones; drag inside the chart to zoom',
   order: 30,
   icon: 'Calendar',

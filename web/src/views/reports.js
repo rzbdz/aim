@@ -2,7 +2,6 @@
 export default {
   key: 'reports',
   title: 'Reports',
-  titleZh: '报告',
   hint: 'burndown, cycle time, and what is waiting on what',
   order: 60,
   icon: 'TrendCharts',
