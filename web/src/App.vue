@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, watch } from 'vue'
+import { computed, inject, onErrorCaptured, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBoard } from './stores/board'
 import { phaseConcept } from './concepts'
@@ -35,6 +35,30 @@ const drawerTask = computed(() => {
  * not close what the reader is looking at.
  */
 watch(() => route.path, () => taskDrawer.close())
+
+/**
+ * A render error must not be able to brick the page.
+ *
+ * The drawer is mounted by the shell, and `el-drawer` mounts its overlay before
+ * its panel renders. So when anything inside the panel throws while rendering,
+ * the panel never appears and the overlay stays -- a full-screen invisible modal
+ * that swallows every click, including the nav, and survives a route change. A
+ * broken panel is a bad panel; an invisible modal over a working page is a board
+ * the reader can only escape by reloading, with nothing on screen to tell him so.
+ *
+ * Measured, before this: `TaskDecisionDrawer.vue` read three names it never
+ * bound, so *every* click on *every* work item left `overlay: 1, drawer: 0` and
+ * left the URL unchanged when the nav was clicked through it.
+ *
+ * So: whatever a pane or the drawer throws, the drawer closes and the reader
+ * keeps a page he can use. The error is logged rather than swallowed -- a
+ * failure that hides itself is the thing this project keeps measuring.
+ */
+onErrorCaptured((err, instance, info) => {
+  taskDrawer.close()
+  console.error('[aimboard] render error; the drawer was closed to keep the page usable:', info, err)
+  return false
+})
 const views = ctx.views
 const current = computed(() => views.find((v) => v.key === route.meta.view))
 /**
