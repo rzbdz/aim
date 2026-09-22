@@ -149,7 +149,7 @@ watch(events, () => { boardRefreshes.value += 1 })
  */
 const tally = computed(() => {
   const scope = board.boardScope
-  const pick = scope[scopeMode.value] || scope.visible || scope.fabric || null
+  const pick = scope[scopeMode.value] || scope.visible || scope.fabric || undefined
   if (pick) return pick
   // A server that predates `board_scope`. Falling back to the old client-side
   // fold keeps the page readable rather than blank, and `stale: true` in the
@@ -208,14 +208,54 @@ const flow = computed(() => {
   let running = 0
   const cumulative = cells.map((c) => (running += c.done))
 
+  // The store's own count of closes with a recorded day, and the level the drawn
+  // line therefore opens at.
+  //
+  // The line above is the honest running total *of this window*, and its ceiling
+  // is however many cards happened to be closed inside the window -- 43, measured.
+  // The leader's question is "how much of the board is done", which is a count of
+  // *statuses*, and a line that tops out at 43 is not a smaller version of that
+  // answer, it is a different question. So the store-wide line is drawn from
+  // `series`, the store's own per-day fold, which counts closes that have a
+  // recorded day.
+  //
+  // It stops short of the headline, and that gap is a fact about the store rather
+  // than a defect in the line: 65 closes carry a day and 131 cards carry the done
+  // status, because 66 of them were recorded done without a move event to date
+  // them. A curve cannot be drawn through a date that does not exist, so the
+  // levels are stated on the chart (`doneLevels` below) and the difference is
+  // named in words. Drawing the missing 66 as a straight line to today would be
+  // the invention this whole file exists to refuse.
+  //
+  // `carries` is the store's own total minus the window's own closes, rather than
+  // the sum of the days before the window opened. The window opens mid-day and a
+  // per-day fold cannot say how many of a day's closes landed before noon;
+  // subtracting needs no such split and cannot double-count.
+  const perDay = board.report.series || []
+  const storeCloses = perDay.reduce((n, row) => n + (row.done || 0), 0)
+  const carries = Math.max(0, storeCloses - done)
+  const closes = cumulative.map((n) => carries + n)
+
+  // The two standing figures the curve cannot reach, as levels on the same axis.
+  //
+  // `done` is a status and can be set with no event at all; `undone` is not a
+  // trajectory either -- it does not move with the window, it is what is left.
+  // Both are therefore drawn as reference lines and not as series, because a
+  // series invites a reader to watch something move that does not move.
+  // `gapped` counts the done cards the recorded-day line cannot carry.
+  const doneLevels = {
+    done: tally.value.done,
+    undone: tally.value.undone,
+    gapped: Math.max(0, tally.value.done - storeCloses),
+  }
+
   // The same running total for opens, because one cumulative line says what was
-  // finished and nothing says what was started. Two lines on one axis is the
-  // whole reading: the gap between them is work this window created and did not
-  // close, and a window where the blue line is above the green one is a board
-  // going backwards however busy the bars look. This is *not* the count of
-  // undone work -- a task that existed before the window opened has no event
-  // here at all -- and `tally` below is the honest figure for that. Naming the
-  // difference is why both exist.
+  // finished and nothing says what was started. The gap between the two is the
+  // whole reading: where the blue line sits above the green one the window
+  // created more than it closed. This is *not* the count of undone work -- a task
+  // that existed before the window opened has no event here at all -- and the
+  // store-wide line above is what carries the figure that does. Naming the
+  // difference is why all three exist.
   let opening = 0
   const openedCumulative = cells.map((c) => (opening += c.opened))
 
@@ -240,7 +280,8 @@ const flow = computed(() => {
 
   const lastEvent = events.value.at(-1)
   const quietMinutes = lastEvent ? (Date.now() - lastEvent.ts) / BUCKET_MS : null
-  return { cells, cumulative, openedCumulative, start, end: endBucket, opened, done, gap, burst, lastEvent, quietMinutes }
+  return { cells, cumulative, openedCumulative, closes, storeCloses, carries, doneLevels,
+           start, end: endBucket, opened, done, gap, burst, lastEvent, quietMinutes }
 })
 
 /**
@@ -268,44 +309,67 @@ const arrivalsSummary = computed(() => {
 const flowOption = computed(() => {
   const f = flow.value
   const labels = f.cells.map((c) => clock(c.t))
+  // Twelve readings across whatever width is drawn: with one bucket per minute a
+  // 60-minute window otherwise prints sixty overlapping labels and none of them
+  // is legible.
   const every = Math.max(0, Math.ceil(f.cells.length / 12) - 1)
+  const unit = windowMinutes.value <= 60 ? 'min' : 'window'
   return {
     backgroundColor: 'transparent',
     grid: { left: 52, right: 48, top: 30, bottom: 34 },
     tooltip: { trigger: 'axis' },
-    legend: { data: ['opened', 'done', 'opened cumulative', 'done cumulative'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: ['opened', 'done', 'closes, the whole store', 'opened cumulative', 'closed cumulative'], top: 0, textStyle: { fontSize: 11 } },
     xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, interval: every } },
-    // The axis carries its unit: a count of items over a minute bucket, and a
-    // figure whose unit is only in the title is a figure somebody reads wrong.
-    yAxis: [
-      { type: 'value', minInterval: 1, name: 'items / min', nameTextStyle: { fontSize: 10 },
-        splitLine: { lineStyle: { opacity: 0.18 } } },
-      { type: 'value', minInterval: 1, name: 'running total', nameTextStyle: { fontSize: 10 },
-        splitLine: { show: false } },
-    ],
+    // One value axis, and the unit is on it.
+    //
+    // There were two, the running totals on the second one. A second axis is a
+    // licence to draw two incomparable things on the same picture, and that is
+    // what happened: the store-wide line, drawn on the axis the per-minute bars
+    // did not use, was indistinguishable from a series of the rate that happened
+    // to climb. Everything here is a count of items, so everything here shares
+    // the scale it is counted on, and a reader can compare a bar with a line
+    // without reading either axis. The unit says `min` under an hour and
+    // `window` over it, because past an hour one bucket is more than a minute
+    // and an axis named `items / min` would then be wrong by that factor.
+    yAxis: { type: 'value', minInterval: 1, name: `items / ${unit}`, nameTextStyle: { fontSize: 10 },
+             splitLine: { lineStyle: { opacity: 0.18 } } },
     // Different mark shapes as well as different colours: the series have to be
     // told apart by a reader who is not being shown the legend's colours.
     series: [
-      { name: 'opened', type: 'bar', stack: 'permin', symbol: 'circle', symbolSize: 6,
+      { name: 'opened', type: 'bar', stack: 'perbucket', symbol: 'circle', symbolSize: 6,
         itemStyle: { color: '#60a5fa' }, barMaxWidth: 10, data: f.cells.map((c) => c.opened) },
-      { name: 'done', type: 'bar', stack: 'permin', symbol: 'rect', symbolSize: 6,
+      { name: 'done', type: 'bar', stack: 'perbucket', symbol: 'rect', symbolSize: 6,
         itemStyle: { color: '#34d399' }, barMaxWidth: 10, data: f.cells.map((c) => c.done) },
-      // The two running totals on one axis are the whole reading: where the blue
-      // line sits above the green one, the window created more than it closed.
-      { name: 'opened cumulative', type: 'line', yAxisIndex: 1, step: 'end', symbol: 'none',
-        lineStyle: { color: '#60a5fa', width: 1.5, type: 'dotted' }, data: f.openedCumulative },
-      { name: 'done cumulative', type: 'line', yAxisIndex: 1, step: 'end', symbol: 'none',
-        lineStyle: { color: '#f59e0b', width: 2 }, data: f.cumulative,
-        // What is *still* undone is not a trajectory, so it is drawn as a
-        // reference line and not as a fifth series: a series would invite the
-        // reader to watch it move, and it does not move with the window -- it is
-        // the board's standing figure, taken over every task that exists.
+      // The store's closes, drawn as a line, and the one series on this chart
+      // whose *height* answers the leader's question rather than only its last
+      // point. Its last point is the same number the headline row prints.
+      { name: 'closes, the whole store', type: 'line', step: 'end', symbol: 'none',
+        lineStyle: { color: '#f59e0b', width: 2 }, z: 3, data: f.closes,
+        // Three levels, and the one the curve cannot reach is the point. `done`
+        // is the headline figure; `undone` is what is left standing; the dotted
+        // line under the curve is where the store's dated closes begin, and the
+        // distance between that and `done` is the work recorded done with no
+        // event to date it. Drawing it as a reference line rather than as a
+        // fourth series is honest about what it is: not a trajectory.
         markLine: {
           silent: true, symbol: 'none',
-          lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
-          label: { formatter: `undone ${tally.undone}`, fontSize: 10, position: 'insideEndTop' },
-          data: [{ yAxis: tally.undone }],
+          lineStyle: { color: '#f59e0b', type: 'dotted', width: 1.5 },
+          label: { formatter: `${f.carries} closed before this window`, fontSize: 10, position: 'insideStartTop' },
+          data: [
+            { yAxis: f.doneLevels.done, lineStyle: { color: '#34d399', type: 'dashed', width: 1.5 },
+              label: { formatter: `done ${f.doneLevels.done}`, fontSize: 10, position: 'insideEndTop' } },
+            { yAxis: f.doneLevels.undone, lineStyle: { color: '#f87171', type: 'dashed', width: 1.5 },
+              label: { formatter: `undone ${f.doneLevels.undone}`, fontSize: 10, position: 'insideEndBottom' } },
+            { yAxis: f.carries },
+          ],
         } },
+      // The window's own running totals, still drawn, because the gap between
+      // them is the reading a store-wide line cannot give: where the blue line
+      // sits above the green one the window created more than it closed.
+      { name: 'opened cumulative', type: 'line', step: 'end', symbol: 'none',
+        lineStyle: { color: '#60a5fa', width: 1.5, type: 'dotted' }, data: f.openedCumulative },
+      { name: 'closed cumulative', type: 'line', step: 'end', symbol: 'none',
+        lineStyle: { color: '#34d399', width: 2 }, data: f.cumulative },
     ],
   }
 })
@@ -313,7 +377,17 @@ const flowOption = computed(() => {
 const flowSummary = computed(() => {
   const f = flow.value
   if (!f.opened && !f.done) return ''
-  const parts = [`${f.opened} opened and ${f.done} done in the last ${windowMinutes.value} min, one bucket per minute`]
+  const parts = [`${f.opened} opened and ${f.done} closed in the last ${windowMinutes.value} min, one bucket per minute`]
+  // What the drawn line is, and what it is not. A cumulative total over a window
+  // counts *events in the window*; the board is a count of statuses. Both are
+  // true, they are different numbers, and the reader is told which one is on the
+  // chart rather than left to discover it by adding up the columns.
+  if (f.closes.length) {
+    parts.push(`the curve is the store's dated closes: ${f.carries} before this window, ${f.closes.at(-1)} by the end of it`)
+  }
+  if (f.doneLevels.gapped) {
+    parts.push(`the dashed done line sits ${f.doneLevels.gapped} above the curve, because that many cards carry the done status with no recorded move to date them, and a curve cannot be drawn through a date that does not exist`)
+  }
   if (f.gap) parts.push(`longest quiet run ${f.gap.minutes} min (${clock(f.gap.from)}–${clock(f.gap.to)})`)
   if (f.burst) parts.push(`busiest minute ${clock(f.burst.t)}: ${f.burst.opened} opened`)
   if (f.quietMinutes !== null && f.quietMinutes >= 2) {
@@ -443,15 +517,18 @@ const quietLabel = computed(() => {
               title="nothing recorded in this window: these buckets count recorded `created` and `moved -> done` events, and a plan seed has none" />
 
     <div class="aim-flow-stats">
+      <!-- The board's standing figures first, and the window's rate after them:
+           `undone` is the count the leader reads, and it is the one number on
+           this row that a minute-bucket chart cannot draw. -->
       <span><strong>{{ tally.undone }}</strong> undone</span>
       <span><strong>{{ tally.done }}</strong> done</span>
       <span><strong>{{ tally.dropped }}</strong> dropped</span>
       <span><strong>{{ finishedPct }}%</strong> of the board finished</span>
       <span class="aim-dim"><strong>{{ tally.total }}</strong> work item(s) in {{ SCOPE_LABELS[scopeMode] }}</span>
-      <span><strong>{{ flow.opened }}</strong> opened (items)</span>
-      <span><strong>{{ flow.done }}</strong> done (items)</span>
+      <span><strong>{{ flow.opened }}</strong> opened in this window</span>
+      <span><strong>{{ flow.done }}</strong> closed in this window</span>
       <span><strong>{{ (flow.opened / windowMinutes * 60).toFixed(1) }}</strong> opened / h</span>
-      <span><strong>{{ (flow.done / windowMinutes * 60).toFixed(1) }}</strong> done / h</span>
+      <span><strong>{{ (flow.done / windowMinutes * 60).toFixed(1) }}</strong> closed / h</span>
       <span :class="flow.gap ? '' : 'aim-dim'">
         longest quiet run:
         <strong v-if="flow.gap">{{ flow.gap.minutes }} min</strong>
