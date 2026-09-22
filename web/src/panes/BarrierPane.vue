@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useBoard } from '../stores/board'
 import { useQueryFilters } from '../composables/useQueryFilters'
 import { PHASES, phaseLabel } from '../concepts'
@@ -10,8 +10,26 @@ const { filters, activeCount, clear } = useQueryFilters({
   channel: '', q: '', agent: '', refusalClass: '', phase: '',
 })
 const channels = computed(() => board.doc?.channels || [])
-const current = computed(() =>
-  channels.value.find((c) => c.id === (filters.channel || channels.value[0]?.id)) || {})
+/**
+ * The channel being drawn and the channel the URL names are the same channel.
+ *
+ * They were not, and the page said so out loud: with no `?channel=` the detail
+ * panel fell back to the first channel, while every tab rendered unselected --
+ * five channels, zero `is-active`, and `#barrier-v0`'s topic, phase and
+ * participants on screen underneath. A tab strip that says "nothing is selected"
+ * above a panel showing something is the reader being told two things at once,
+ * and the one they will believe is the wrong one.
+ *
+ * So the fallback *is* the selection: the id that is drawn is written to the URL,
+ * and the URL stays the source of truth for every other change. Reading
+ * `filters.channel || first` in one place and letting the tab strip read
+ * `filters.channel` alone is exactly how the two got out of step.
+ */
+const shown = computed(() => filters.channel || channels.value[0]?.id || '')
+const current = computed(() => channels.value.find((c) => c.id === shown.value) || {})
+watch(shown, (id) => {
+  if (id && filters.channel !== id) filters.channel = id
+}, { immediate: true })
 const chainRows = computed(() => Object.entries(current.value.chain || {})
   .map(([file, s]) => ({ file, ...s })))
 const refusalRows = computed(() => (current.value.refusals || []).filter((row) => {
@@ -29,7 +47,7 @@ const refusalAgents = computed(() => [...new Set((current.value.refusals || [])
 </script>
 
 <template>
-  <el-tabs v-model="filters.channel" v-if="channels.length">
+  <el-tabs v-model="shown" v-if="channels.length">
     <el-tab-pane v-for="ch in channels" :key="ch.id" :name="ch.id"
                    :label="`#${ch.id} — ${phaseLabel(ch.phase)}`">
       <el-descriptions :column="3" border size="small" style="margin-bottom:14px">
