@@ -9,6 +9,7 @@ from .primitives import as_list, day_of
 def fold_tasks(events):
     """Board state is a fold over the event log. No board file exists."""
     items, unknown = {}, 0
+    retracted = set()
     for ev in events:
         # The store froze as `event: "created"` + `task: "T-0001"`; note 05 section 3
         # wrote the other spelling. Both are accepted here rather than betting on
@@ -29,6 +30,22 @@ def fold_tasks(events):
             item["tags"] = as_list(item.get("tags"))
             item["created_at"] = ev.get("ts", "")
             items[tid] = item
+            # A re-creation clears an earlier retraction: the id is live again.
+            retracted.discard(tid)
+        elif kind == "retracted":
+            # A retraction is an append, not an edit: the record of the mistake
+            # stays in the chain (so `aim verify` still covers it and a reader can
+            # still see what happened) while the board stops drawing the card. This
+            # is the mechanism for an accidental `created` -- hand-editing a
+            # hash-chained file is the one repair this fabric must not offer.
+            items.pop(tid, None)
+            retracted.add(tid)
+        elif tid in retracted:
+            # Events that arrived after the retraction are not "unknown": the
+            # creation *was* seen. Counting them as unknown would report a
+            # deliberate retraction as a corrupt store, which is the same
+            # false-alarm failure the retraction exists to avoid.
+            continue
         elif tid in items:
             item = items[tid]
         else:

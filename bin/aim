@@ -101,7 +101,8 @@ TASK_FLOW = {                       # the state machine, not free text
     "dropped": [],
 }
 TASK_PRIORITIES = ["low", "normal", "high"]
-TASK_EVENTS = ["created", "moved", "assigned", "published", "linked", "commented", "dropped"]
+TASK_EVENTS = ["created", "moved", "assigned", "published", "linked", "commented",
+               "dropped", "retracted"]
 # Phases in which a participant may only see their own drafts.
 DIVERGENCE_PHASES = ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
 
@@ -1159,6 +1160,7 @@ def fold_tasks(ch):
     its own log never names is a card drawn under a phase that does not govern it.
     """
     board = {}
+    retracted = set()
     for e in task_events(ch):
         tid, ev = e.get("task"), e.get("event")
         if not tid:
@@ -1180,6 +1182,20 @@ def fold_tasks(ch):
                 "context_id": context_of(e),
                 "history": [],
             }
+            retracted.discard(tid)
+        elif ev == "retracted":
+            # A retraction is an append, not an edit, and it is the repair for an
+            # accidental `created` that does not hand-edit a hash-chained file.
+            # The record stays in the chain so `aim verify` still covers it and a
+            # reader can still see the mistake; the fold stops drawing the card.
+            # Both folds implement it -- this one and `aimboard/fold.py` -- because
+            # the writer and the board must agree about which ids exist, or
+            # `aim task move` would accept an id the board does not draw.
+            board.pop(tid, None)
+            retracted.add(tid)
+        elif tid in retracted:
+            # Not "unknown": the creation *was* seen, then deliberately undone.
+            continue
         if tid not in board:
             continue                       # an event for a task that was never created
         t = board[tid]
@@ -1227,8 +1243,52 @@ def _visible_to(task, who, phase):
     return task.get("owner") == who or task.get("created_by") == who
 
 
+def _plan_id_floor():
+    """The highest task id the *plan* seeds anywhere under this root.
+
+    The allocation below reads the store's events. The plan is a second source
+    of ids that the store does not contain, and on 2026-09-22 that gap produced
+    a real collision: `aim task new --channel hello` allocated T-0001 while
+    `plan/plan.json` already seeded T-0001..T-0155, so a fresh draft named a
+    card the plan already owned and the merged board would have shown the seed
+    overridden by an event.
+
+    Every plan file is read, not a chosen one: `plan/*.json` is the convention
+    the board already uses (`aimboard/cli.py` globs the same pattern), and a
+    floor computed from one file would be wrong the moment a second plan file
+    exists — which this repo already has (plan/dogfood.json, plan/risks.json).
+    A malformed plan is skipped rather than fatal: it is not this verb's job to
+    validate the plan, and a syntax error there would otherwise make task
+    creation impossible — a tool that cannot allocate an id because an unrelated
+    file is broken is the failure T-0087's doctor exists to surface, reported by
+    the wrong command.
+    """
+    n = 0
+    plan_dir = ROOT / "plan"
+    if not plan_dir.is_dir():
+        return 0
+    for path in sorted(plan_dir.glob("*.json")):
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        tasks = doc.get("tasks") if isinstance(doc, dict) else doc
+        if isinstance(tasks, dict):
+            tasks = tasks.values()
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            tid = (task or {}).get("id") if isinstance(task, dict) else None
+            if not tid or not str(tid).startswith("T-"):
+                continue
+            suffix = str(tid).split("-", 1)[1]
+            if suffix.isdigit():
+                n = max(n, int(suffix))
+    return n
+
+
 def _next_task_id(ch):
-    """Allocate the next task id.
+    """Allocate the next task id, above both the store's events and the plan.
 
     The old version took max(fold(...)) + 1, and the fold collapses duplicate
     ids. So after a collision left two records claiming T-0005, the fold showed
@@ -1247,8 +1307,17 @@ def _next_task_id(ch):
     lock waits for — so it can see that its id is taken and take the next. With
     no seed there is nothing to compare, which is exactly how two writers both
     end up holding T-0011.
+
+    The plan is the second half of the high-water mark, and it is the half the
+    event log cannot see: the board merges `plan/plan.json` with the store
+    (`merge_plan` in aimboard/fold.py), so an id the plan already uses is an id
+    that is *taken* on the board this fabric actually draws — while being absent
+    from every event the store holds. Reading only events is how a from-scratch
+    channel allocated T-0001 into a plan that had seeded T-0001..T-0155. The two
+    maxima are combined rather than the plan replacing the events, because they
+    answer different questions and either can be ahead.
     """
-    n = 0
+    n = _plan_id_floor()
     for e in task_events(ch):
         tid = e.get("task")
         if not tid or not str(tid).startswith("T-"):
@@ -1469,6 +1538,57 @@ def cmd_task_comment(args):
         "task": args.id, "body": body,
     })
     print(f"comment on {args.id} ({len(body)} chars)")
+
+
+def cmd_task_retract(args):
+    """Undo a `created` that should not have happened, without editing history.
+
+    This exists because of a real accident. On 2026-09-22 a from-scratch channel
+    allocated T-0001 while `plan/plan.json` already seeded T-0001..T-0155, and the
+    merged board then drew the plan's "Freeze the PM contract" card under a draft
+    called "Fix Kanban filtering". The id collision is fixed at the allocator
+    (`_plan_id_floor`), but the event was already in a hash-chained file, and
+    this fabric has exactly one repair policy: **never edit a chain**. Editing
+    `tasks.jsonl` to remove the line would leave every later record's `prev`
+    pointing at a hash that is no longer in the file -- a chain that `aim verify`
+    reports as TAMPER, for a repair someone performed deliberately. `verify` is
+    the thing that makes the log evidence, so a repair that breaks it is not a
+    repair.
+
+    So the repair is an append: a `retracted` event, which both folds read as
+    "stop drawing this card". The `created` event stays in the file, the chain
+    stays intact, and a reader can still see exactly what happened and who did
+    it. Refusing when the task is not in the store keeps the event stream honest:
+    a retraction of something that was never created would be a record of an act
+    that had no effect.
+    """
+    who, kind = resolve_actor(args)
+    m = load_manifest(args.channel)
+    if kind != "human" and who not in m["participants"]:
+        die(f"'{who}' is not a participant in {args.channel}")
+    if kind != "human":
+        # Not a barrier rule -- a `created` event is already visible to its own
+        # creator, and retracting it discloses nothing new. It is an ownership
+        # rule: a task is retracted by whoever would have owned it.
+        t = fold_tasks(args.channel).get(args.id)
+        if t is not None and t.get("created_by") != who and t.get("owner") != who:
+            die(f"REFUSED: {args.id} was created by '{t.get('created_by') or '?'}'; "
+                f"only its creator or the leader may retract it.")
+    if args.id not in fold_tasks(args.channel):
+        die(f"REFUSED: no such task in {args.channel}'s store: {args.id}\n"
+            f"Retraction appends to the store, so it can only name a card the "
+            f"store itself holds. A plan seed is the plan's, not the store's.")
+    if not (args.reason or "").strip():
+        die("REFUSED: retracting a task requires --reason. It removes a card from "
+            "every view, and the record of why is the only thing that makes it "
+            "auditable rather than a silent disappearance.")
+    _append_task_event(args.channel, {
+        "ts": now_iso(), "event": "retracted", "actor": who, "channel": args.channel,
+        "context_id": args.channel,
+        "task": args.id, "reason": args.reason,
+    })
+    print(f"{args.id} retracted — the created event stays in the chain, and the "
+          f"board no longer draws it")
 
 
 def cmd_task_list(args):
@@ -2750,6 +2870,17 @@ def main():
     q.add_argument("--id", required=True)
     q.add_argument("--body", default="")
     q.add_argument("--body-file")
+
+    # The one repair verb, and it is an append rather than an edit. It exists
+    # because an accidental `created` landed in a hash-chained store and this
+    # fabric does not edit chains: removing the line would leave every later
+    # record's `prev` pointing at a hash the file no longer contains, which
+    # `aim verify` reports as TAMPER -- for a deliberate repair. The record of
+    # the mistake stays; the board stops drawing the card.
+    q = tadd("retract", cmd_task_retract)
+    q.add_argument("--id", required=True)
+    q.add_argument("--reason", required=True,
+                   help="why the card is being removed; it lands in the chain")
 
     q = tadd("list", cmd_task_list)
     q.add_argument("--owner", default="")

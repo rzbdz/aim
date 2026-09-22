@@ -889,6 +889,63 @@ p = pathlib.Path('$AIM_ROOT/channels/$BELLCH/push.jsonl')
 p.write_text(p.read_text().replace('plaintext-edit', 's3cret'))\" &&
            $AIM verify --channel $BELLCH"
 
+echo "== a new task never collides with a plan seed =="
+# The accident this pins: `aim task new` allocated T-0001 in a channel whose
+# store was empty, while plan/plan.json already seeded T-0001..T-0155. The board
+# merges plan and store (merge_plan), so the seed's card was drawn under the
+# draft's title -- a collision the event log cannot see, because the plan is not
+# in the event log. The fixture below is the failure exactly: a plan seeding
+# T-0001, an empty store, and the assertion that the allocated id clears the
+# plan's high-water mark rather than restarting from zero.
+PLANROOT="$AIM_ROOT/planseed"; rm -rf "$PLANROOT"; mkdir -p "$PLANROOT/plan"
+python3 - "$PLANROOT" <<'PY'
+import json, pathlib, sys
+d = pathlib.Path(sys.argv[1])
+(d / "plan" / "plan.json").write_text(json.dumps({
+    "milestones": {},
+    "tasks": [{"id": "T-0001", "title": "a seeded card"}, {"id": "T-0155", "title": "the high-water mark"}],
+}))
+PY
+expect_ok   "a fixture whose plan seeds T-0001..T-0155 and whose store is empty" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM init >/dev/null &&
+           AIM_ROOT='$PLANROOT' $AIM register --as human --kind human >/dev/null &&
+           AIM_ROOT='$PLANROOT' $AIM register --as alpha --kind claude >/dev/null &&
+           AIM_ROOT='$PLANROOT' $AIM new-channel --id ps --topic 'plan seed' \
+             --participants alpha --leader human >/dev/null"
+expect_ok   "the allocated id is beyond the plan's high-water mark" \
+  bash -c "out=\$(AIM_ROOT='$PLANROOT' $AIM task new --as alpha --channel ps --title 'first ever') &&
+           echo \"\$out\" | grep -q '^T-0156 ' &&
+           test ! -e '$PLANROOT/channels/ps/tasks.jsonl' || true"
+expect_ok   "and it does not name a card the plan already owns" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM task list --as alpha --channel ps --json \
+             | python3 -c \"
+import json,sys
+rows=json.load(sys.stdin)
+ids=[t['id'] for t in rows]
+sys.exit(0 if ids==['T-0156'] else 1)\""
+
+echo "== an accidental created event is retracted, not edited out =="
+# The repair policy this pins: never edit a hash-chained file. Removing the line
+# would leave every later record's `prev` pointing at a hash the file no longer
+# contains, which `aim verify` reports as TAMPER -- for a deliberate repair.
+# The repair is an append both folds read as "stop drawing this card".
+expect_ok   "a card exists to retract" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM task new --as alpha --channel ps --title 'the accident' \
+             | grep -q '^T-0157 '"
+expect_fail "retracting without a reason is refused" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM task retract --as alpha --channel ps --id T-0157"
+expect_fail "a plan seed cannot be retracted, because the store does not hold it" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM task retract --as alpha --channel ps --id T-0001 --reason x"
+expect_ok   "the retraction appends and the card leaves the board" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM task retract --as alpha --channel ps --id T-0157 \
+             --reason 'accidental' >/dev/null &&
+           ! AIM_ROOT='$PLANROOT' $AIM task list --as alpha --channel ps --json | grep -q T-0157"
+expect_ok   "and the chain it was written into still verifies" \
+  bash -c "AIM_ROOT='$PLANROOT' $AIM verify --channel ps | grep -q 'chain OK'"
+expect_ok   "the retracted created event is still in the file, so the record survives" \
+  bash -c "grep -q '\"task\": \"T-0157\"' '$PLANROOT/channels/ps/tasks.jsonl' &&
+           grep -q '\"event\": \"retracted\"' '$PLANROOT/channels/ps/tasks.jsonl'"
+
 echo "== a verifier cannot die on the input it exists to judge =="
 # Every TAMPER line in check_sealed_prefix indexed seal['ts'], so the one path
 # whose entire job is to describe damage raised KeyError on a seal that had no
