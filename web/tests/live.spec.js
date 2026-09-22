@@ -59,7 +59,7 @@ const chat = (digest, bodies) => ({
 })
 
 /** A server whose record changes when the test says so. */
-async function serveChangingRecord(page, first, second) {
+async function serveChangingRecord(page, first, second = first) {
   const box = { doc: first, digest: first.digest }
   await page.route('**/api/state**', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify(box.doc),
@@ -68,9 +68,10 @@ async function serveChangingRecord(page, first, second) {
     contentType: 'application/json', body: JSON.stringify({ digest: box.digest }),
   }))
   return {
-    move() {
-      box.doc = second
-      box.digest = second.digest
+    /** Move the record on. A third state is a second call, not a second helper. */
+    move(next = second) {
+      box.doc = next
+      box.digest = next.digest
     },
   }
 }
@@ -163,4 +164,64 @@ test('a reading position the reader chose is not thrown away by an update', asyn
   // waits instead of pushing the page around under them.
   await expect(page.locator('.aim-deferred')).toContainText('is scrolled')
   expect(await page.evaluate(() => document.querySelector('.aim-history').scrollTop)).toBe(parked)
+
+  // And taking the update does not move them either. The earlier version of this
+  // test stopped at the deferral, which is the half that was already true: the
+  // scroller a reader moved is not on the focus path, so a forced update restored
+  // everything *except* the one pane they were reading. Measured then: 200 -> 5948.
+  await page.locator('.aim-deferred button').click()
+  await expect(page.locator('.aim-msg')).toHaveCount(61)
+  expect(await page.evaluate(() => document.querySelector('.aim-history').scrollTop)).toBe(parked)
+})
+
+test('a forced update keeps the composer, and the reader stays where they were', async ({ page }) => {
+  // The other half of the acceptance: a forced update is still not allowed to
+  // cost the reader anything. Two positions are checked at once here -- the
+  // parked history and the half-typed sentence -- because they are protected by
+  // the same pass and a fix that buys one with the other is not a fix.
+  const third = [...Array.from({ length: 60 }, (_, index) => `fixture message ${index}`),
+                 'a newer message', 'newer still']
+  const thread = (bodies) => ({
+    ...chat(`multi-${bodies.length}`, []),
+    conversation: {
+      channels: [{
+        id: 'hello', phase: 'RESOLVE', gated: false, rule: 'fixture',
+        messages: bodies.map((body, index) => ({
+          from: 'codex', to: 'hello',
+          ts: `2026-09-22T02:${String(index).padStart(2, '0')}:00.000Z`,
+          kind: 'note', body,
+        })),
+      }],
+      rooms: [], mail: [],
+    },
+  })
+  const sixty = thread(third.slice(0, 60))
+  const server = await serveChangingRecord(page, sixty, thread(third.slice(0, 61)))
+
+  await page.goto('/#/chat')
+  await expect(page.locator('.aim-msg')).toHaveCount(60)
+  const draft = 'half a sentence I have not sent yet'
+  await page.locator('.aim-composer textarea').fill(draft)
+
+  server.move()
+  await expect(page.locator('.aim-deferred')).toBeVisible({ timeout: 15_000 })
+  await page.locator('.aim-deferred button').click()
+  await expect(page.locator('.aim-msg')).toHaveCount(61)
+  await expect(page.locator('.aim-composer textarea')).toHaveValue(draft)
+  await expect(page.locator('.aim-deferred')).toHaveCount(0)
+
+  // And a position a *reading* visitor chose survives the same pass, including
+  // when both protections are wanted at once: the parked position is set while
+  // the draft is still in the composer, so neither may be bought with the other.
+  // Taking the update must not move the history a pixel.
+  await page.locator('.aim-history').evaluate((history) => { history.scrollTop = 200 })
+  const parked = await page.locator('.aim-history').evaluate((history) => history.scrollTop)
+  expect(parked).toBeGreaterThan(0)
+
+  server.move(thread(third.slice(0, 62)))
+  await expect(page.locator('.aim-deferred')).toBeVisible({ timeout: 15_000 })
+  await page.locator('.aim-deferred button').click()
+  await expect(page.locator('.aim-msg')).toHaveCount(62)
+  expect(await page.locator('.aim-history').evaluate((history) => history.scrollTop)).toBe(parked)
+  await expect(page.locator('.aim-composer textarea')).toHaveValue(draft)
 })
