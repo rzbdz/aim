@@ -418,9 +418,17 @@ const ACTIONS = computed(() => {
          and a string that matched nothing on the first tick would leave the
          component scrolling the window and marking nothing.
 
-         The `title` is the section list's own, so the contents cannot link to a
-         heading that was renamed underneath it, and the heading is the `title`
-         slot because that is where `el-anchor` puts its label.
+         The label is the section list's own `title` prop, so the contents cannot
+         link to a heading that was renamed underneath it. It was a `#title` slot
+         and that slot does not exist in the installed `el-anchor-link` (2.14.6:
+         `anchor-link.vue` renders `slots.default` and falls back to
+         `props.title`, and the props are `title` and `href` only). A `<template
+         #title>` is therefore not an error and not a warning -- Vue simply drops
+         it, `props.title` stays undefined, and the link renders as an empty `<a>`.
+         Measured on the served bundle, all eight links:
+         `{"href":"#panes","w":1124,"h":8,"text":""}` -- an 8px-tall full-width
+         anchor with no text, no `aria-label` and no `title`, which is what a
+         keyboard reader tabs onto and hears as "link".
 
          The click's default is cancelled, and that is not belt-and-braces: in
          hash mode `href="#glossary"` is the *route* `#/glossary`, so the
@@ -433,9 +441,8 @@ const ACTIONS = computed(() => {
     <el-card shadow="never" style="margin-bottom:14px">
       <template #header><span>On this page</span></template>
       <el-anchor class="aim-help-contents" :container="scroller" :offset="0" :bound="15" type="underline">
-        <el-anchor-link v-for="entry in SECTIONS" :key="entry.id" :href="'#' + entry.id" @click.prevent>
-          <template #title>{{ entry.title }}</template>
-        </el-anchor-link>
+        <el-anchor-link v-for="entry in SECTIONS" :key="entry.id" :href="'#' + entry.id"
+                        :title="entry.title" @click.prevent />
       </el-anchor>
       <p class="aim-dim" style="font-size:12px;margin:10px 0 0">
         Every section also has a stable anchor — <code class="aim-mono">{{ SECTIONS[0].id }}</code>,

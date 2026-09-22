@@ -294,10 +294,12 @@ const DISPATCH_CAVEAT = 'a card can also be handed to any *registered* agent, pa
     <template #header>
       <div class="aim-filterbar">
         <span>one agent, the three questions</span>
-        <el-select v-model="filters.agent" placeholder="agent" data-filter="agent">
+        <el-select v-model="filters.agent" placeholder="agent" data-filter="agent"
+                   aria-label="show one agent">
           <el-option v-for="id in ids" :key="id" :value="id" :label="id" />
         </el-select>
-        <el-input v-model="filters.q" placeholder="search id, kind, channel" clearable />
+        <el-input v-model="filters.q" placeholder="search id, kind, channel"
+                  aria-label="search agents by id, kind or channel" clearable />
         <el-checkbox v-model="filters.unplaced" data-filter="unplaced">only agents in no channel</el-checkbox>
         <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
         <span class="aim-filter-count">{{ rows.length }} of {{ ids.length }} agent(s)</span>

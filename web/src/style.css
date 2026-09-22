@@ -27,10 +27,26 @@
   --aim-mark-from: #0284c7;
   --aim-mark-to: #7c3aed;
   --aim-mark-ink: #ffffff;
-  --aim-owner-human: #0284c7;
-  --aim-owner-codex: #059669;
-  --aim-owner-claude: #7c3aed;
-  --aim-owner-agent: #64748b;
+  /* The owner tints, measured against the surface `OwnerAvatar` actually draws
+     them on. The avatar's initials are this colour as *text* on a wash of itself
+     (`color-mix(in srgb, <tint> 22%, transparent)`), so the ratio that matters is
+     the tint against that wash and not against the ground -- and the wash is
+     lighter than the ground, which is the half the first values missed. Measured
+     2026-09-22 on the four the board renders, ink-on-own-wash: #0284c7 3.09,
+     #059669 2.88, #7c3aed 4.08, #64748b 3.60 -- all four under the 4.5:1 floor,
+     on a `#/org` screen that draws dozens of them at 9.2px. The replacements are
+     the same hues one step darker and clear the floor on the wash over every
+     ground they land on (white, `#eff0f3`, `#f4f4f5`): 4.71 / 4.77 / 5.34 / 6.29
+     at the tightest. `OwnerAvatar.vue` is the only consumer of all four
+     (`grep -rn aim-owner web/src` finds these declarations and its `tint` map,
+     nothing else), so no other mark moves with them.
+
+     The dark block below needs the same treatment and for the same reason, one
+     step in the other direction: see the note there. */
+  --aim-owner-human: #075985;
+  --aim-owner-codex: #065f46;
+  --aim-owner-claude: #5b21b6;
+  --aim-owner-agent: #334155;
   --aim-shadow-card: 0 1px 2px rgba(15, 23, 42, .08);
   --aim-shadow-composer: 0 -6px 18px -12px rgba(15, 23, 42, .25);
 }
@@ -50,10 +66,22 @@ html.dark {
   --aim-mark-from: #38bdf8;
   --aim-mark-to: #a78bfa;
   --aim-mark-ink: #08111f;
-  --aim-owner-human: #38bdf8;
-  --aim-owner-codex: #34d399;
-  --aim-owner-claude: #a78bfa;
-  --aim-owner-agent: #94a3b8;
+  /* The dark half of the same measurement, and two of the four fail it. The wash
+     here is a light tint over a dark ground, so the ratio is *higher* than the
+     ink-on-ground figure and lower than the light palette's; the grounds an
+     `el-card` avatar actually lands on are `--el-bg-color-overlay` #1d1e1f and
+     `--el-bg-color` #141414 (`element-plus/theme-chalk/dark/css-vars.css` nails
+     the card's blank fill to the overlay), i.e. ink-on-own-wash over #141414,
+     #1d1e1f and #202224: #38bdf8 5.69/5.05/4.83, #34d399 6.14/5.45/5.21,
+     #a78bfa 4.74/4.22/4.03, #94a3b8 4.94/4.39/4.19. The last two are under 4.5
+     and #a78bfa is under it on two of three. The replacements are the bright
+     halves of the light palette's new values -- #075985/#065f46/#5b21b6 lifted
+     back into their own hue -- and the next step the other way for the two that
+     passed: 6.20/5.92/5.66, 6.64/6.34/6.05, 5.80/5.53/5.28, 6.68/6.39/6.09. */
+  --aim-owner-human: #7dd3fc;
+  --aim-owner-codex: #6ee7b7;
+  --aim-owner-claude: #c4b5fd;
+  --aim-owner-agent: #cbd5e1;
   --aim-shadow-card: 0 1px 2px rgba(0, 0, 0, .22);
   --aim-shadow-composer: 0 -6px 18px -12px rgba(0, 0, 0, .45);
 }
@@ -102,7 +130,43 @@ body {
    2.1:1 and `danger` #f56c6c is 2.7:1, both under the 4.5:1 floor for text. The
    board already has measured inks for those two roles -- #b45309 is 5.0:1 and
    #b91c1c is 5.9:1 -- so the alert titles, tag text and error copy are pointed
-   at them. Fills are left alone: only ink is moved. */
+   at them. Fills are left alone: only ink is moved.
+
+   T-0203 added the other two roles, and this time a fill *is* the problem. The
+   numbers are off the rendered page (`probe-t0203-contrast2.mjs`, both palettes,
+   all five panes), not reasoned about: Element Plus's `success` #67c23a is
+   2.24:1 against white and its `info` #909399 is 3.08:1, and both are used in
+   both directions. `el-tag effect="dark"` paints its background with the variant
+   colour and its text with `--el-color-white`, which is literally #fff, so a
+   success tag drew white on #67c23a (2.24:1) and an info tag white on #909399
+   (3.08:1); a plain tag drew the variant colour as ink on white, the same two
+   ratios. Both were on the board: BarrierPane's chain-state cell ("yes"/"EMPTY")
+   and its seal cell, Help's status table ("done"/"dropped"), Org's
+   "not recorded" and its gate cell ("open to this seat"), and Help's
+   `STATUS_TYPE` maps `done`/`dropped` onto exactly these two types.
+
+   `--el-color-white` is not the lever: it is the fill for a switch knob, a
+   slider button, a carousel mask and a radio dot, so flipping it would trade
+   four readable marks for five. The two variant colours are the lever, and the
+   values below are the board's own -- #15803d is the green the dark palette
+   already used for this role before this round, and #5b6b83 is `--aim-dim`,
+   already the board's measured grey for text. Both clear the floor in both
+   directions: white on the fill is 5.02:1 and 5.42:1, and the fill as ink on
+   white is 5.02:1 and 5.42:1, with #15803d at 4.56:1 on the info alert's #f4f4f5
+   ground, the tightest surface it lands on. The `light-*` family is derived the
+   way Element Plus derives its own (a mix toward white at 30/50/70/80/90%) and
+   `dark-2` toward black, so a border or hover shade built from the token moves
+   with it instead of drifting.
+
+   The two text tokens below are here for their own measured failures, not as
+   part of the variant work: `--el-text-color-secondary` #909399 is the
+   timeline timestamp (3.08:1) and the info alert's title (2.80:1 on #f4f4f5),
+   and `--el-text-color-placeholder` #a8abb2 is 2.3:1, which is the only colour
+   there is on a search box that has nothing typed in it. Both are pointed at
+   `--aim-dim`, which measures 5.42:1 on white and 4.93:1 on #f4f4f5. They are
+   set here rather than in the dark block on purpose: the dark halves of both
+   tokens (EP's #a3a6ad and #8d9095) already clear 5:1 on #141414 and were not
+   failing, so the dark palette keeps them. */
 :root {
   --el-color-primary: #0369a1;
   --el-color-primary-light-3: #3d8bbd;
@@ -113,11 +177,107 @@ body {
   --el-color-primary-dark-2: #02527a;
   --el-color-danger: var(--aim-danger);
   --el-color-warning: var(--aim-warn);
+  /* The same ink the danger override above has always carried, and for the same
+     reason the comment above already gives -- Element Plus keeps a second token,
+     `--el-color-error`, on the *identical* #f56c6c, and pointing only `danger` at
+     the board's ink left every `el-alert type="error"` on the old one:
+     #f56c6c is 2.90:1 on white and 2.61:1 on its own `#fef0f0` ground, against
+     4.5:1. Two of the five panes render that alert (BarrierPane's refused-move
+     box, OrgPane's unregistered-agent box). Only the ink moves here, as for
+     danger and warning: the `-light-9` ground and the border are left alone. */
+  --el-color-error: var(--aim-danger);
+  --el-color-success: #15803d;
+  --el-color-success-light-3: #5ba677;
+  --el-color-success-light-5: #8ac09e;
+  --el-color-success-light-7: #b9d9c5;
+  --el-color-success-light-8: #d0e6d8;
+  --el-color-success-light-9: #e8f2ec;
+  --el-color-success-dark-2: #116631;
+  --el-color-info: #5b6b83;
+  --el-color-info-light-3: #8c97a8;
+  --el-color-info-light-5: #adb5c1;
+  --el-color-info-light-7: #ced3da;
+  --el-color-info-light-8: #dee1e6;
+  --el-color-info-light-9: #eff0f3;
+  --el-color-info-dark-2: #495669;
+  --el-text-color-secondary: #5b6b83;
+  --el-text-color-placeholder: #5b6b83;
 }
 html.dark {
   --el-color-primary: var(--aim-accent);
   --el-color-danger: var(--aim-danger);
   --el-color-warning: var(--aim-warn);
+  /* The dark palette keeps a bright green and moves the ink on it instead, and
+     that asymmetry is measured rather than stylistic. #15803d is 5.02:1 on
+     white and 3.33:1 on the dark card ground (#1d1e1f), so the light palette's
+     answer is wrong on the dark one; a `success` mark has to be the bright half
+     of the pair there. #34d399 is the board's own dark green (`STATUS_COLOR.done`
+     and `--aim-owner-codex` are the same family), it is 9.84:1 against
+     `--aim-mark-ink`, and the tag that carries it is a label rather than a bar,
+     which is what the ink rule below is for. */
+  --el-color-success: #34d399;
+  --el-color-success-light-3: #2a9a71;
+  --el-color-success-light-5: #247457;
+  --el-color-success-light-7: #1e4d3c;
+  --el-color-success-light-8: #1a3a2f;
+  --el-color-success-light-9: #172721;
+  --el-color-success-dark-2: #2aa97a;
+  --el-color-info: #8b9cb6;
+  --el-color-info-light-3: #677385;
+  --el-color-info-light-5: #505865;
+  --el-color-info-light-7: #383d45;
+  --el-color-info-light-8: #2c2f34;
+  --el-color-info-light-9: #202224;
+  --el-color-info-dark-2: #6f7d92;
+}
+/* The ink on a dark-variant fill, in the dark palette only.
+   Element Plus writes `--el-tag-text-color: var(--el-color-white)` for every
+   `effect="dark"` variant, and in this palette that white is 1.67:1 on `warning`
+   (`--aim-warn` #fbbf24, the phase chip every pane's header carries), 1.90:1 on
+   `danger` (`--aim-danger` #fca5a5), 2.14:1 on `primary` (`--aim-accent`
+   #38bdf8), 1.92:1 on the success green declared above (#34d399) and 2.79:1 on
+   the info one (#8b9cb6) -- five roles, all under the floor. Note that the
+   danger figure is the *dark* token: the light palette's danger is EP's #f56c6c
+   where white is 2.90:1, which is the number eleven lines up in this file's own
+   light block, and the two are not interchangeable. #08111f is the board's own
+   mark ink (`--aim-mark-ink`, what it already prints on the accent gradient) and
+   on those same five fills it measures 11.33 / 9.97 / 8.83 / 9.84 / 6.78, so
+   6.78:1 is its floor here. It is one rule and not five because the tag is the
+   only component on this board that passes `effect="dark"`.
+
+   This has to be a rule on the tag and not a token on `html.dark`: Element Plus
+   declares the variable on `.el-tag--dark.el-tag--<variant>` itself, so an
+   inherited value is overridden at the element. The selector below is written at
+   the same two-class specificity as that declaration and this stylesheet loads
+   after `element-plus/dist/index.css`, which is what puts it later in the
+   cascade -- remove either half and the white comes back. */
+html.dark .el-tag--dark { --el-tag-text-color: var(--aim-mark-ink); }
+/* The pager's current page, which is the one place `is-background` puts a fill
+   under the number. Element Plus writes
+   `.el-pagination.is-background .el-pager li.is-active{background-color:
+   var(--el-color-primary);color:var(--el-color-white)}` and, unlike `--el-fill-
+   color` and its siblings, never redefines `--el-color-white` for the dark
+   theme -- it is #fff in both palettes. So in the dark palette the active number
+   is white on `--el-color-primary` #38bdf8, 2.14:1, the same defect the tag rule
+   above fixes for `effect="dark"` and by the same reasoning: the mark ink is what
+   this board already prints on a bright accent fill, and it reads 8.83:1 here.
+   The number is a four-character label on a filled chip, so it takes ink and not
+   a darker fill, which would undo the only cue that says *this* page is current.
+
+   All four pagers take the `background` attribute (`GanttPane.vue:763`,
+   `KanbanPane.vue:492`, `ItemsPane.vue:621`, `ReportsPane.vue:961`), so this is a
+   rule about this board's own markup and not a general override. It is scoped to
+   `html.dark` because the light palette's `--el-color-primary` #0369a1 carries
+   white at 6.72:1 and was never failing -- a rule written unscoped would repaint
+   a legible light-palette label on the strength of a dark-palette measurement.
+
+   Written at `.el-pagination.is-background .el-pager li.is-active` inside
+   `html.dark` -- one class at a higher specificity *and* later in the cascade than
+   EP's own rule, since this stylesheet loads after `element-plus/dist/index.css`.
+   Both halves are needed: at equal specificity only the later load decides. */
+html.dark .el-pagination.is-background .el-pager li.is-active {
+  background-color: var(--el-color-primary);
+  color: var(--aim-mark-ink);
 }
 
 /* ---------------------------------------------------------------- shell */

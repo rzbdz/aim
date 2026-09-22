@@ -628,17 +628,18 @@ export default { name: 'BarrierPane' }
               nothing has been refused in this channel — no one has yet wanted something the phase forbids.
             </span>
             <template v-if="(ch.refusals || []).length">
-              <el-input v-model="filters.q" placeholder="search action or reason" clearable />
-              <el-select v-model="filters.agent" placeholder="agent" clearable>
+              <el-input v-model="filters.q" placeholder="search action or reason"
+                        aria-label="search the refused actions and reasons" clearable />
+              <el-select v-model="filters.agent" placeholder="agent" aria-label="filter refusals by agent" clearable>
                 <el-option v-for="agent in refusalAgentsOf(ch)" :key="agent" :value="agent" :label="agent" />
               </el-select>
-              <el-select v-model="filters.refusalClass" placeholder="class" clearable>
+              <el-select v-model="filters.refusalClass" placeholder="class" aria-label="filter refusals by class" clearable>
                 <el-option value="barrier" label="barrier" />
                 <el-option value="form" label="form" />
               </el-select>
               <!-- The list is the dictionary's, not a copy: a filter that offers a
                    phase the tool cannot reach is a filter that can only return nothing. -->
-              <el-select v-model="filters.phase" placeholder="phase" clearable>
+              <el-select v-model="filters.phase" placeholder="phase" aria-label="filter refusals by the phase they happened in" clearable>
                 <el-option v-for="phase in PHASES" :key="phase.key" :value="phase.key"
                            :label="`${phase.label} (${phase.key})`" />
               </el-select>
@@ -674,8 +675,34 @@ export default { name: 'BarrierPane' }
           </el-table-column>
           <el-table-column label="phase" width="150">
             <template #default="{ row }">
-              <el-tooltip :content="row.phase" placement="top" :show-after="200">
-                <span>{{ phaseLabel(row.phase) }}</span>
+              <!-- The raw phase key, which only the tooltip carried. `el-tooltip`
+                   opens on hover or on focus, and its trigger is a `tabindex="-1"`
+                   `<span>`: it cannot be focused, so focus never reached it.
+                   Measured on the served bundle, `hover()` on this cell reported
+                   `["SYNTHESIS"]`, and a forced `cell.focus()` (after setting a
+                   tabindex by hand) reported `focused:true,
+                   aria-describedby:null` with zero visible poppers -- a keyboard
+                   reader gets the English word and never the value they would
+                   paste into a bug report, while a mouse reader gets both.
+                   So the value moves to `aria-label` on the text the cell draws,
+                   which makes it the cell's accessible *name* rather than a
+                   description: it is read on arrival, at the one moment the
+                   reader is asking what this cell is, and it survives the
+                   tooltip never opening. The `data-phase` attribute below is the
+                   same value again and that is deliberate -- `web/tests/boards.spec.js:484`
+                   refuses any raw phase key in `.aim-main`'s *text*, and a
+                   plain-text copy would also hand every reader the enum this
+                   pane's whole design keeps one deliberate step away. An
+                   attribute is not text: it is the machine-readable half, which
+                   is what a reader with a screen reader gets through the name
+                   and what a test can assert without putting `CROSS_EXAMINE` on
+                   the page. The tooltip stays for the reader who wants to read
+                   the key rather than hear it; `trigger-keys` is emptied because
+                   `el-tooltip`'s default Enter/Space handler calls
+                   `preventDefault` (`tooltip/src/trigger.vue`), and the same
+                   reason `PhaseChip` empties it when its chip is a link. -->
+              <el-tooltip :content="row.phase" placement="top" :show-after="200" :trigger-keys="[]">
+                <span :data-phase="row.phase" :aria-label="row.phase">{{ phaseLabel(row.phase) }}</span>
               </el-tooltip>
             </template>
           </el-table-column>

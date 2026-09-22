@@ -355,6 +355,31 @@ const rows = computed(() => allRows.value.filter((r) => matches(r.task)))
 const drawn = computed(() => rows.value.length)
 
 /**
+ * The chart's name, for the reader who is not looking at it.
+ *
+ * A picture with no accessible name is announced as "image" and nothing else, so
+ * the name has to carry the three facts the drawing makes obvious to a sighted
+ * reader and a screen reader cannot otherwise get: how many bars are drawn, that
+ * some of them are promises rather than work, and that the bar is a link into the
+ * item. The counts are the same computeds the header prints
+ * (`datedRecorded`/`datedSeeds`), so the sentence cannot describe a different
+ * board than the one on screen -- the failure this pane has already been fixed
+ * for once, when its header counted 87 plan seeds as "dated item(s)".
+ *
+ * `undated` is named rather than omitted: a reader told "102 bars" and not told
+ * that 57 more rows have no dates has been given a complete-looking number that
+ * is not the whole board.
+ */
+const chartName = computed(() => {
+  const bars = drawn.value
+  const bits = [`Gantt timeline: ${bars} bar${bars === 1 ? '' : 's'} drawn`]
+  if (datedSeeds.value.length) bits.push(`${datedSeeds.value.length} a plan promise rather than recorded work`)
+  if (undated.value.length) bits.push(`${undated.value.length} further item(s) have no dates and are listed below`)
+  bits.push('each bar opens its work item')
+  return `${bits.join(', ')}.`
+})
+
+/**
  * The bound on the list, and it is the reader's (T-0161 clause 1).
  *
  * `?per=` is the family's key -- Items and Kanban read the same one -- so the page
@@ -656,24 +681,25 @@ const undatedOpen = ref(false)
                for, and the tick labels it generates are the "M/D" of that same
                assumption. -->
           <span class="aim-dim">· calendar {{ CALENDAR_ZONE }}</span></span>
-        <el-input v-model="filters.q" size="small" placeholder="search id, title, acceptance" clearable />
-        <el-select v-model="filters.owner" size="small" placeholder="owner" clearable>
+        <el-input v-model="filters.q" size="small" placeholder="search id, title, acceptance"
+                  aria-label="search the timeline by id, title or acceptance" clearable />
+        <el-select v-model="filters.owner" size="small" placeholder="owner" aria-label="filter the timeline by owner" clearable>
           <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />
         </el-select>
-        <el-select v-model="filters.status" size="small" placeholder="status" clearable>
+        <el-select v-model="filters.status" size="small" placeholder="status" aria-label="filter the timeline by status" clearable>
           <el-option v-for="status in board.statuses" :key="status" :value="status" :label="status" />
         </el-select>
-        <el-select v-model="filters.milestone" size="small" placeholder="milestone">
+        <el-select v-model="filters.milestone" size="small" placeholder="milestone" aria-label="show one milestone">
           <el-option value="all" label="every milestone" />
           <el-option v-for="m in milestones" :key="m" :value="m" :label="m" />
         </el-select>
-        <el-select v-model="filters.tag" size="small" placeholder="tag" multiple collapse-tags clearable>
+        <el-select v-model="filters.tag" size="small" placeholder="tag" aria-label="filter the timeline by tag" multiple collapse-tags clearable>
           <el-option v-for="tag in board.tags" :key="tag" :value="tag" :label="tag" />
         </el-select>
         <!-- The list's bound, and the reader's: the same `per` key Items and Kanban
              read, so a page size set on one list is set on the next. -->
         <el-select v-model="filters.per" size="small" placeholder="per page" data-filter="per"
-                   style="width:112px">
+                   aria-label="bars per page" style="width:112px">
           <el-option v-for="size in PAGE_SIZES" :key="size" :value="String(size)" :label="`${size} rows`" />
         </el-select>
         <el-checkbox v-model="filters.onlyLate">overdue only</el-checkbox>
@@ -703,9 +729,29 @@ const undatedOpen = ref(false)
          not the box's, so the timeline keeps its floor and this box scrolls
          sideways instead of the page body. The y-axis labels scroll with it: the
          chart is one canvas, and a second sticky copy of the label column is the
-         table this pane is not. -->
+         table this pane is not.
+
+         The chart is a picture of the table's own rows, and until this round it
+         was a picture with no name and no way in. Measured on the served bundle:
+         the ECharts host -- `div.echarts-host[_echarts_instance_]`, the element
+         the `aria` component would label -- carried `role:null, aria-label:null,
+         tabindex:null, tabReachable:false`, and the plugin registered no `Aria`
+         component at all, so nothing was going to put one there. Nothing inside
+         the canvas is focusable either (0 focusables), and the canvas is not the
+         table: the same rows are reachable from `#/items`, so the missing
+         keyboard path costs a reader the *chart*, not the data.
+
+         The name is on the box rather than on the host because vue-echarts
+         refuses to forward listeners to its root (`inheritAttrs: false`,
+         `getRootAttrs` filters them out), so an `@focus` here would attach to a
+         non-focusable `div` and never fire. `tabindex` and `aria-label` are not
+         listeners and do land on the root element, which is the one this box
+         wraps. `role="img"` is what this panel actually is -- a drawing, drawn
+         from one summarised option -- and it is the role ECharts' own `aria`
+         component would have set. -->
     <div v-if="rows.length" ref="chartEl" class="aim-gantt-scroll">
       <VChart :option="option" autoresize @click="onClick"
+              role="img" tabindex="0" :aria-label="chartName"
               :style="{ height: chartHeight + 'px', width: (geometry?.canvasPx || 0) + 'px' }"
               @legendselectchanged="onLegendToggle" />
     </div>

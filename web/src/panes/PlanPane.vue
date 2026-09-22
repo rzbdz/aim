@@ -330,16 +330,17 @@ const argvLine = (action) => {
              repeated in every row. -->
         <span class="aim-dim" style="font-size:11.5px">every due date is a calendar day
           in {{ CALENDAR_ZONE }}</span>
-        <el-input v-model="filters.q" placeholder="search milestones, risks, decisions" clearable />
-        <el-select v-model="filters.progress" placeholder="progress">
+        <el-input v-model="filters.q" placeholder="search milestones, risks, decisions"
+                  aria-label="search milestones, risks and decisions" clearable />
+        <el-select v-model="filters.progress" placeholder="progress" aria-label="filter milestones by progress">
           <el-option value="all" label="all progress" />
           <el-option value="open" label="open" />
           <el-option value="done" label="done" />
         </el-select>
-        <el-select v-model="filters.owner" placeholder="work owner" clearable>
+        <el-select v-model="filters.owner" placeholder="work owner" aria-label="filter milestones by work owner" clearable>
           <el-option v-for="owner in board.owners" :key="owner" :value="owner" :label="owner" />
         </el-select>
-        <el-select v-model="filters.riskOwner" placeholder="risk owner" clearable>
+        <el-select v-model="filters.riskOwner" placeholder="risk owner" aria-label="filter risks by owner" clearable>
           <el-option v-for="owner in riskOwners" :key="owner" :value="owner" :label="owner" />
         </el-select>
         <el-button v-if="activeCount()" size="small" text @click="clear()">clear</el-button>
