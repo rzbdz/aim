@@ -16,6 +16,18 @@ const counts = computed(() => {
   const open = board.tasks.filter((t) => !board.terminal.includes(t.status)).length
   return { open, late: board.overdue.length, blocked: board.tasks.filter((t) => t.status === 'blocked').length }
 })
+const navGroups = computed(() => {
+  const byKey = new Map(views.map((view) => [view.key, view]))
+  return [
+    { title: 'Work · 工作', keys: ['overview', 'kanban', 'gantt', 'items'] },
+    { title: 'Conversation · 会话', keys: ['chat'] },
+    { title: 'Insight · 报表', keys: ['reports'] },
+    { title: 'Governance · 治理', keys: ['barrier', 'plan'] },
+  ].map((group) => ({
+    title: group.title,
+    views: group.keys.map((key) => byKey.get(key)).filter(Boolean),
+  })).filter((group) => group.views.length)
+})
 </script>
 
 <template>
@@ -29,10 +41,12 @@ const counts = computed(() => {
         </div>
       </div>
       <el-menu :default-active="route.path" router>
-        <el-menu-item v-for="v in views" :key="v.key" :index="`/${v.key}`">
-          <el-icon><component :is="v.icon || 'Grid'" /></el-icon>
-          <span>{{ v.title }}</span>
-        </el-menu-item>
+        <el-menu-item-group v-for="group in navGroups" :key="group.title" :title="group.title">
+          <el-menu-item v-for="v in group.views" :key="v.key" :index="`/${v.key}`">
+            <el-icon><component :is="v.icon || 'Grid'" /></el-icon>
+            <span>{{ v.titleZh || v.title }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
       </el-menu>
       <div class="aim-links aim-dim">
         <div style="margin-bottom:6px">for a foreign tool</div>
@@ -62,7 +76,7 @@ const counts = computed(() => {
         </el-button>
       </el-header>
 
-      <el-main class="aim-main">
+      <el-main :class="['aim-main', { 'aim-main-conversation': current?.key === 'chat' }]">
         <el-alert v-if="board.stale" type="warning" :closable="false" show-icon style="margin-bottom:14px">
           <template #title>
             the record has moved since this page was drawn

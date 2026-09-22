@@ -35,7 +35,7 @@ async function onMoved(evt) {
   const from = evt.from?.dataset?.status
   sync()
   if (!id || !to || to === from) return
-  const command = `aim task move --as ${board.viewer} --id ${id} --to ${to}`
+  const command = `aim task move --as ${board.writer} --id ${id} --to ${to}`
   await ElMessageBox.alert(command, `${id} — the dashboard does not write`, {
     confirmButtonText: 'copy the command', showCancelButton: true, cancelButtonText: 'close',
     customClass: 'aim-mono',

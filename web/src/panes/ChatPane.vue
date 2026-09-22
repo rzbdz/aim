@@ -25,6 +25,7 @@ const kind = ref('report')
 const sending = ref(false)
 const refusal = ref('')
 const sent = ref('')
+const historyEl = ref(null)
 
 const threads = computed(() => {
   const out = []
@@ -96,16 +97,16 @@ const preview = (t) => {
 }
 const body = (text) => md.render(text)
 
-const main = () => document.querySelector('.el-main')
 async function openThread(key) {
   picked.value = key
   await nextTick()
-  main()?.scrollTo({ top: 0 })
+  if (historyEl.value) historyEl.value.scrollTop = 0
 }
 async function jumpToEnd() {
   await nextTick()
-  const el = main()
-  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  if (historyEl.value) {
+    historyEl.value.scrollTo({ top: historyEl.value.scrollHeight, behavior: 'smooth' })
+  }
 }
 function quote(m) {
   drafting.value = `> ${(m.body || '').split('\n').slice(0, 3).join('\n> ')}\n\n`
@@ -145,9 +146,8 @@ async function copy(text) {
 </script>
 
 <template>
-  <el-row :gutter="16">
-    <el-col :span="7">
-      <div class="aim-side">
+  <div class="aim-chat">
+    <aside class="aim-chat-side">
       <el-card shadow="never" body-style="padding:8px">
         <template #header>
           <div style="display:flex;align-items:center;gap:8px">
@@ -157,7 +157,7 @@ async function copy(text) {
               <el-icon><Refresh /></el-icon></el-button></el-tooltip>
           </div>
         </template>
-        <div style="max-height:calc(100vh - 230px);overflow:auto">
+        <div class="aim-thread-list">
           <template v-for="(list, group) in groups" :key="group">
             <div class="aim-dim" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;margin:8px 4px 4px">{{ group }}</div>
             <div v-for="t in list" :key="t.key" class="aim-thread" :class="{ on: t.key === current?.key }"
@@ -176,12 +176,10 @@ async function copy(text) {
           <el-empty v-if="!threads.length" description="nothing has been said on the record yet" :image-size="60" />
         </div>
       </el-card>
-      </div>
-    </el-col>
+    </aside>
 
-    <el-col :span="17">
-      <div class="aim-reader">
-        <div class="aim-reader-head">
+    <section class="aim-reader">
+      <div class="aim-reader-head">
           <strong style="font-size:13.5px">{{ current?.label }}</strong>
           <el-tag v-if="current?.gated" size="small" type="warning" effect="plain">sealed to you</el-tag>
           <span class="aim-dim" style="font-size:11.5px">{{ current?.note }}</span>
@@ -190,8 +188,11 @@ async function copy(text) {
           <el-button size="small" text @click="jumpToEnd"><el-icon><Bottom /></el-icon> newest</el-button>
         </div>
 
+      <div ref="historyEl" class="aim-history">
         <template v-for="(m, i) in messages" :key="i">
-          <div v-if="i === 0 || dayOf(m.ts) !== dayOf(messages[i - 1].ts)" class="aim-daysep">{{ dayOf(m.ts) }}</div>
+          <div v-if="i === 0 || dayOf(m.ts) !== dayOf(messages[i - 1].ts)" class="aim-daysep">
+            {{ dayOf(m.ts) }}
+          </div>
           <article class="aim-msg">
             <header>
               <OwnerAvatar :id="m.by" :size="18" />
@@ -209,8 +210,9 @@ async function copy(text) {
           </article>
         </template>
         <el-empty v-if="!messages.length" description="this thread is empty" />
+      </div>
 
-        <div class="aim-dock">
+      <footer class="aim-composer">
         <el-card v-if="!board.canWrite" shadow="never" style="margin-top:4px">
           <div class="aim-dim" style="font-size:12.5px">
             reading as <b>{{ board.viewer }}</b>. this server was started without
@@ -245,8 +247,7 @@ async function copy(text) {
           </el-alert>
           <el-alert v-if="sent" type="success" :closable="false" show-icon style="margin-top:10px" :title="sent" />
         </el-card>
-        </div>
-      </div>
-    </el-col>
-  </el-row>
+      </footer>
+    </section>
+  </div>
 </template>
