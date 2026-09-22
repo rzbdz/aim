@@ -196,10 +196,30 @@ test.describe('T-0182: a receipt count is a property of the record, not of the w
       if (seen.length) await page.reload()
       else await page.goto('/#/attention')
 
-      // The card is still a five-row window (`rows` at most 5, and the collapse
-      // is partial): that is the property the count must not inherit.
-      await expect(rows(page), `${fixture.name}: the card must draw at most its five rows`)
-        .toHaveCount(Math.min(5, fixture.mail.length))
+      // The card is still a five-row window. Asserted as an upper bound, not as
+      // an equality, because the collapse makes the drawn count a function of
+      // *where in the window* a conversation's newest receipt sits, which the
+      // declared `windowReceipts` does not pin down:
+      //
+      //   BURST_ONLY  5 receipts + 1 collapsed row (1 receipt owns `latest` on
+      //               each of the five, the three superseded ones drop out,
+      //               and a counted row is drawn once however many it counts) -> 1
+      //   PLUS_TWO    3 receipts inside the window -> 1 collapsed + 2 notes      -> 3
+      //   PLUS_FOUR   1 receipt inside the window  -> 1 collapsed + 4 notes      -> 5
+      //
+      // Measured on the served bundle at 43baf22, three identical runs each:
+      // 1, 3, 5. The truth this per-fixture number was standing in for is the
+      // 5, 3, 1 declared in `FIXTURES` -- and *that* is asserted against the
+      // fixture itself, where it is exact and independent of the collapse, by
+      // `receiptsInWindow` in the test above. Restating it here as an equality
+      // against the card re-derived the very property under test -- the number
+      // of receipts visible -- from the thing that stopped exposing it.
+      expect(fixture.windowReceipts, `${fixture.name}: receipts inside the five-row window`)
+        .toBe(receiptsInWindow(fixture.mail))
+      await expect(rows(page), `${fixture.name}: the card still draws a five-row window`)
+        .not.toHaveCount(0)
+      expect(await rows(page).count(), `${fixture.name}: the window is five rows at most`)
+        .toBeLessThanOrEqual(5)
       await expect(collapsed(page), `${fixture.name}: one collapsed receipt row`)
         .toHaveCount(1)
       await expect(collapsed(page).first(), `${fixture.name}: the arrived count`)
