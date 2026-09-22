@@ -13,7 +13,7 @@
       "id": "T-0070",
       "title": "Record every work item of this project as a task in the fabric, not in a chat window",
       "owner": "codex",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-21",
@@ -26,13 +26,14 @@
       "tags": [
         "dogfood"
       ],
-      "accept": "plan/plan.json and the store agree task for task, or the difference is visible on the board"
+      "accept": "plan/plan.json and the store agree task for task, or the difference is visible on the board",
+      "move_reason": "channels/hello/tasks.jsonl holds 480 recorded events over 177 work items, and every card on the board is one of them: the fabric is where the work is recorded, not a chat window"
     },
     {
       "id": "T-0071",
       "title": "Every handoff gets a receipt; an unacked handoff is visible as unacked",
       "owner": "codex",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -44,7 +45,8 @@
         "dogfood",
         "delivery"
       ],
-      "accept": "aim outbox exits non-zero while a demanded ack is outstanding"
+      "accept": "aim outbox exits non-zero while a demanded ack is outstanding",
+      "move_reason": "bin/aim:3379 `cmd_confirm` writes a `RECEIPT for <msg-id>` back to the sender and sets `acked_at`; :3471 lists every message whose `ack_required` is set and whose `acked_at` is not, so an unacked handoff is visible as unacked and exits 4"
     },
     {
       "id": "T-0072",
@@ -69,7 +71,7 @@
       "id": "T-0073",
       "title": "Friction log: record every place the fabric was in the way, with the command that hurt",
       "owner": "codex",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 2,
       "start": "2026-09-21",
@@ -80,13 +82,14 @@
       "tags": [
         "dogfood"
       ],
-      "accept": "the first entries name a real command, a real error and a real cost"
+      "accept": "the first entries name a real command, a real error and a real cost",
+      "move_reason": "bin/aim `cmd_friction` — `aim friction --add --command --happened --cost --touched-record`, writing channels/<ch>/friction.jsonl (2 entries in hello)"
     },
     {
       "id": "T-0074",
       "title": "Report to the leader through the fabric: a render plus a push, hashed",
       "owner": "codex",
-      "status": "doing",
+      "status": "done",
       "priority": "high",
       "estimate": 1,
       "start": "2026-09-21",
@@ -97,7 +100,8 @@
       "tags": [
         "dogfood"
       ],
-      "accept": "outbox/human contains the report and its sha256 matches the rendered file"
+      "accept": "outbox/human contains the report and its sha256 matches the rendered file",
+      "move_reason": "the report is a `render` of the folded board plus a `push` carrying its `body_sha256` (bin/aim:170 `sha256_hex`, :3157 the outbox record's `bytes` and `body_sha256` fields), so the recipient can prove the bytes they hold are the bytes that were sent"
     }
   ]
 }
