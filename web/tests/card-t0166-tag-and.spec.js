@@ -187,19 +187,35 @@ const itemIds = (page) => page.locator('.el-table__body tr td:first-child').allI
  *
  *  The pattern is the sentence the pane actually renders, not the one this file
  *  was written against. `GanttPane.vue`'s header used to read
- *  `timeline — 2 of 4 dated item(s)`; it now states the filter count apart from
- *  the board's own split (`timeline — 2 shown; of 4 dated bar(s), 0 on the
- *  record and 4 plan seeds (promises, not work), …`), because T-0188 found the
- *  old sentence counting one universe and describing another. Measured on the
- *  served bundle 2026-09-22: the old pattern threw
- *  `gantt header did not name a count` on the very first assertion, so this
- *  instrument was reporting the pane's copy change rather than a filter defect.
- *  Only the two numbers this file is about are captured -- what is *shown* and
- *  the *denominator* -- and the trailing halves are not asserted here.
+ *  `timeline — 2 of 4 dated item(s)`; it now states the bars it drew apart from
+ *  the set the filter leaves (`timeline — 2 drawn of 4 dated bar(s) the filter
+ *  leaves; 0 on the record and 4 plan seeds (promises, not work), …`). Two
+ *  changes, and this instrument has now been re-pointed for both:
+ *
+ *   - T-0188 first found the old sentence counting one universe and describing
+ *     another, and the copy became `2 shown; of 4 dated bar(s)`.
+ *   - The 2026-09-23 audit found `shown` was the *filter's* total and not the
+ *     drawing: this pane pages (`?per=`, 25 by default) and the chart draws the
+ *     page, so the header said 107 beside a canvas holding 25. The copy now names
+ *     the page (`N drawn of M dated bar(s) the filter leaves`).
+ *
+ *  Both times the old pattern threw `gantt header did not name a count` on the
+ *  very first assertion, so this instrument was reporting the pane's copy change
+ *  rather than a filter defect. Only the two numbers this file is about are
+ *  captured -- what is *drawn* and what the *filter left* -- and the trailing
+ *  halves are not asserted here.
+ *
+ *  The two numbers coincide on this fixture, and that is a property of the fixture
+ *  rather than a loss: `STATE` has 4 dated rows and the default page size is 25, so
+ *  the page *is* the filter's set and `[drawn, left]` collapses to `[n, n]`. The
+ *  pair still discriminates -- 4, then 2, then 1 -- which is the clause this file
+ *  runs. What it no longer reads is the whole board's dated total, which the pane
+ *  stopped printing here on purpose: it was the denominator of a sentence whose
+ *  numerator was the page.
  */
 async function ganttCount(page) {
   const text = await page.locator('.aim-filterbar > span').first().innerText()
-  const m = text.match(/timeline\s*—\s*(\d+)\s+shown;\s*of\s+(\d+)\s+dated bar/)
+  const m = text.match(/timeline\s*—\s*(\d+)\s+drawn of\s+(\d+)\s+dated bar/)
   if (!m) throw new Error(`gantt header did not name a count: ${JSON.stringify(text)}`)
   return [Number(m[1]), Number(m[2])]
 }
@@ -259,8 +275,14 @@ test.describe('T-0166 tag filters: two tags are an AND on every surface', () => 
 
   test('gantt', async ({ page }) => {
     await stub(page, STATE)
+    // `[drawn, left]` on every step, because that is the pair the header prints.
+    // The two numbers coincide here -- 4 dated rows against a default page size of
+    // 25 -- so this fixture cannot tell a page count from a filter count, and the
+    // instrument does not pretend otherwise. The pair is still what is read, so a
+    // pane that paged this fixture would show it rather than hide it behind a
+    // single number.
     await assertSurface(page, {
-      hash: '#/gantt', placeholder: 'tag', shown: ganttCount, all: [4, 4], one: [2, 4], and: [1, 4],
+      hash: '#/gantt', placeholder: 'tag', shown: ganttCount, all: [4, 4], one: [2, 2], and: [1, 1],
     })
   })
 

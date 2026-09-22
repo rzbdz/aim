@@ -1,6 +1,6 @@
 {
- "revision": "24da731+dirty",
- "built_at": "2026-09-22T15:56:37.494Z",
+ "revision": "c2ad5cf+dirty",
+ "built_at": "2026-09-22T16:20:11.145Z",
  "dirty": true,
  "source": "vite build",
  "source_paths": [
@@ -8,5 +8,5 @@
   "web/index.html",
   "web/vite.config.js"
  ],
- "source_sha256": "bbf273f96051090c3c4f4e0891728c43f8b68d36c76f1057af2139f9eef24503"
+ "source_sha256": "5a5eaa9be4bdb43725d0c847259f9582efd608a8cc94e66d6784891216b24dbf"
 }

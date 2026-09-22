@@ -302,37 +302,52 @@ const matches = (task) => {
 const milestones = computed(() => [...new Set(board.dated.map((t) => t.milestone).filter(Boolean))].sort())
 
 /**
- * The three numbers the header publishes, and which list each is over.
+ * The numbers the header publishes, and which set each is over.
  *
- * `data-drawn` is the total the filter leaves -- every dated row the chart is asked
- * to draw. The other two are *not* that set split by `isPromise`: they are over
- * `allDated`, the whole board, because the sentence's other half is the board's own
- * split and a split that moved with the filter would answer a question the sentence
- * did not ask. Measured on the live board with the assets a reader gets (`/api/state?as=human`,
- * 177 tasks, 107 dated, 20 recorded / 87 seeds):
+ * `data-drawn` is the bars the chart was *handed* -- `shownRows`, the page -- and
+ * `data-matched` is the total the filter leaves, which is the set the pager
+ * divides. Measured on the live board 2026-09-23, 1440x1000, `#/gantt`:
  *
- *   no filter       data-drawn 107   data-recorded 20   data-seeds 87
- *   ?status=done    data-drawn  89   data-recorded 20   data-seeds 87
- *   ?owner=codex    data-drawn  49   data-recorded 20   data-seeds 87
- *   ?milestone=M1   data-drawn  15   data-recorded 20   data-seeds 87
+ *   no filter, per=25  data-drawn 25   data-matched 107   (canvas holds 25 bars)
+ *   no filter, per=50  data-drawn 49   data-matched 107   (canvas holds 49 bars)
  *
- * so the three coincide exactly once, and only when nothing is filtered -- which is
- * the shape that made the defect below invisible on a full board.
+ * The other two -- `data-recorded` / `data-seeds` -- are *not* that set split by
+ * `isPromise`: they are over `allDated`, the whole board, because the sentence's
+ * other half is the board's own split and a split that moved with the filter would
+ * answer a question the sentence did not ask. Measured on the live board with the
+ * assets a reader gets (`/api/state?as=human`, 177 tasks, 107 dated, 20 recorded /
+ * 87 seeds):
  *
- * That is a fix, and the defect it fixes is one the attribute's own name carried.
- * `drawn` was `rows.filter((r) => !isPromise(r.task)).length`, i.e. the *recorded*
- * rows -- so `data-drawn` published `data-recorded` under a second name, and on any
- * board with no filter and fewer rows than the page size the two were the same
- * number. Measured on the live board: 107 dated rows, `data-drawn` 20 and
+ *   no filter       data-matched 107   data-recorded 20   data-seeds 87
+ *   ?status=done    data-matched  89   data-recorded 20   data-seeds 87
+ *   ?owner=codex    data-matched  49   data-recorded 20   data-seeds 87
+ *   ?milestone=M1   data-matched  15   data-recorded 20   data-seeds 87
+ *
+ * so the filter column and the split coincide exactly once, and only when nothing
+ * is filtered -- which is the shape that made the first defect below invisible on a
+ * full board.
+ *
+ * **The defect this attribute carried first.** `drawn` was
+ * `rows.filter((r) => !isPromise(r.task)).length`, i.e. the *recorded* rows -- so
+ * `data-drawn` published `data-recorded` under a second name, and on any board with
+ * no filter and fewer rows than the page size the two were the same number.
+ * Measured then on the live board: 107 dated rows, `data-drawn` 20 and
  * `data-recorded` 20; `?status=done` gave 17 and 20, `?owner=codex` 2 and 20,
  * `?milestone=M1` 0 and 20 -- a number that is *called* drawn and answers "how many
  * of these are recorded work" is the second answer to a question the element already
  * answers beside it. `recorded-vs-seed.spec.js` reads it as the total and expects 11
- * on a fixture where 11 dated rows are drawn; the pane answered 3.
+ * on a fixture where 11 dated rows are drawn; the pane answered 3. That was fixed by
+ * pointing it at `rows.length`.
  *
- * The sentence itself is unchanged and was never wrong: it prints `rows.length` for
- * the shown count and the split for the two halves. Only the attribute was ever
- * saying the wrong thing, and it was saying it twice.
+ * **The defect the fix left.** `rows.length` is still not the number of bars. This
+ * pane pages -- `per=25` by default -- and the option is built from `laneRows`,
+ * which is `shownRows`: the chart draws the page. So the attribute named `drawn`,
+ * the header's "107 shown" and the chart's own accessible name all reported the
+ * *filter's* total beside a canvas holding 25 bars. Measured 2026-09-23 by band
+ * census on the canvas and by hovering each band's own pixels: 25 bands on page 1
+ * (22 promise, 3 recorded), 49 at `per=50`, and every band resolves to a tooltip
+ * that agrees with `isPromise`. The header now names the page and the filter
+ * separately and the attribute follows its own name.
  *
  * The row text carries the lane as well (`◌` promise, `●` recorded). The legend
  * names the lanes and toggles them, but a legend is at the top of a 1600px chart
@@ -351,8 +366,8 @@ const allRows = computed(() => {
   })
 })
 const rows = computed(() => allRows.value.filter((r) => matches(r.task)))
-/** Every dated row the filter leaves: what the chart is asked to draw. */
-const drawn = computed(() => rows.value.length)
+/** Every dated row the filter leaves: the set the pager divides. */
+const matched = computed(() => rows.value.length)
 
 /**
  * The chart's name, for the reader who is not looking at it.
@@ -366,14 +381,30 @@ const drawn = computed(() => rows.value.length)
  * board than the one on screen -- the failure this pane has already been fixed
  * for once, when its header counted 87 plan seeds as "dated item(s)".
  *
+ * **The count is `shownRows`, and it did not used to be.** This said
+ * `${drawn} bars drawn`, where `drawn` was the *filter's* total. Measured on the
+ * live board 2026-09-23 at 1440x1000, `#/gantt`, default `per=25`: the name read
+ * "107 bars drawn, 87 a plan promise rather than recorded work" while the canvas
+ * held **25** bars -- 22 promise, 3 recorded. Hovering each band's own pixels
+ * names all 25, and `per=50` draws 49, so the chart draws the page and not the
+ * filter. A reader who cannot see the chart was handed a number 4x the drawing,
+ * and the split beside it was the whole board's. Both halves are the page's now,
+ * and the page is stated: "of the 107 the filter leaves", so the two counts are
+ * legible as the two different questions they are.
+ *
  * `undated` is named rather than omitted: a reader told "102 bars" and not told
  * that 57 more rows have no dates has been given a complete-looking number that
- * is not the whole board.
+ * is not the whole board. It stays the whole board's -- the undated list below is
+ * not paged -- and is worded so.
  */
 const chartName = computed(() => {
-  const bars = drawn.value
+  const bars = shownRows.value.length
+  const seeds = shownSeeds.value.length
+  const records = shownRecords.value.length
   const bits = [`Gantt timeline: ${bars} bar${bars === 1 ? '' : 's'} drawn`]
-  if (datedSeeds.value.length) bits.push(`${datedSeeds.value.length} a plan promise rather than recorded work`)
+  if (matched.value > bars) bits.push(`of the ${matched.value} dated rows the filter leaves`)
+  if (seeds) bits.push(`${seeds} a plan promise rather than recorded work`)
+  if (records) bits.push(`${records} recorded`)
   if (undated.value.length) bits.push(`${undated.value.length} further item(s) have no dates and are listed below`)
   bits.push('each bar opens its work item')
   return `${bits.join(', ')}.`
@@ -397,6 +428,17 @@ const perPage = computed(() => {
 })
 const page = ref(0)
 const shownRows = computed(() => rows.value.slice(page.value * perPage.value, (page.value + 1) * perPage.value))
+/**
+ * The page's own split, which is the split the *chart* draws.
+ *
+ * The header and the chart's accessible name both print the board's split
+ * (`datedRecorded`/`datedSeeds`) beside a bar count that is the page's, so the two
+ * halves of one sentence were about two different sets. See `chartName` below for
+ * the measurement; these two exist so the sentence about the drawing is about the
+ * drawing.
+ */
+const shownSeeds = computed(() => shownRows.value.filter((r) => isPromise(r.task)))
+const shownRecords = computed(() => shownRows.value.filter((r) => !isPromise(r.task)))
 watch(() => [filters.q, filters.owner, filters.status, filters.milestone, filters.tag, filters.onlyLate],
   () => { page.value = 0 })
 watch([rows, perPage], () => {
@@ -669,8 +711,18 @@ const undatedOpen = ref(false)
              board's split is stated over the board, and the filter count is stated
              apart from it, so no clause counts one universe and describes another
              (the defect the Plan pane's undated sentence had). -->
-        <span :data-recorded="datedRecorded.length" :data-seeds="datedSeeds.length" :data-drawn="drawn">
-          timeline — {{ rows.length }} shown; of {{ allDated.length }} dated bar(s),
+        <!-- "N shown" was the *filter's* count and read as the number of bars, so
+             the sentence said 107 beside a chart holding 25 and a pager saying
+             "Total 107" -- three numbers for one page and no way to tell which was
+             which. The page's own count is named and the filter's total is named as
+             the filter's, which is the same repair this header already had once
+             (each number now says which set it is about). `data-drawn` follows: it
+             publishes the bars the chart was handed, and `data-matched` publishes
+             the set the pager divides, so the attribute named `drawn` is no longer
+             the answer to a different question. -->
+        <span :data-recorded="datedRecorded.length" :data-seeds="datedSeeds.length"
+              :data-drawn="shownRows.length" :data-matched="matched">
+          timeline — {{ shownRows.length }} drawn of {{ matched }} dated bar(s) the filter leaves;
           <b>{{ datedRecorded.length }}</b> on the record and {{ datedSeeds.length }}
           <span class="aim-chip seed">plan seeds</span> (promises, not work), {{ span.lo }} → {{ span.hi }}
           <!-- The calendar the horizon is drawn in. The two dates beside this are
