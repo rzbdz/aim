@@ -45,6 +45,7 @@ otherwise.
 Run: python3 tests/test_export_extra.py     (exit code = number of failures)
 """
 import csv
+import datetime as dt
 import json
 import subprocess
 import sys
@@ -53,6 +54,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BOARD = ROOT / "bin" / "aimboard.py"
 STAMP = "2026-09-22T09:43:41.552Z"
+# The writer is imported directly for the one check whose subject cannot be a
+# subprocess: that the coverage line is *absent* when there is nothing to cover.
+# `tests/test_state_json.py:57` does the same thing for the same reason.
+sys.path.insert(0, str(ROOT))
 
 passed = broken = failed = 0
 
@@ -148,6 +153,37 @@ def check_foreign_parser(body):
             mangled.append(f"{uid}: {summary[:60]!r} does not contain {title[:60]!r}")
     check("a title with a comma or a semicolon survives the round trip intact",
           not mangled, "; ".join(mangled[:3]))
+
+    # An all-day VEVENT needs a date, so an undated item cannot be one -- and the
+    # board has many. `tests/test_export.py:21` names this exact failure: "a file
+    # that is valid and silently missing 40% of the board is worse than a broken
+    # one, because nothing complains". The count is on the VCALENDAR, where every
+    # parser that reads the events also reads the calendar around them, so the
+    # check is that the number the file states is the number it dropped.
+    def dated(row):
+        raw = row.get("start") or row.get("due")
+        try:
+            return bool(dt.date.fromisoformat(str(raw)[:10]))
+        except (ValueError, TypeError):
+            return False
+
+    want_dated = {tid for tid, t in doc["tasks"].items() if dated(t)}
+    undated = (len(doc["tasks"]) - len(want_dated)
+               + sum(1 for m in doc["milestones"].values() if not dated(m)))
+    check("the .ics carries a VEVENT for every dated item",
+          want_dated <= {str(ev.get("UID", "")).removesuffix("@aim") for ev in events},
+          f"{len(want_dated)} dated item(s) on the board")
+    stated = str(cal.get("DESCRIPTION") or "")
+    check("the .ics states how many items it left out, so the omission is not silent",
+          (str(undated) in stated) if undated else (stated == ""),
+          f"{undated} item(s) undated; the calendar says {stated[:60]!r}")
+    # The line is only there when there is something to say: a calendar that
+    # always carries a "0 items omitted" note is a line readers learn to skip.
+    from aimboard.exporters import export_ical
+    only_dated = {"T-X": {"status": "doing", "title": "dated",
+                          "start": "2026-09-22", "due": "2026-09-22"}}
+    check("and says nothing when nothing was left out",
+          "not events in this file" not in export_ical(only_dated, {}, STAMP))
 
 
 def check_csv_estimate(body):

@@ -118,12 +118,24 @@ def _ical_stamp(generated_at):
 
 
 def export_ical(tasks, milestones, generated_at):
-    """All-day VEVENTs only. No VTIMEZONE, so a date cannot drift by rendering it."""
+    """All-day VEVENTs only. No VTIMEZONE, so a date cannot drift by rendering it.
+
+    A VEVENT needs a date, so an undated item cannot be one -- and on the tree
+    this was written on 70 of 177 visible items have no `start` and no `due`.
+    Dropping them without a word is the failure `tests/test_export.py:21` names:
+    "a file that is valid and silently missing 40% of the board is worse than a
+    broken one, because nothing complains". So the count is published on the
+    VCALENDAR, where RFC 5545 section 3.8.8.2 allows a DESCRIPTION and every
+    parser that reads the events also reads the calendar around them. Checked
+    with icalendar 7.3.0: a VCALENDAR DESCRIPTION parses and reads back intact.
+    """
     stamp_line = [f"DTSTAMP:{stamp}"] if (stamp := _ical_stamp(generated_at)) else []
     out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//aim//aimboard//EN",
            "CALSCALE:GREGORIAN", "X-WR-CALNAME:aim board"]
+    undated = 0
     for mid, m in sorted(milestones.items()):
         if not _ical_date(m.get("due")):
+            undated += 1
             continue
         due, name = parse_day(m["due"]), m.get("name", "")
         out += ["BEGIN:VEVENT", f"UID:{_ical_text(mid)}@aim", *stamp_line,
@@ -134,6 +146,7 @@ def export_ical(tasks, milestones, generated_at):
     for tid, t in sorted(tasks.items()):
         start_d, due_d = parse_day(t.get("start")), parse_day(t.get("due"))
         if not (start_d or due_d):
+            undated += 1
             continue
         start_d = start_d or due_d
         end_d = (due_d or start_d) + timedelta(days=1)   # DTEND is exclusive
@@ -154,6 +167,10 @@ def export_ical(tasks, milestones, generated_at):
                 f"SUMMARY:{_ical_text(f'[{status}] {tid} {title}'.rstrip())}",
                 f"DESCRIPTION:{_ical_text('; '.join(parts))}",
                 "END:VEVENT"]
+    if undated:
+        out.insert(5, "DESCRIPTION:" + _ical_text(
+            f"{undated} item(s) on the board carry no date and are not events in "
+            f"this file; read them from the CSV or the JSON export"))
     out.append("END:VCALENDAR")
     folded = [part for line in out for part in _fold_content_line(line)]
     return "\r\n".join(folded) + "\r\n"
