@@ -67,17 +67,20 @@ html.dark {
   --aim-mark-to: #a78bfa;
   --aim-mark-ink: #08111f;
   /* The dark half of the same measurement, and two of the four fail it. The wash
-     here is a light tint over a dark ground, so the ratio is *higher* than the
-     ink-on-ground figure and lower than the light palette's; the grounds an
-     `el-card` avatar actually lands on are `--el-bg-color-overlay` #1d1e1f and
-     `--el-bg-color` #141414 (`element-plus/theme-chalk/dark/css-vars.css` nails
-     the card's blank fill to the overlay), i.e. ink-on-own-wash over #141414,
-     #1d1e1f and #202224: #38bdf8 5.69/5.05/4.83, #34d399 6.14/5.45/5.21,
-     #a78bfa 4.74/4.22/4.03, #94a3b8 4.94/4.39/4.19. The last two are under 4.5
-     and #a78bfa is under it on two of three. The replacements are the bright
-     halves of the light palette's new values -- #075985/#065f46/#5b21b6 lifted
-     back into their own hue -- and the next step the other way for the two that
-     passed: 6.20/5.92/5.66, 6.64/6.34/6.05, 5.80/5.53/5.28, 6.68/6.39/6.09. */
+     here is a light tint over a dark ground, so it moves the surface *toward* the
+     ink and the ratio is lower than the ink-on-ground figure, not higher: #a78bfa
+     on `#141414` is 6.77:1 against the ground and 4.74:1 against a 22% wash of
+     itself over it. The grounds an `el-card` avatar actually lands on are
+     `--el-bg-color-overlay` #1d1e1f and `--el-bg-color` #141414
+     (`element-plus/theme-chalk/dark/css-vars.css` nails the card's blank fill to
+     the overlay); with #202224 as the third, ink-on-own-wash reads #38bdf8
+     5.69/5.05/4.83, #34d399 6.14/5.45/5.21, #a78bfa 4.74/4.22/4.03, #94a3b8
+     4.94/4.39/4.19. The last two are under 4.5 on every one and #a78bfa is under
+     it on two of three. The replacements are the bright halves of the light
+     palette's new values -- #075985/#065f46/#5b21b6 lifted back into their own hue
+     -- and, for the two that passed, the next step in that direction anyway, so
+     all four sit at the same distance from the floor: 6.69/5.92/5.66,
+     7.15/6.34/6.05, 6.24/5.53/5.28, 7.23/6.39/6.09. */
   --aim-owner-human: #7dd3fc;
   --aim-owner-codex: #6ee7b7;
   --aim-owner-claude: #c4b5fd;
@@ -268,7 +271,7 @@ html.dark .el-tag--dark { --el-tag-text-color: var(--aim-mark-ink); }
    `KanbanPane.vue:492`, `ItemsPane.vue:621`, `ReportsPane.vue:961`), so this is a
    rule about this board's own markup and not a general override. It is scoped to
    `html.dark` because the light palette's `--el-color-primary` #0369a1 carries
-   white at 6.72:1 and was never failing -- a rule written unscoped would repaint
+   white at 5.93:1 and was never failing -- a rule written unscoped would repaint
    a legible light-palette label on the strength of a dark-palette measurement.
 
    Written at `.el-pagination.is-background .el-pager li.is-active` inside
