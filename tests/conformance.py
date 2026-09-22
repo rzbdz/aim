@@ -108,7 +108,11 @@ def t_concurrent_say():
     procs = []
     for i in range(10):
         who = "a" if i % 2 == 0 else "b"
-        procs.append(spawn(["say", "--as", who, "--channel", "c",
+        # `--private` since T-0230: this is the pre-barrier private traffic the
+        # fleet runs on, and it used to reach the private log only because the
+        # phase was closed. The destination is declared now, so a suite that
+        # relied on the silent downgrade would be measuring the defect.
+        procs.append(spawn(["say", "--as", who, "--channel", "c", "--private",
                             "--body", f"private reasoning number {i} with enough words to be real"]))
     for p in procs:
         p.wait(timeout=60)
@@ -137,7 +141,7 @@ def t_concurrent_same_agent():
     run(["register", "--as", "b", "--kind", "codex"])
     run(["register", "--as", "h", "--kind", "human"])
     run(["new-channel", "--id", "c", "--topic", "self", "--participants", "a,b", "--leader", "h"])
-    procs = [spawn(["say", "--as", "a", "--channel", "c", "--body", f"thought {i} from one agent racing itself"])
+    procs = [spawn(["say", "--as", "a", "--channel", "c", "--private", "--body", f"thought {i} from one agent racing itself"])
              for i in range(8)]
     for p in procs:
         p.wait(timeout=60)
@@ -166,7 +170,7 @@ def t_crash_recovery():
     survivors = 0
     for i in range(14):
         # SIGKILL, not SIGTERM: no cleanup handler, no chance to finish a write.
-        p = spawn(["say", "--as", "a", "--channel", "c", "--body", f"message {i} that may be interrupted mid-write"])
+        p = spawn(["say", "--as", "a", "--channel", "c", "--private", "--body", f"message {i} that may be interrupted mid-write"])
         time.sleep(0.012 * (i % 3))
         p.send_signal(signal.SIGKILL)
         p.wait(timeout=30)
@@ -194,9 +198,9 @@ def t_recovery_without_human():
     run(["register", "--as", "h", "--kind", "human"])
     run(["new-channel", "--id", "c", "--topic", "rejoin", "--participants", "a,b", "--leader", "h"])
 
-    run(["say", "--as", "a", "--channel", "c", "--body", "a's position, written before any exposure"])
+    run(["say", "--as", "a", "--channel", "c", "--private", "--body", "a's position, written before any exposure"])
     run(["seal", "--as", "a", "--channel", "c", "--summary", "a's position"])
-    run(["say", "--as", "b", "--channel", "c", "--body", "b's position, formed independently"])
+    run(["say", "--as", "b", "--channel", "c", "--private", "--body", "b's position, formed independently"])
     run(["seal", "--as", "b", "--channel", "c", "--summary", "b's position"])
     run(["advance", "--as", "h", "--channel", "c", "--to", "COMMIT"])
     run(["advance", "--as", "h", "--channel", "c", "--to", "SYNTHESIS", "--synthesizer", "h"])

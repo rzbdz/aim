@@ -112,8 +112,8 @@ class MoveActorRuleTest(unittest.TestCase):
                       "--participants", f"{OWNER},{OTHER}", "--leader", "human")):
             p = aim(cls.root, *argv)
             assert p.returncode == 0, f"setup aim {' '.join(argv)} -> {p.returncode}: {p.stderr}"
-        for argv in (("say", "--as", OWNER, "--channel", "mv", "--body", "owner position"),
-                     ("say", "--as", OTHER, "--channel", "mv", "--body", "other position"),
+        for argv in (("say", "--as", OWNER, "--channel", "mv", "--private", "--body", "owner position"),
+                     ("say", "--as", OTHER, "--channel", "mv", "--private", "--body", "other position"),
                      ("seal", "--as", OWNER, "--channel", "mv", "--summary", "owner is here"),
                      ("seal", "--as", OTHER, "--channel", "mv", "--summary", "other is here"),
                      ("advance", "--as", "human", "--channel", "mv", "--to", "COMMIT"),

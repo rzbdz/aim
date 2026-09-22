@@ -62,7 +62,7 @@ def build_with_aim():
     # `outsider` is registered and deliberately not in the channel.
     run(root, "new-channel", "--id", "hello", "--topic", "fixture",
         "--participants", "codex,claude-session1", "--leader", "human")
-    run(root, "say", "--as", "codex", "--channel", "hello", "--body", "codex reasoning, private")
+    run(root, "say", "--as", "codex", "--channel", "hello", "--private", "--body", "codex reasoning, private")
     claims = root / "claims.json"
     claims.write_text(json.dumps([{"id": "c1", "claim": SEAL, "confidence": 0.9, "kill_if": "x"}]))
     run(root, "seal", "--as", "codex", "--channel", "hello",

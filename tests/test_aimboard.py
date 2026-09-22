@@ -617,7 +617,15 @@ def main():
                       r.get("rc") == 126 and "allowlist" in r.get("stderr", ""), json.dumps(r))
                 check("and the refused verb left no agent behind",
                       (root / "registry.json").read_text() == registry_before)
-                r = post(url2, ["say", "--as", "attacker", "--channel", "hello",
+                # `--private` since T-0230: this probe is about *who the writer
+                # ends up being*, and `hello` is in SEALED_DIVERGENT, where the
+                # public channel is shut. Before the fix the write reached the
+                # private log because the phase happened to be closed -- the
+                # silent downgrade the card names -- so the probe asserted a
+                # destination nobody had asked for. The destination is declared
+                # now, and the checks below still read the same two logs: the
+                # server's identity, not the claimed name.
+                r = post(url2, ["say", "--private", "--as", "attacker", "--channel", "hello",
                                 "--body", "WRITE-PATH-PROBE-alpha"],
                          viewer="claude-session1", body_extra={"as": "attacker"})
                 check("the command runs", r.get("ok") is True, json.dumps(r))

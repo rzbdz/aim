@@ -32,20 +32,54 @@ own log.
 
 Revision measured: `fac2a0ce9ead85da7533d378087a96f748d3080b` (HEAD) with
 `bin/aim` **dirty** (585 insertions / 90 deletions vs HEAD) and `/api/revision`
-`stale: true`. This behaviour comes from **committed** lines: the two lines that
-decide it are already in `git show HEAD:bin/aim` and untouched by the dirty
-diff --
+`stale: true`. This behaviour came from **committed** lines --
 
     to_public = kind_of == "synthesis" or phase not in ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
     print(f"[private/{who}] {kind_of} recorded ({len(body)} chars)")
 
-Measured in COMMIT on this build:
+Measured in COMMIT on that build:
 
     $ aim say --as alpha --channel gated --body "..."
     [private/alpha] note recorded (71 chars)        (exit 0; public log still 0)
 
-which is the failing row: the public count did not move and the command did not
-refuse. That method is `@unittest.expectedFailure`.
+which was the failing row, and `test_say_moves_the_public_count_or_refuses_by_name`
+was `@unittest.expectedFailure`.
+
+**T-0230 landed the fix, and the decorator was removed deliberately.** Here is the
+measurement that removed it, and the two behaviours it has to keep.
+
+`to_public` was a second copy of `PHASE_RULES[phase]["channel_say"]`, spelled as a
+list of phase *names*. That is the drift `bin/aim:135-139` forbids: the expression
+answers "is the public channel open" and was being read as "where does this
+message go". So a `note` -- a member of the *public* vocabulary,
+`COMMITMENT_KINDS` -- was filed privately because the phase happened to be closed,
+and the command reported that as success. Measured after the fix, same channel,
+same phase:
+
+    $ aim say --as alpha --channel gated --body "a message the public count must account for"
+    aim: REFUSED: channel is in COMMIT; channel_say is False — the public channel is closed.
+    Write to your private log instead: `aim say --private`, or a kind with no public route (claim/position).
+    exit=2
+
+    $ aim status --channel gated | grep '^log'
+    log       0 public messages      # unchanged, and the command said so instead
+
+The destination is now derived from the rule table plus a declared intent, never
+from the phase name: `synthesis` | `--public` | (a declared `--private`, or a kind
+with no public route such as `claim`/`position`) -> the private log; everything
+else -> the public log, where `gate(...)` refuses by name. Two consequences are
+pinned below, because a future change that refused *everything* while the channel
+is shut would satisfy this card's XOR and delete the private path the fleet runs
+on: `--private` still reaches the private log, and `--public` cannot downgrade.
+
+`--private` is the old documented capability made declarable, not a new one:
+`README.md` §6 has read `aim say ... # private, pre-barrier` since the first run,
+and the fleet's pre-barrier traffic is private on purpose. `tests/selftest.sh`
+lines 50/63/67 and `tests/conformance.py` lines 111/140/169 are that traffic and
+opt in with `--private`; `test_move_actor_rule.py`, `test_unassigned.py`,
+`test_a2a_conformance.py` and `attack_renderer_gate.py` carry the same calls. Those
+files are outside this one's write set and are reported with the change rather
+than edited here.
 
 Run: python3 tests/test_say_channel_gate.py     (exit code = number of failures)
 """
@@ -94,9 +128,17 @@ class SayChannelGateTest(unittest.TestCase):
         # phase the card's evidence was measured in.
         p = aim(cls.root, "advance", "--as", "human", "--channel", "gated", "--to", "COMMIT")
         assert p.returncode == 0, p.stderr
-        # `open` is driven to CROSS_EXAMINE for the positive control.
-        for argv in (("say", "--as", "alpha", "--channel", "open", "--body", "alpha position"),
-                     ("say", "--as", "beta", "--channel", "open", "--body", "beta position"),
+        # `open` is driven to CROSS_EXAMINE for the positive control. The two
+        # opening writes say `--private` because that is what they are: positions
+        # formed *before* the channel opens, filed in the writer's own log. On the
+        # old build they were private without saying so (`channel_say` was False
+        # in SEALED_DIVERGENT and the phase decided); on this one the intent is
+        # declared, which is the whole change. A fixture that relied on the silent
+        # downgrade would be measuring the defect rather than the fix.
+        for argv in (("say", "--as", "alpha", "--channel", "open", "--private",
+                      "--body", "alpha position"),
+                     ("say", "--as", "beta", "--channel", "open", "--private",
+                      "--body", "beta position"),
                      ("seal", "--as", "alpha", "--channel", "open", "--summary", "alpha is here"),
                      ("seal", "--as", "beta", "--channel", "open", "--summary", "beta is here"),
                      ("advance", "--as", "human", "--channel", "open", "--to", "COMMIT"),
@@ -116,8 +158,15 @@ class SayChannelGateTest(unittest.TestCase):
         self.assertIn("'channel_say': False", out, "the gate under test is not closed")
         self.assertIn("'private_say': True", out, "the private log is not open")
 
-    @unittest.expectedFailure
     def test_say_moves_the_public_count_or_refuses_by_name(self):
+        # `@unittest.expectedFailure` was removed here when T-0230 landed, and its
+        # absence is the point of the file rather than tidying: the decorator said
+        # "this method asserts a capability the build does not have", and on a
+        # build where `say` refuses and names `channel_say` it reports *unexpected
+        # success*, which unittest counts as a failure. The header records the
+        # before/after CLI transcript the removal was measured against. It is not
+        # weakened: the same XOR is asserted, unchanged, and it now passes on the
+        # tool's own output rather than on a promise.
         before = public_log(self.root, "gated")
         p = aim(self.root, "say", "--as", "alpha", "--channel", "gated",
                 "--body", "a message the public count must account for")
@@ -131,6 +180,40 @@ class SayChannelGateTest(unittest.TestCase):
             f"refused by name: exit={p.returncode}, public {len(before)} -> {len(after)}, "
             f"stdout={p.stdout.strip()!r}, stderr={p.stderr.strip()!r}, "
             f"status log line={[l for l in status.splitlines() if l.startswith('log')]}")
+
+    def test_a_declared_private_write_still_reaches_the_private_log(self):
+        # The other half of the XOR, and the reason T-0230 could not be closed by
+        # refusing every write while the channel is shut: `private_say` is True in
+        # COMMIT, the private log is where pre-barrier reasoning goes, and
+        # `--private` is that capability said out loud. A build that refused this
+        # would pass the method above and delete the path the fleet runs on.
+        priv = self.root / "channels" / "gated" / "private" / "alpha.jsonl"
+        before = priv.read_text().count("\n") if priv.exists() else 0
+        public_before = len(public_log(self.root, "gated"))
+        p = aim(self.root, "say", "--as", "alpha", "--channel", "gated", "--private",
+                "--body", "reasoning that is mine to hold: t0230")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        after = priv.read_text().count("\n")
+        self.assertEqual(after, before + 1, f"--private wrote nothing: {p.stdout!r}")
+        self.assertIn("reasoning that is mine to hold: t0230", priv.read_text())
+        # Read as a count, not as a comparison of two reads of one file: the
+        # private route must leave the public log exactly as it found it.
+        self.assertEqual(len(public_log(self.root, "gated")), public_before,
+                         "a private write moved the public log")
+
+    def test_the_public_route_cannot_downgrade_to_a_private_note(self):
+        # `--public` is the one route that must never end in the writer's own log:
+        # the message was aimed at the channel, and a run that filed it privately
+        # while printing success is exactly the defect this card measured. So the
+        # private log is checked for the body, not just the exit status.
+        priv = self.root / "channels" / "gated" / "private" / "alpha.jsonl"
+        before = priv.read_text() if priv.exists() else ""
+        p = aim(self.root, "say", "--as", "alpha", "--channel", "gated", "--public",
+                "--body", "aimed at the channel while it was shut: t0230")
+        self.assertNotEqual(p.returncode, 0, f"--public must not succeed: {p.stdout!r}")
+        self.assertIn("channel_say", p.stdout + p.stderr)
+        self.assertEqual(priv.read_text() if priv.exists() else "", before,
+                         "--public downgraded to a private note, which is the defect")
 
     def test_say_reaches_the_public_log_when_the_phase_opens_the_channel(self):
         before = public_log(self.root, "open")

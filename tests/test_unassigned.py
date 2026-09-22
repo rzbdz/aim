@@ -159,8 +159,8 @@ class UnassignedTest(unittest.TestCase):
         # that it refuses a held card *and* names `assign`, because an agent whose
         # claim is refused needs the verb that will work for it.
         tid = self.new_card(channel="open", owner="alpha", title="held past the barrier")
-        step = [("say", "--as", "alpha", "--channel", "open", "--body", "alpha position"),
-                ("say", "--as", "beta", "--channel", "open", "--body", "beta position"),
+        step = [("say", "--as", "alpha", "--channel", "open", "--private", "--body", "alpha position"),
+                ("say", "--as", "beta", "--channel", "open", "--private", "--body", "beta position"),
                 ("seal", "--as", "alpha", "--channel", "open", "--summary", "alpha is here"),
                 ("seal", "--as", "beta", "--channel", "open", "--summary", "beta is here"),
                 ("advance", "--as", "human", "--channel", "open", "--to", "COMMIT"),

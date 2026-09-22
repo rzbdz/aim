@@ -47,7 +47,14 @@ expect_ok "register human"  $AIM register --as human --kind human
 expect_ok "open channel"    $AIM new-channel --id t --topic "self test" --participants alpha,beta --leader human
 
 echo "== SEALED_DIVERGENT: no cross-reading =="
-expect_ok   "alpha writes to its private log" $AIM say --as alpha --channel t --body "alpha private reasoning about the failure mode, stated in its own terms at some length"
+# `--private` on the three writes below, since T-0230. They always *went* to the
+# private log -- a `note` in a closed phase was filed privately because the phase
+# happened to be shut -- but nothing said so, which is the defect the card names:
+# `aim say` printed `[private/alpha] note recorded` and exited 0, and a reader had
+# no way to tell that apart from a delivered message. The destination is now
+# declared, so a fixture that relied on the silent downgrade would be measuring
+# the old bug rather than the capability.
+expect_ok   "alpha writes to its private log" $AIM say --as alpha --channel t --private --body "alpha private reasoning about the failure mode, stated in its own terms at some length"
 expect_fail "beta reads alpha private log as public" bash -c "$AIM inbox --as beta --channel t --json | grep -q 'alpha private reasoning'"
 expect_ok   "alpha reads back its own private log"  bash -c "$AIM inbox --as alpha --channel t --show-private | grep -q 'alpha private reasoning'"
 
@@ -60,11 +67,11 @@ echo "== no synthesis before every participant has committed =="
 expect_fail "advance to SYNTHESIS unsealed" $AIM advance --as human --channel t --to SYNTHESIS --synthesizer human
 expect_ok   "alpha seals"  $AIM seal --as alpha --channel t --summary "alpha position; confidence 0.7"
 expect_fail "advance to SYNTHESIS with beta unsealed" $AIM advance --as human --channel t --to SYNTHESIS --synthesizer human
-expect_ok   "beta writes to its private log" $AIM say --as beta --channel t --body "beta private reasoning in beta's own vocabulary, reached without reading alpha"
+expect_ok   "beta writes to its private log" $AIM say --as beta --channel t --private --body "beta private reasoning in beta's own vocabulary, reached without reading alpha"
 expect_ok   "beta seals"   $AIM seal --as beta  --channel t --summary "beta position; confidence 0.4"
 
 echo "== appending after a seal is allowed; editing what was sealed is not =="
-expect_ok   "alpha appends after sealing" $AIM say --as alpha --channel t --body "a later thought, added after the seal; legitimate and visible"
+expect_ok   "alpha appends after sealing" $AIM say --as alpha --channel t --private --body "a later thought, added after the seal; legitimate and visible"
 expect_ok   "chain still verifies" $AIM verify --channel t
 expect_ok   "the append is reported, not failed" bash -c "$AIM verify --channel t 2>&1 | grep -q 'appended after sealing'"
 PRIV="$AIM_ROOT/channels/t/private/alpha.jsonl"

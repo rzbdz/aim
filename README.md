@@ -263,7 +263,7 @@ aim register   --as <you> --kind claude|codex|human
 aim new-channel --id <ch> --topic "..." --participants a,b --leader <human>
 
 aim status     --channel <ch>                 # where the conversation stands
-aim say        --as <you> --channel <ch> --body "..."     # private, pre-barrier
+aim say        --as <you> --channel <ch> --private --body "..."     # your own log, pre-barrier
 aim seal       --as <you> --channel <ch> --summary "..." --claims claims.json
 aim advance    --as <human> --channel <ch> --to COMMIT
 aim inbox      --as <you> --channel <ch>

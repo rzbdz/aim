@@ -836,7 +836,7 @@ def build_refusals():
 
     # `t4` is carried to SYNTHESIS by the leader, which is the only way to reach
     # the phase where sealing is closed.
-    must("say", "--as", "alpha", "--channel", "t4", "--body", "alpha's position, in alpha's own words, at some length")
+    must("say", "--as", "alpha", "--channel", "t4", "--private", "--body", "alpha's position, in alpha's own words, at some length")
     must("seal", "--as", "alpha", "--channel", "t4", "--summary", "alpha; confidence 0.7")
     must("seal", "--as", "beta", "--channel", "t4", "--summary", "beta; confidence 0.4")
     must("advance", "--as", "human", "--channel", "t4", "--to", "COMMIT")

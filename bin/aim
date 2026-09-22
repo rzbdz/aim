@@ -84,6 +84,18 @@ CROSS_EXAMINE_KINDS = {
 # CROSS_EXAMINE, which `cmd_say` already enforces.
 COMMITMENT_KINDS = {"note", "claim", "evidence", "position", "question"}
 
+# The kinds that have no public route at all — the vocabulary a *private* write
+# may carry without asking for one, because there is nowhere else for it to go.
+# Derived from the two tables that define the routes rather than listed a third
+# time, which is the rule this file states at :135-139: `CROSS_EXAMINE_KINDS` is
+# the set of moves the public channel accepts, so a kind it cannot carry
+# (`claim`, `position`) has exactly one destination, and a kind it can carry
+# (`note`, `evidence`, `question`) is a public speech act that must be refused by
+# name — not quietly downgraded — when the channel is closed. Writing that list
+# out a second time is how `cmd_say`'s `to_public` came to disagree with the
+# phase table it was a copy of (T-0230).
+SAY_PRIVATE_KINDS = frozenset(COMMITMENT_KINDS) - CROSS_EXAMINE_KINDS
+
 MAX_MSGS_PER_ROUND = 2       # per participant, per cross-examination round
 ECHO_RATIO_LIMIT = 0.50      # share of 8-grams that may echo a peer verbatim
 
@@ -853,9 +865,25 @@ def gate(manifest, who, action):
             cls="barrier",
         )
     if action == "channel_say" and not rules["channel_say"]:
+        # T-0230. The refusal now names the rule that stopped it. `channel_say` is
+        # the token the caller can already see — in `aim status --channel <ch>`'s
+        # `rules` line and in the API's `rules` block — so a refusal that says
+        # only "the channel is closed" leaves the reader unable to connect the
+        # refusal to the field that caused it, and unable to grep for it. The
+        # name is spelled exactly as `PHASE_RULES` spells it, so the message and
+        # the table are one token rather than two.
+        #
+        # The second line changed with it. The old advice ("Write to your private
+        # log instead (kinds: note/claim/evidence/position)") named the *private
+        # log* as the destination, which is the sentence that made a silent
+        # downgrade look like the intended route; `--private` is now how that
+        # intent is declared, and the kinds that have no public route at all
+        # (`SAY_PRIVATE_KINDS`) are named from the table rather than listed here.
         die(
-            f"REFUSED: channel is in {phase}; the public channel is closed.\n"
-            f"Write to your private log instead (kinds: note/claim/evidence/position).",
+            f"REFUSED: channel is in {phase}; channel_say is False — the public "
+            f"channel is closed.\n"
+            f"Write to your private log instead: `aim say --private`, or a kind "
+            f"with no public route ({'/'.join(sorted(SAY_PRIVATE_KINDS))}).",
             cls="barrier",
         )
     if action == "private_say" and not rules["private_say"]:
@@ -1106,16 +1134,32 @@ def cmd_say(args):
             cls="barrier")
 
     kind_of = args.kind
-    if kind_of is None:
-        if phase == "CROSS_EXAMINE":
-            die(
-                "REFUSED: --kind is required in CROSS_EXAMINE.\n"
-                f"Label the move: one of {', '.join(sorted(CROSS_EXAMINE_KINDS))}.\n"
-                "An unlabelled message is how a rebuttal gets read as evidence and a "
-                "concession gets read as a proposal.",
-                cls="barrier",
-            )
-        kind_of = "note"
+    # T-0230. Two flags, read once, because both the kind vocabulary and the
+    # destination now depend on which route the writer asked for.
+    wants_private = bool(getattr(args, "private", False))
+    wants_public = bool(getattr(args, "public", False))
+    if wants_private and wants_public:
+        # Two destinations named in one command. Either one alone is a decision;
+        # together they are a caller who has not decided, and `--public` winning
+        # silently would be the same class of bug as the silent downgrade this
+        # card is about — the tool picking a destination the writer did not.
+        die("REFUSED: --private and --public name two destinations; pick one.",
+            cls="form")
+    if kind_of is None and phase == "CROSS_EXAMINE":
+        # Unchanged, including the `--public` case: `--public` routes to the same
+        # log CROSS_EXAMINE labels, so it inherits the same rule. Requiring a
+        # label on `--public` in *every* phase was tried and withdrawn — it made
+        # a `--public` write in COMMIT refuse with "required in CROSS_EXAMINE",
+        # which is a refusal naming a phase the channel is not in, and the honest
+        # refusal for that write is the one below (the channel is closed).
+        die(
+            "REFUSED: --kind is required in CROSS_EXAMINE.\n"
+            f"Label the move: one of {', '.join(sorted(CROSS_EXAMINE_KINDS))}.\n"
+            "An unlabelled message is how a rebuttal gets read as evidence and a "
+            "concession gets read as a proposal.",
+            cls="barrier",
+        )
+    kind_of = kind_of or "note"
 
     if kind_of == "ruling":
         require_leader(who, kind, m, what="publish a ruling")
@@ -1129,6 +1173,23 @@ def cmd_say(args):
                 cls="barrier")
         if phase != "SYNTHESIS":
             die("synthesis may only be published in SYNTHESIS phase", cls="barrier")
+    elif wants_private:
+        # T-0230. A declared private write is held to the *private* vocabulary
+        # (`COMMITMENT_KINDS`) in every phase, the way the private log has always
+        # held it — what changed is that a `claim`/`position` may now be written
+        # privately while the public channel is open, which before this was
+        # refused as "only meaningful in CROSS_EXAMINE" even though the private
+        # log is the one place those words mean exactly what they say. This is
+        # the permissive half of the split: the private log is the writer's own
+        # reasoning, and reasoning is allowed to carry a label the public channel
+        # does not accept.
+        if kind_of not in COMMITMENT_KINDS:
+            die(
+                f"REFUSED: '{kind_of}' is not a private-log kind; the private log "
+                f"takes {', '.join(sorted(COMMITMENT_KINDS))}.\n"
+                f"A move of that name is public speech: {', '.join(sorted(CROSS_EXAMINE_KINDS))}.",
+                cls="barrier",
+            )
     else:
         if phase == "CROSS_EXAMINE":
             if kind_of not in CROSS_EXAMINE_KINDS:
@@ -1153,12 +1214,61 @@ def cmd_say(args):
     }
 
     # ---- routing ---------------------------------------------------------
-    # A synthesis is a message *to the channel* even though the channel is in
-    # SYNTHESIS phase. Without this, the phase whose entire purpose is to
-    # publish a map would silently file it where nobody can read it.
-    to_public = kind_of == "synthesis" or phase not in ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
+    # T-0230. What used to stand here, and why it is gone:
+    #
+    #     to_public = kind_of == "synthesis" or phase not in ("SEALED_DIVERGENT",
+    #                                                          "COMMIT", "SYNTHESIS")
+    #
+    # That is a second copy of `PHASE_RULES[phase]["channel_say"]`, spelled as a
+    # list of phase *names*, and the file's rule at :135-139 is that a derived
+    # fact is not written twice because the two copies drift. It had drifted in
+    # the way that matters: it was read as the *destination* of the message,
+    # when the only thing it can honestly answer is whether the public channel is
+    # open. So `aim say --as alpha --channel gated --body "..."` in COMMIT
+    # printed `[private/alpha] note recorded (43 chars)` and exited **0** while
+    # `channels/gated/log.jsonl` was never created at all — a success report for
+    # a message that reached nobody but the writer, and the refusal the card asks
+    # for (`gate(...)` at :866, `REFUSED: … channel_say`) unreachable behind it.
+    #
+    # Measured, AIM_ROOT=/tmp/aim-probe/t0230, channel `gated` in COMMIT
+    # (`channel_say: False, private_say: True`), before this change:
+    #
+    #     $ aim say --as alpha --channel gated --body "a message the public count must account for"
+    #     [private/alpha] note recorded (43 chars)      # exit 0
+    #     $ aim status --channel gated | grep '^log'
+    #     log       0 public messages                   # and no log.jsonl exists
+    #
+    # The destination is now derived from the rule table and from a declared
+    # intent, never from the phase name:
+    #
+    #   * `--public` — the writer asked for the channel, so the public route
+    #     runs and `gate(...)` refuses by name when the channel is closed.
+    #     `--public` therefore *cannot* downgrade: the one thing it must never do
+    #     is report success while the message reached nobody but the writer.
+    #   * `--private` — the writer asked for their own log, which is a real
+    #     capability that phases have (`private_say`), and which `aim say` had
+    #     only by accident: `note` is a member of the *public* vocabulary
+    #     (`COMMITMENT_KINDS`) and landed privately only while the phase happened
+    #     to be closed, so no caller could say "this is for my log" out loud.
+    #     `aim say` is documented as private pre-barrier (`README.md` §6), so this
+    #     is that route made explicit rather than a new one.
+    #   * neither — *only* a kind with no public route is routed privately, and
+    #     only while the public channel is shut. `SAY_PRIVATE_KINDS` is a label
+    #     with exactly one destination, so the destination is not in doubt and
+    #     nothing is downgraded. While the channel *is* open, an unlabelled
+    #     `claim`/`position` goes to the public log and is refused there for its
+    #     kind, because the writer named no destination and this is the clearer
+    #     of the two errors: the words belong to a position-making act, and the
+    #     channel is where positions go.
+    #   * `synthesis` — unchanged and still public even in SYNTHESIS phase, for
+    #     the reason the comment below gives.
+    to_public = (kind_of == "synthesis" or wants_public
+                 or not (wants_private
+                         or (kind_of in SAY_PRIVATE_KINDS and not PHASE_RULES[phase]["channel_say"])))
 
     if not to_public:
+        # A private write is a capability, not a consolation prize, and it is
+        # gated by the rule that owns it — `RESOLVE` and `CLOSED` close it.
         gate(m, who, "private_say")
         p = channel_dir(args.channel) / "private" / f"{who}.jsonl"
         with Lock(channel_dir(args.channel) / ".lock"):
@@ -4381,6 +4491,18 @@ def main():
     p.add_argument("--refs-seal")
     p.add_argument("--echo-ok", action="store_true")
     p.add_argument("--echo-reason", default="")
+    # T-0230. Where the message goes is a decision the writer makes and says out
+    # loud, not one the phase makes for them. Before this, a `note` written in
+    # COMMIT landed in the private log because the phase happened to be closed,
+    # and the command printed that as success with no way to tell it apart from a
+    # delivered message. `--private` is the private log on purpose; `--public`
+    # is the channel on purpose, and it is refused by name when the channel is
+    # closed rather than quietly rerouted; neither means "route by the rule
+    # table" (see cmd_say).
+    p.add_argument("--private", action="store_true",
+                   help="write to your own private log (private_say), not the channel")
+    p.add_argument("--public", action="store_true",
+                   help="write to the channel; refused by name if channel_say is False")
 
     p = add("seal", cmd_seal)
     p.add_argument("--as", dest="actor", required=True)

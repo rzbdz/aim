@@ -152,7 +152,7 @@ def main():
         check("--body-file sends a file whose content is the path",
               rc == 0 and str(body) + "\n" in newest_bodies(outbox), out + err)
 
-        rc, out, err = run(root, ["say", "--as", "alpha", "--channel", "ch", "--body", "yes"])
+        rc, out, err = run(root, ["say", "--as", "alpha", "--channel", "ch", "--private", "--body", "yes"])
         check("a bare token that is not a file is untouched", rc == 0, out + err)
 
         print(f"\n{passed} passed, {failed} failed")
