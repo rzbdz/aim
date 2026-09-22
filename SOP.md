@@ -432,6 +432,8 @@ a `file:line`.
 | 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns 70 drafts the board withholds from the same caller** | `aimboard/a2a.py:797` **[V]** |
 | 13 | the seal hides a participant's reasoning from everyone but the synthesizer | **any self-declared `human` can read the mixed bundle — including one who never sealed and is not a participant** | `bin/aim:1610` **[V]** |
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
+| 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
+| 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -504,6 +506,45 @@ and `bin/aim` take the union (owner **or** creator), `gate.py` takes owner only.
 This is the document stating its own rule and then the code having three owners
 of the rule it names. It is the cleanest instance of the pattern in Part IV,
 because the rule being broken is *the rule about rules*.
+
+## 4.5 Row 16: a missing flag silently becomes an identity [V]
+
+`AGENTS.md:9` gives the board command verbatim, and it includes the flag:
+
+    aimboard serve --port 8777 --refresh 0 --allow-write --as human
+
+Drop the `--as` — natural, when you *are* the human and it looks redundant — and
+`_writer()` (`aimboard/cli.py:495-505`) falls back:
+
+    return args.viewer or (load_fabric(root, [], <today>)["channels"][0]["leader"])
+
+`["channels"][0]` is `sorted(...)[0]` (`aimboard/fabric.py:117`), so it is the
+**first channel by name**, and its `leader` is whatever that manifest says.
+Measured on a throwaway root with two channels and a board started with
+`--allow-write` and **no** `--as`:
+
+    write = {"enabled": true, "as": "otherhuman"}
+    channels, in fold order:
+        a-scratch -> leader otherhuman
+        z-prod    -> leader human
+
+The board announced it would write as `otherhuman` — which is `--kind human`,
+self-declared, i.e. row 11. **The write identity is chosen by the alphabet, and
+the alphabet's channel is trusted because its leader typed `human`.**
+
+The property the docstring claims still holds — *"a caller who wants a different
+one starts a different server"*, and measured: `cli.py:711-721` drops any client
+`--as` and appends the server's own, so no request can set it. What does not hold
+is the implied *"the server was started **as** someone"*: started with no `--as`
+it was started as nobody, and the fallback picks a leader out of a sorted dict.
+**A missing flag becomes an identity instead of an error** — the same shape as
+`bin/aim:35`, where `AIM_ROOT` unset means the *live* checkout rather than a
+refusal. The live board on 8777 was started with `--as claude-session1`, so it
+never reaches this path; this was measured on a root built to reach it.
+
+Cheap remedies, both codex's lane: `--allow-write` requires `--as` (a write
+posture with no identity has no meaning), or the fallback is the empty string and
+the dashboard offers no write control until an identity is named.
 
 ---
 
