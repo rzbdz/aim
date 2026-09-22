@@ -449,6 +449,7 @@ a `file:line`.
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
 | 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
+| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **the file holds 352 rows; 276 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 31 `push` rows carry a class that is not in the vocabulary** — see §4.6 | measured **[V]**, §4.6 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -622,6 +623,76 @@ Cheap remedies, both codex's lane: `--allow-write` requires `--as` (a write
 posture with no identity has no meaning), or the fallback is the empty string and
 the dashboard offers no write control until an identity is named.
 
+## 4.6 Row 17: the ledger is counted by `class`, and `class` is not a refusal field [V]
+
+README §3 states the vocabulary in the present tense, twice:
+
+> `class` is `barrier`\|`form`\|`unrecorded` (`_record_refusal` in `bin/aim`)
+
+> a refusal ledger — intent, not just outcome | `channels/<ch>/ledger.jsonl`
+
+`aimboard/api.py:231` repeats it as the machine's answer — `refusal_classes()`
+returns exactly those three and is published as `refusal_classes` at `:490`,
+which `web/src/panes/HelpPane.vue:344` renders as **the** token table.
+
+Measured over every `channels/*/ledger.jsonl` in the live tree:
+
+| | rows | |
+|---|---|---|
+| all ledger rows | **352** | |
+| `event == "refusal"` | **276** | `barrier` 148 · `form` 126 · `unrecorded` 2 |
+| not a refusal, **carrying a refusal class** | **36** | `task_published_during_divergence` 35 + `channel_member_added` 1 |
+| carrying `class: "record"` — **not in the vocabulary** | **31** | every `event: "push"` |
+| carrying no `class` at all | 9 | 6 `seal`, 3 `phase`, written before the field existed |
+
+So `class` is not what makes a row a refusal, and a reader who counts either one
+for the other is off by a figure that looks like a measurement. Over the whole
+tree: `grep -c '"class": "barrier"'` returns **184**, and the refusals *of that
+class* number **148** — 36 rows apart. Count every class-bearing row as a refusal
+and the total is 343 against the true 276 — 67 rows apart. Both numbers are the
+kind that gets quoted without a second look.
+
+**The 36 rows are not noise. They are the mechanism README §3 asks for.** The
+comment above the writer (`bin/aim:2373-2381`) says so outright:
+
+> Publishing during a divergence phase is the one deliberate act that exposes a
+> work item to a peer while the barrier is supposed to be closed … a leak is not
+> a refusal, and it is not a `task.published` line, it is its own event class.
+
+So the tool invented a row that is *shaped like a refusal* so the ledger could
+answer "did anyone lean on the barrier", and gave it the barrier class on
+purpose. The cost is that the class no longer means one thing: `class: barrier`
+today covers *a request the phase refused* (148) and *an act the phase permitted
+that you then performed while shut* (35) — opposite verdicts under one token.
+
+**And the pane that exists to show them can never show them.** `BarrierPane.vue`
+draws its table from `channel.refusals`, which the board fills at
+`aimboard/api.py:372` out of `ch["refusals"]`, which is `fabric.py:265` —
+`[r for r in ledger if r.get("event") == "refusal"]`. The 35 divergent
+publications are in the ledger, carry `class: barrier`, and are filtered out
+one layer below the pane. Measured on `hello`, the channel where all of this
+lives:
+
+| rows in `channels/hello/ledger.jsonl` | 342 | |
+|---|---|---|
+| `class: barrier` | **183** | caught by `grep` |
+| `event: refusal` | **271** | what the pane receives |
+| both — the refusals a reader calls `barrier` | **147** | neither of the above |
+
+The pane's own filter (`:300-308`, a `v-if` over `row.class !==
+filters.refusalClass`) is correct and keys on a token that, for the rows it can
+see, is. The 36 rows it cannot see are the ones the surrounding README section
+says the pane is for.
+
+The remedy is not a rename for its own sake. A `class` a reader counts by has to
+be the class of exactly one kind of event, which is what §4.4's rule — one rule,
+one owner — asks of every other object here. Either the divergent publication
+gets its own class token, or `refusal_classes()` grows a fourth entry and the
+pane's loader stops being `event == "refusal"`. Until one of those lands, the
+sharper statement of README's sentence is: **`ledger.jsonl` is an event ledger;
+`class` is a field 343 of its 352 rows carry, and the word for a row whose class
+is `barrier` is not "refusal".**
+
 ---
 
 # Part IV-b — The objects, and what owns each
@@ -651,12 +722,12 @@ Measured live, one line of evidence for the "read by nothing" rows: all five
 channels return `kind` and `state` nowhere in the payload, and
 `grep -rn "CLAIM:\|RELEASED:"` over `bin/aim aimboard/ web/src/` is empty.
 
-**Sixteen rows, one shape: a rule that reads as enforced and is only written
+**Seventeen rows, one shape: a rule that reads as enforced and is only written
 down.** That is the same failure the barrier was built to catch, one level up —
 and it is the reason the SOP has to carry the three marks rather than a list of
-steps. Rows 11–14 were added after the first draft, 15–16 after the second; rows
-1–10 are unchanged since the first, and every one of the sixteen now carries a
-command in its evidence cell.
+steps. Rows 11–14 were added after the first draft, 15–16 after the second, 17
+after the third; rows 1–10 are unchanged since the first, and every one of the
+seventeen now carries a command in its evidence cell.
 
 **One corollary, measured:** the two ends of the identity chain are not recorded
 the same. A refused `advance` writes a ledger row naming the actor **and the
@@ -814,14 +885,14 @@ not in the machine.
 **Row 11 is the master key.** The others are separate failures of separate
 mechanisms; that one is a single condition — `kind == "human"`, declared by the
 agent it describes — spelled at every gate in the tool and in the board. Fixing
-it first is not a preference: it is what makes the other fifteen measurable,
+it first is not a preference: it is what makes the other sixteen measurable,
 because until it lands, any measurement of "who could reach this" has an actor
 who can reach everything and left no refusal row while doing it.
 
 **The single highest-value fix after that is not a feature: it is to make the
 three marks the contract.** Every step in Parts I and II already carries one.
 Where a step reads **PROSE** and the leader believes it is **ENFORCED**, that is
-the defect — and there are sixteen of them above, each with a line number and a
+the defect — and there are seventeen of them above, each with a line number and a
 command you can re-run.
 
 **What has to be decided before an end-of-life SOP can be written:** who, or what
