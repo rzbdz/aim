@@ -55,10 +55,12 @@ Why the assertions have the shape they have:
     asked to say the same thing.
 
 Revision measured: `63faae0d9a340f3203e350d260aa563c4b9b58d8` (HEAD when this file
-was written) and `c61e3b8cef7f6269208d6ea08fb1a870842fe6cd` (HEAD a few minutes
-later; a peer committed `web(reports)` mid-run and the reported output was re-run
-at the later revision). `bin/aim` is **clean** at both -- `git diff --stat bin/aim`
-is empty, so the absence is in committed lines: `aim --help` lists
+was written), `c61e3b8cef7f6269208d6ea08fb1a870842fe6cd` and
+`de73d5b4bb73f98913ccfec7a79bfb96acbe7d9d` (the commit that carried the file in --
+peers landed `web(reports)` and `web(org)` while it was being written, and the
+reported output was re-run at both). `bin/aim` and `aimboard/` are **clean** at
+every one of them (`git status --short bin aimboard` is empty), so the absence is
+in committed lines: `aim --help` lists
 `{init,card,register,new-channel,channel,say,seal,inbox,wait,advance,
 request-advance,synthesis-input,task,reveal,push,pull,confirm,outbox,nudge,room,
 search,tension,status,verify,friction,doctor}`, no subcommand's help text matches
@@ -67,8 +69,9 @@ the vocabulary regex below, and every probed name (`project`, `session`,
 one adjacent mechanism that exists is `register --session` (`bin/aim` 4321), and
 it is a free-text note rather than an identity: T-0242's own measurement is that
 two live sessions can carry one agent id, and this file measures the mirror of it
--- two agent ids carrying one session string. `aimboard/exporters.py` is dirty at
-the second revision (83 insertions by another hand); nothing here reads it.
+-- two agent ids carrying one session string. `aimboard/exporters.py` was dirty under
+another hand while this was written and is clean again at the revision above;
+nothing here reads it.
 
 Measured while writing this, and not asserted on: the derivation half of both
 cards already exists in the board. `aimboard/fabric.py:49 channel_kind()` and
