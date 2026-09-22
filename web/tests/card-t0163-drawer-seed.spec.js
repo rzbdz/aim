@@ -56,9 +56,59 @@
  *    in the panel does that without closing the drawer -- and closing/reopening
  *    are both supposed to clear them.
  *
- * VERDICT: FAIL on acceptance 1 and 3, PASS on 2. Both failing tests carry
- * Playwright's `test.fail()` with the measurement written beside them, so the run
- * is green and the defect is on the record rather than hidden.
+ * ---------------------------------------------------------------------------
+ * VERDICT, re-measured 2026-09-22T11:36Z against bundle 59b99a9+dirty (built
+ * 11:36:51Z, `/api/revision` stale false) and three times before it: all three
+ * tests pass, with no annotation left in the file. The revisions and the two
+ * defects named in the 11:07Z/11:12Z read below are kept as history, because
+ * what they record is *why* each marker came off.
+ *
+ * 1. Acceptance 1 passes, and the marker at this test's head came off for the
+ *    reason the JSON reporter gives for any annotated test whose body now
+ *    passes: `expectedStatus: 'passed'`, `status: 'passed'` -- "Expected to fail,
+ *    but passed". The drawer writes the whole seed; the argv it POSTs carries
+ *    `--estimate 5 --tag alpha --tag beta --blocked-by T-0001`, and this file's
+ *    own oracle (`recordThroughCli`, replayed against the real `bin/aim` in a
+ *    throwaway AIM_ROOT) returns `estimate_pts 5, tags [alpha, beta],
+ *    blocked_by [T-0001]` with no `--flag` of the `wanted` table unaccounted for.
+ *    The marker was measured against `870b282+dirty`, where `recordArgv()` sent
+ *    no `--estimate`, `--tag` or `--blocked-by`; that is the defect it named, and
+ *    `TaskDecisionDrawer.vue` no longer has it. No assertion here was touched.
+ *
+ * 2. Acceptance 2 passes. It failed for two reasons that were both real and are
+ *    both gone:
+ *
+ *    a. The board could not move at all. The Items pager's jump box is
+ *       `<input type="number" aria-label="Page">`, `stores/board.js` counted
+ *       'number' among the types that hold something a person typed, and that box
+ *       is never empty -- so `readingInterrupt()` answered "a field has unsent
+ *       text" for as long as the page was open and `update()` refused every
+ *       refresh the digest asked for. Measured then: one `/api/state` fetch
+ *       (`card-t0163-a`), none after the digest moved to `card-t0163-b`. Fixed in
+ *       `2285af0`: the field rule asks whether a keystroke ever produced an
+ *       `input`/`change` event, and takes the `value` attribute as a second
+ *       signal with a missing attribute no longer read as an empty one.
+ *
+ *    b. "Record this work item" was drawn twice inside one `.aim-action-panel`.
+ *       `TaskDecisionDrawer.vue` was `v-if="!taskRecorded"` on the button, which
+ *       does not break a `v-if` chain, so the `v-else` drew its own branch as well
+ *       whenever `action` was truthy. Measured then on the seed:
+ *       `["Record this work item", "Record this work item" [disabled]]`, so
+ *       `panelButton` was a strict-mode violation and the click never happened.
+ *       The three controls are one `<template v-if>` now.
+ *
+ * 3. Acceptance 3 passes. Its first assertion used to be a race rather than a
+ *    fact: `run()` sets `result` and then awaits `board.load()`, and the
+ *    component's reset watcher fired on that reload because it watched a
+ *    freshly-built array -- a new value on every dependency invalidation -- so
+ *    `result` was cleared 31-44ms after it was set. The watcher now watches two
+ *    getters, which compare by value and fire on a real id change or open/close
+ *    and nothing else.
+ *
+ * What this file did not establish, and still does not: whether a pager's jump
+ * box is a field the reader has "typed in" or a number the page wrote itself.
+ * That was the store owner's call and it was made in `2285af0`, on the evidence
+ * in the comment there.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -222,22 +272,21 @@ function flagsOf(argv) {
 
 test.describe('T-0163: the drawer records the whole seed and carries nothing over', () => {
   test('recording a seed carries title, owner, status, priority, milestone, accept, dates, estimate, tags and blocked-by', async ({ page }) => {
-    // Measured 2026-09-22 against bundle 870b282+dirty (stale true): the drawer's
-    // `task new` argv is
+    // Measured 2026-09-22, re-measured 11:36Z against bundle 59b99a9+dirty
+    // (built 11:36:51Z, /api/revision stale false): the drawer's `task new` argv is
     //   ["task","new","--channel","hello","--title","…","--owner","human",
     //    "--status","ready","--priority","high","--milestone","M0","--accept","…",
-    //    "--due","2026-09-25","--start","2026-09-20"]
-    // -- no --estimate, no --tag, no --blocked-by -- so the recorded work item
-    // loses the 5 points, both tags and its dependency. Recorded as an expected
-    // failure rather than by weakening the assertion.
-    test.fail(true,
-      'T-0163 acceptance 1 FAIL (bundle 870b282+dirty, /api/revision stale true): '
-      + 'TaskDecisionDrawer.vue:recordTask() sends title/owner/status/priority/milestone/'
-      + 'accept/due/start and drops --estimate, --tag and --blocked-by, which '
-      + '`bin/aim task new` accepts (bin/aim:3318-3331). Measured: the argv the drawer '
-      + 'POSTed, replayed against the real tool in a throwaway AIM_ROOT, creates a work '
-      + 'item whose estimate_pts is 0, tags [] and blocked_by [], where the plan seed '
-      + 'states 5, [alpha, beta] and [T-0001].')
+    //    "--estimate","5","--start","2026-09-20","--due","2026-09-25",
+    //    "--tag","alpha","--tag","beta","--blocked-by","T-0001"]
+    // -- the whole seed, so acceptance 1 is met and every assertion below passes.
+    //
+    // The `test.fail(true, ...)` that used to sit here was measured against bundle
+    // 870b282+dirty, where `recordArgv()` sent no --estimate, --tag or --blocked-by
+    // and the recorded work item lost 5 points, both tags and its dependency. That
+    // defect is gone, so the marker inverted -- "Expected to fail, but passed" --
+    // and it is removed here. The assertions below are untouched, and nothing was
+    // relaxed to make the run green: the oracle is still the real `bin/aim`, and it
+    // still has to return every field.
     await open(page)
     const argv = await recordFromDrawer(page, SEED.id)
 
@@ -273,13 +322,19 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
   })
 
   test('the open drawer shows the board as it is now, not the object it was opened with', async ({ page }) => {
-    // Carries no `test.fail(true, ...)` because it measured green when the file was
-    // written -- and it is red now, at the assertion that the drawer follows the
-    // *#/api/state* payload a peer's write would move. What this run measured on the
-    // board served from 8777 (bundle built 2026-09-22T10:51Z): the drawer keeps the
-    // task object it was opened with, so a state that renames the dependency never
-    // reaches it. Recorded here as the measurement; unlike the acceptance clauses
-    // above this one is not annotated, so it fails the suite rather than the file.
+    // Carries no `test.fail(true, ...)`: it measured green when the file was
+    // written, and it measures green again now. It spent an afternoon red, and
+    // where it was red is worth recording, because the failure was three layers
+    // away from the drawer this test is about. The store never adopted the new
+    // payload, so `board.tasks` still held the task as it was opened, and
+    // `App.vue:drawerTask` -- which resolves the id out of `board.tasks` exactly
+    // as its comment says -- had nothing newer to resolve. Instrumented
+    // `/api/state` fetches on this fixture at the time: one, for `card-t0163-a`,
+    // and none after the digest moved to `card-t0163-b`; the footer read "held
+    // back because a field has unsent text". That field was the Items pager's own
+    // jump box -- `<input type="number" aria-label="Page">`, never empty -- and
+    // the store's field rule called it the reader's. Fixed in `2285af0`; the
+    // assertion below is what caught it, and it is untouched.
     await open(page)
     let moved = false
     // The payload moves under the drawer the way a peer's write moves it: a new
@@ -306,16 +361,20 @@ test.describe('T-0163: the drawer records the whole seed and carries nothing ove
   })
 
   test('the note and the error/result state do not survive a task change or a close', async ({ page }) => {
-    // Measured 2026-09-22 against bundle 870b282+dirty (stale true): after the
-    // fixture accepts one action and refuses the next, the panel drew the success
-    // alert and the refusal after the selected task changed (the open-blocker link
-    // moves the drawer to T-0012 without closing it), and the note typed for
-    // T-0011 was still in the textarea after the drawer was closed and reopened on
-    // the same row. That is history: on the bundle built 2026-09-22T10:44Z this
-    // test runs "Expected to fail, but passed", so its `test.fail(true, ...)` is
-    // gone and the assertions below are untouched. The other clause in this file
-    // (acceptance 1, the argv the drawer records) still fails for real and keeps
-    // its marker.
+    // Re-measured 2026-09-22T11:36Z against bundle 59b99a9+dirty (built 11:36:51Z,
+    // /api/revision stale false): green, five runs in a row. The reset itself holds
+    // -- on the bundle built 10:44Z this test ran "Expected to fail, but passed",
+    // so its `test.fail(true, ...)` came off, and the assertions below are
+    // untouched. It was red in between, and not at a note that stayed where it was:
+    // the first assertion was a race, because `run()` sets `result` and then awaits
+    // `board.load()`, and the component's reset watcher (TaskDecisionDrawer.vue:
+    // 36-41) watched a freshly-built array -- a new value on every dependency
+    // invalidation -- so it fired on that reload and cleared `result` a few tens of
+    // milliseconds after setting it. Measured in the page with 252 samples 10ms
+    // apart from the click: `.el-alert--success` on screen in exactly two of them.
+    // The watcher watches two getters now, which compare by value and fire on a
+    // real id change or open/close and nothing else. No assertion here was touched
+    // to make either outcome pass.
     await open(page)
     const panel = await drawerOf(page, REVIEW.id)
 

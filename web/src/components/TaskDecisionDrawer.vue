@@ -32,8 +32,15 @@ const decisionNote = ref('')
  * against the previous item is still in the box. Clearing on the id the note was
  * typed against -- and on open and close, because a drawer reopened on the same
  * item is a new reading of it -- is the whole rule.
+ *
+ * The sources are two getters, not one getter building an array: a freshly built
+ * array is a changed value on every re-evaluation, so the single-getter form ran
+ * on anything that invalidated its dependencies -- every `board.load()` included,
+ * which replaces `board.tasks` and re-resolves this drawer's `:task`. That is what
+ * wiped `result` immediately after `run()` set it. Two getters compare by value,
+ * so this fires on an id change and on open/close, and nothing else.
  */
-watch(() => [props.task?.id, props.modelValue], () => {
+watch([() => props.task?.id, () => props.modelValue], () => {
   decisionNote.value = ''
   error.value = ''
   result.value = ''
@@ -344,17 +351,23 @@ async function decide(decision) {
                   title="This is a plan seed, not recorded work"
                   description="Nothing has happened to it: it has no events and no owner on the record. Record it to give it a card, or leave it as a promise." />
 
-        <el-button v-if="!taskRecorded" type="primary" :disabled="!board.canWrite"
-                   :loading="busy === 'record'"
-                   :title="recordArgv().join(' ')" @click="recordTask">
-          Record this work item
-        </el-button>
-        <p v-if="!taskRecorded" class="aim-action-detail">{{ action.detail }}</p>
-        <el-alert v-if="!taskRecorded && recordedAs" type="warning" :closable="false" show-icon
-                  :title="`Already recorded as ${recordedAs}`"
-                  description="Record is refused; the existing card is what this promise became." />
+        <!-- One chain, one branch drawn. The record branch is a wrapper because
+             it is three controls with their own conditions, not one: a plain
+             `v-if` on the button did not end the chain, so the `v-else` below
+             still evaluated and the panel drew `Record this work item` twice. -->
+        <template v-if="!taskRecorded">
+          <el-button v-if="!taskRecorded" type="primary" :disabled="!board.canWrite"
+                     :loading="busy === 'record'"
+                     :title="recordArgv().join(' ')" @click="recordTask">
+            Record this work item
+          </el-button>
+          <p v-if="!taskRecorded" class="aim-action-detail">{{ action.detail }}</p>
+          <el-alert v-if="!taskRecorded && recordedAs" type="warning" :closable="false" show-icon
+                    :title="`Already recorded as ${recordedAs}`"
+                    description="Record is refused; the existing card is what this promise became." />
+        </template>
 
-        <template v-else-if="task.status === 'review'">
+        <template v-else-if="taskRecorded && task.status === 'review'">
           <el-input v-model="decisionNote" type="textarea" :rows="2"
                     placeholder="Decision note (required for request changes or reject)" />
           <p class="aim-action-detail">
