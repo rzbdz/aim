@@ -406,7 +406,7 @@
       "id": "T-0026",
       "title": "Conformance: 12 concurrent room writers, one order, no lost message",
       "owner": "claude-session1",
-      "status": "backlog",
+      "status": "done",
       "priority": "high",
       "estimate": 3,
       "start": "2026-09-24",
@@ -420,7 +420,8 @@
         "test",
         "group-chat"
       ],
-      "accept": "message count equals writer count, chain verifies"
+      "accept": "message count equals writer count, chain verifies",
+      "move_reason": "tests/test_room_concurrency.py: 12 concurrent `aim room say` processes against one room, all exit 0; the log holds exactly 12 records, every link's prev equals the previous record's hash, replaying in file order reproduces the chain, and `aim verify` agrees. 10/10 checks, run green"
     },
     {
       "id": "T-0027",

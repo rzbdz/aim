@@ -1,6 +1,6 @@
 {
- "revision": "9a0b0ed+dirty",
- "built_at": "2026-09-22T09:34:56.304Z",
+ "revision": "8e5c0dd+dirty",
+ "built_at": "2026-09-22T09:35:47.849Z",
  "dirty": true,
  "source": "vite build",
  "source_paths": [

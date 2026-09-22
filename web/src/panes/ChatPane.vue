@@ -384,6 +384,27 @@ function watchingForReader() {
     },
   }
 }
+/**
+ * Take the record back up the moment the thing that held it is gone.
+ *
+ * `board.checkDigest` returns early while `deferred` is set, so the store's own
+ * poll cannot see an obstruction clear: today the only way out of a held update
+ * is the reader clicking the banner, which is the click T-0170 removes. The pane
+ * that made the obstruction is the one that knows when it ends, so it asks
+ * again -- the composer's draft emptying (typed away, or sent) and the history
+ * coming back to its top are the two events this pane can see. `update()` and
+ * not `force`, so the decision stays with the store: if a field somewhere else
+ * still holds unsent text, it defers again with its own reason and nothing moves
+ * under the reader.
+ */
+function resumeWhenClear() {
+  if (!board.deferred) return
+  board.update()
+}
+watch(drafting, (text) => { if (!text.trim()) resumeWhenClear() })
+function onHistoryScroll() {
+  if ((historyEl.value?.scrollTop ?? 1) <= 0) resumeWhenClear()
+}
 const messageKinds = computed(() => {
   if (current.value?.group !== 'channel') return []
   return current.value.phase === 'CROSS_EXAMINE'
@@ -402,9 +423,20 @@ watch(messageKinds, (kinds) => {
  * cost the reader the thing they were doing (`readingInterrupt` in the store says
  * the same about a forced refresh). Sending is the one exception, and it is asked
  * for by name at the end of `send()`.
+ *
+ * It fires on the *thread* changing, not on the record changing. A store update
+ * re-evaluates every computed in this pane, and this watcher used to read that as
+ * the reader opening something: a forced update put `.aim-history` back at the
+ * reader's own 200 and this re-anchored it to the newest message one render later
+ * (measured: 200 -> 6154). A key that blinks out for a single render -- an update
+ * whose payload briefly yields no visible thread -- is not a change either, so the
+ * last key anchored is remembered.
  */
-watch(() => current.value?.key, () => {
-  picked.value = current.value?.key || ''
+let anchoredKey = ''
+watch(() => current.value?.key, (key) => {
+  if (!key || key === anchoredKey) return
+  anchoredKey = key
+  picked.value = key
   scrollToAnchor()
 }, { immediate: true })
 /**
@@ -500,6 +532,12 @@ async function sendDirect() {
           </div>
         </template>
         <div class="aim-filterbar aim-thread-filters">
+          <!-- Filter and select controls are data, not prose: nothing here is a
+               draft, so nothing here may hold an update back, and no typing into
+               one is unsent text. That is why neither select is `filterable` --
+               element-plus renders a filtered select's needle into a real text
+               input, and the store's `readingInterrupt` finds unsent text by
+               value, wherever it lives. -->
           <el-select v-model="filters.shape" size="small" placeholder="all threads">
             <el-option value="all" label="all shapes" />
             <el-option value="channel" label="channels" />
@@ -538,13 +576,22 @@ async function sendDirect() {
                      without one: a count where the fabric can count one, and the
                      word where it cannot (a channel has no per-viewer cursor, so
                      its unread count is 0 by construction and a count-only marker
-                     drew nothing for exactly the thread T-0172 was filed about). -->
-                <el-tag v-if="t.unread || threadNeedsMe(t)" class="aim-unread" size="small"
-                        :type="t.unread ? 'danger' : 'warning'" effect="dark"
+                     drew nothing for exactly the thread T-0172 was filed about).
+
+                     And it is drawn for *every* row, because a marker that is
+                     only present when it is bad cannot be told from a marker that
+                     failed to render: silence was the old state on both. A row
+                     waiting on the reader says how much, one they answered says
+                     `clear`, and `clear` is a claim about that thread alone. -->
+                <el-tag class="aim-unread" size="small"
+                        :type="t.unread ? 'danger' : threadNeedsMe(t) ? 'warning' : 'success'"
+                        :effect="t.unread || threadNeedsMe(t) ? 'dark' : 'plain'"
                         :title="t.unread
                           ? `${t.unread} message(s) addressed to ${board.viewer} with no receipt yet`
-                          : `this thread is waiting on ${board.viewer}`">
-                  {{ t.unread || 'needs me' }}
+                          : threadNeedsMe(t)
+                            ? `this thread is waiting on ${board.viewer}`
+                            : `nothing in this thread is waiting on ${board.viewer}`">
+                  {{ t.unread || (threadNeedsMe(t) ? 'needs me' : 'clear') }}
                 </el-tag>
                 <span class="aim-dim" style="font-size:10.5px">{{ (t.msgs.at(-1)?.ts || '').slice(5, 16).replace('T', ' ') }}</span>
               </div>
@@ -568,7 +615,7 @@ async function sendDirect() {
           <el-button size="small" text @click="jumpToEnd"><el-icon><Bottom /></el-icon> newest</el-button>
         </div>
 
-      <div ref="historyEl" class="aim-history">
+      <div ref="historyEl" class="aim-history" @scroll.passive="onHistoryScroll">
         <template v-for="(m, i) in messages" :key="i">
           <div v-if="i === 0 || dayOf(m.ts) !== dayOf(messages[i - 1].ts)" class="aim-daysep">
             {{ dayOf(m.ts) }}
