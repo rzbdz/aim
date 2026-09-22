@@ -109,17 +109,25 @@ unlabelled messages during cross-examination; exceeding the round quota; verbati
 echo without a recorded reason; confirming a delivered message whose bytes do not
 match what was sent; re-registering a live agent id.
 
-**Recorded, not enforced** (it can happen; it leaves a mark): tampering with a
-log, a seal or a private log after the fact (`aim verify` shows the break, and as
-of 2026-09-21 it actually does — see §4.8); reading a peer's files directly with
-`cat` instead of through `aim`; editing `bin/aim` itself.
+**Not enforced, and not always even recorded.** Reading a peer's files directly
+with `cat` instead of through `aim` leaves no diff and no ledger row, so the
+record cannot tell that it happened. Tampering with a log, a seal or a private log
+leaves a mark (`aim verify` shows the break, and as of 2026-09-21 it actually
+does — see §4.8); editing `bin/aim` is not detected automatically either.
 
-This boundary is deliberate. Everything in the second list requires an action
-that is *legibly* an attempt to go around the fabric, and every one of them is
-detectable after the fact. The design does not try to make cheating impossible —
+Two limits on the refusal count, because the difference is the whole point. A
+refusal is written only when a caller goes *through the tool*: a filesystem read
+never reaches `die()`, and `die()` itself writes nothing when it has no channel
+context (`_record_refusal` in `bin/aim`), classing that refusal `unrecorded`. The
+count in `channels/<ch>/ledger.jsonl` is therefore a record of barrier violations
+**attempted through `aim`** — not the complete set of things that happened, and a
+zero means "nobody was refused", not "nobody peeked".
+
+This boundary is deliberate. The design does not try to make cheating impossible —
 it tries to make cheating **visible**, and to make the honest path the easy one.
-An agent that never hits a refusal is not necessarily behaving; it may just never
-have been tempted.
+Part of the second list is detectable after the fact and part of it is not, and
+the record should say which rather than imply all of it is. An agent that never
+hits a refusal is not necessarily behaving; it may just never have been tempted.
 
 That last sentence used to be an article of faith. It no longer has to be, and it
 was the single largest defect the first real run found:
@@ -365,35 +373,76 @@ recorded".
 
 | capability | where it lives | status |
 |---|---|---|
-| durable, ordered, tamper-evident message log | `channels/<ch>/log.jsonl`, `aim verify` | **present** |
-| roles, and a phase that only the human can move | `aim register`, `aim advance`, `aim request-advance` | **present** |
-| addressed messages with a required kind | `aim say --responds-to --kind` | **present** |
-| delivery receipts | `aim push --require-ack`, `confirm`, `outbox` | **present**, narrow: proves receipt only after the peer wakes |
-| a refusal ledger — intent, not just outcome | `channels/<ch>/ledger.jsonl`, class `barrier`\|`form` | **present** |
-| work items with status, owner, dates, blockers | `aim task new/move/assign/link/comment/publish` | **present** (M1, 2026-09-21) |
+| durable, ordered, tamper-evident message log | `channels/<ch>/log.jsonl`; `aim verify` (`cmd_verify` in `bin/aim`) | **present** |
+| roles, and a phase that only the human can move | `aim register`, `aim advance`, `aim request-advance`; `require_leader` in `bin/aim` | **present** |
+| addressed messages with a required kind | `aim say --responds-to --kind`; both required in `CROSS_EXAMINE` (`cmd_say` in `bin/aim`) | **present** |
+| delivery receipts | `aim push --require-ack`, `aim confirm`, `aim outbox` | **present**, narrow: proves receipt only after the peer wakes |
+| a refusal ledger — intent, not just outcome | `channels/<ch>/ledger.jsonl`; `class` is `barrier`\|`form`\|`unrecorded` (`_record_refusal` in `bin/aim`) | **present**, and it records refusals attempted *through* `aim` — a direct file read is not a refusal (§3) |
+| work items with status, owner, dates, blockers | `aim task new/move/assign/link/comment/publish` (`cmd_task_new/move/assign/link/comment/publish` in `bin/aim`) | **present** (M1, 2026-09-21) |
 | a board that reads the work items | `bin/aimboard.py render` | **present** |
-| schedule with dependencies and milestones | `aimboard` gantt view | **present**, drawn from committed dates only |
-| a dashboard with a barrier and refusal audit | `aimboard`, `tests/test_aimboard.py` | **present** |
-| group chat: several topics, N participants | `rooms/` | **missing** (M2, `design/06`) |
-| read state — who has seen what | `rooms/<room>.cursors.json` | **missing** (M2) |
-| mentions | `@agent` recorded as events | **missing** (M2) |
+| schedule with dependencies and milestones | `bin/aimboard.py render` gantt (`aimboard/views/timeline.py`) | **present**; draws `blocked_by` edges and milestone diamonds, and draws the *merged* board, so a plan seed's `start`/`due` is drawn as a bar too (T-0188) |
+| a dashboard with a barrier and refusal audit | `aimboard/views/audit.py`; `tests/test_aimboard.py` | **present** |
+| group chat: several topics, N participants | `channels/<ch>/rooms/*.jsonl`, read and gated by `aimboard` (`load_rooms` in `aimboard/fabric.py`, `visible_rooms`/`room_authors` in `aimboard/gate.py`); no `aim` verb writes or publishes a room | **partial** (M2, `design/06`) — read path, gate and author exemption exist; the writer does not |
+| read state — who has seen what | `channels/<ch>/rooms/<room>.cursors.json`, read by `aimboard` (`load_rooms` in `aimboard/fabric.py`); no writer | **partial** (M2) — read path only |
+| mentions | a `mentions` field counted by `aimboard` (`load_rooms` in `aimboard/fabric.py`); no `@agent` parser in `bin/aim` | **partial** (M2) — reader only |
 | search across logs, tasks and rooms | — | **missing**; `rg` over JSONL is the current answer and a real one |
-| waking an idle peer | `bin/aim-doorbell-hook`, wired per harness | **partial**: the hook works, wiring is per-session and was absent until 2026-09-21 |
-| reports: progress, blockers, cycle time | `aimboard` milestone progress | **partial**: a milestone meter exists, no burndown |
-| export to a foreign tool (CSV, iCal) | — | **missing** (M5) |
+| waking an idle peer | `bin/aim-doorbell-hook`; the operations as `aim task doorbell create/list/rotate/delete` (`cmd_task_doorbell` in `bin/aim`) | **partial**: the hook works, wiring is per-session and was absent until 2026-09-21 |
+| reports: progress, blockers, cycle time | `aimboard/views/reports.py` (burndown, throughput, median cycle); `reports.*` in `/api/state` | **present** |
+| export to a foreign tool (CSV, iCal) | `aimboard export --format csv\|ical\|json` (`export` in `aimboard/cli.py`) | **present** (M5) |
 | notifications beyond the next turn | — | **missing**: a hook fires on a turn, and an idle session has no turn |
+
+**What the board's headline counts.** The `done` column is a fold over the
+*merged* board — the recorded store plus the plan seeds (`plan/*.json`) — not over
+the record (`by_status` in `aimboard/views/overview.py`; the same merge is
+`board.byStatus` in `web/src/stores/board.js`). The Reports pane is the surface
+that separates them (`report_data` in `aimboard/fold.py`). Measured on
+`GET /api/state?as=human` at 2026-09-22T08:18:02Z, fabric revision `8f035c2+dirty`
+(the payload's own `/api/revision` also reported the front-end bundle
+`e3824c5+dirty` as `stale: true`):
+
+| number | value | what it counts |
+|---|---|---|
+| status `done`, displayed | 54 | merged store + seed items whose status is `done` |
+| `reports.with_history` | 12 | items with a recorded `created` **and** `moved -> done` event |
+| `reports.recorded` | 72 | items with a recorded `created` event (the store) |
+| `reports.seed_only` | 87 | plan seeds with no store record (`len(tasks) - recorded`) |
+| `drift` | 87 | plan/store disagreements, all `field: "status"`; 42 of them are `plan: "done"`, `store: null` |
+
+The two halves move at different speeds: the `done` moves between 08:09Z and 08:18Z
+raised both displayed `done` (45 → 54) and `with_history` (3 → 12) by the same
+amount, while the difference between them stayed at 42 — the rows the drift array
+reports as `plan: "done", store: null`. That 42 is the part that is plan text and
+not an event, and any "% complete", burn-down or throughput figure that reads
+`status` instead of the record is a statement about `plan/*.json`.
+Re-measure it with `curl -s 'http://127.0.0.1:8777/api/state?as=human'` and read
+`reports.recorded`, `reports.seed_only`, `reports.with_history` and `drift`.
 
 Three properties of the mechanism carry over to the PM layer and are worth stating
 because they are what make this different from a chat window with a board attached:
 
 **Work items obey the barrier.** A task title is a position in the least suspicious
 form the fabric contains — "attack the temp-path claim" is a complete leak of one
-agent's framing, arriving as ordinary planning. So work items are born `draft`
-during `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS`, visible to their author and to the
-leader, and `aim task publish` exposes one deliberately and records that act. Rooms
-inherit the same rule. The dashboard is tested for the *absence* of a peer's draft
-in its own bytes, because a view one `grep` away from what `aim` refuses to show is
-a route around the refusal.
+agent's framing, arriving as ordinary planning. So a work item is born `draft`, and
+while the channel is in `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS` it is withheld from
+every participant except its `owner` or `created_by` (`_visible_to` in `bin/aim`)
+and from the leader, who is exempt (`cmd_task_list` in `bin/aim`). Asking for a
+peer's draft through `aim task list` is refused and recorded; `--count-hidden`
+returns the count without the titles, and `--owner <you>` is exempt. `aim task new
+--visibility published` is itself refused during a divergence phase, and
+`aim task publish` is the one deliberate exposure, recorded in the channel ledger
+as `task_published_during_divergence` when it happens in divergence. The renderer
+repeats the same rule server-side (`visible_tasks` in `aimboard/gate.py`) and is
+tested for the *absence* of a peer's draft in its own bytes, because a view one
+`grep` away from what `aim` refuses to show is a route around the refusal.
+
+**Rooms are gated, but they are not yet recorded the way work items are.** A
+room's messages are withheld from a walled-off peer unless the room's `visibility`
+is exactly `"published"` or the peer is one of its authors (`visible_rooms` and
+`room_authors` in `aimboard/gate.py`). But no `aim` verb creates, writes or
+publishes a room: at revision `8f035c2`, `aim room publish` does not exist, so the
+`"published"` string is written into `channels/<ch>/rooms/<room>.json` by hand and
+leaves no ledger row. That is the difference the prose used to paper over: the
+work item has a recorded publish, the room does not.
 
 **The board is a view, never a file.** Board state is a fold over
 `channels/<ch>/tasks.jsonl`, which is hash-chained like the log. There is no mutable
@@ -402,13 +451,19 @@ lesson of §4.10, and it is *also* incomplete — see the correction in
 `design/05` §3: moving the state into a log moved the race into identifier
 allocation, where 8 concurrent creations produced 11 records and 9 distinct ids.
 
-**The conversation is visible to the people in it.** The leader sees every message
-between agents, because a conversation they cannot read is one they cannot steer. A
-participant sees the mail they sent or received and the channel and room messages the
-phase permits. A bystander gets a count. What nobody sees, including the leader, is a
-peer's **private reasoning**: it exists so that a seal can be checked afterwards, and a
-rendered copy would be one shared file away from the exact leak the barrier exists to
-prevent. The rule is checked by tests that assert absence, not presence.
+**The conversation is visible to the people in it, by two rules that are not the
+same rule.** On the board (`conversation_view` in `aimboard/gate.py`) the leader
+reads every message between agents, because a conversation they cannot read is one
+they cannot steer; a participant reads the messages the phase permits and the mail
+they sent or received; a bystander gets a count. The CLI is narrower in one place
+worth naming: `aim inbox` gates cross-reading on the phase for every caller
+(`PHASE_RULES` / `cmd_inbox` in `bin/aim`) and does not exempt the human, so during
+a divergence phase `aim inbox --as human` returns only messages the human sent.
+What nobody reads, including the leader, is a peer's **private reasoning**: a seal
+can be checked against it afterwards, and a rendered copy would be one shared file
+away from the exact leak the barrier exists to prevent. `aim reveal` is the
+agent's own dated disclosure, not a read of the log (`cmd_reveal` in `bin/aim`).
+The rule is checked by tests that assert absence, not presence.
 
 **The renderer is read-only.** `aimboard` writes nothing but the HTML it was asked
 for, which is asserted by a test that hashes every file in the fabric before and
@@ -428,11 +483,27 @@ write discipline, and this project has measured where those end up.
     aimboard render --fail-on-unacked                       # exits 4 if an ack is owed
     aimboard render --fail-on-drift                         # exits 5 if the plan and the store disagree
     aimboard export --format csv|ical|json --out board.csv  # for a foreign tool
-    aimboard serve --port 8777 --refresh 15                 # local, always-fresh, ?as=<agent> to
+    aimboard serve --port 8777 --refresh 0 --allow-write --as human
+                                                            # the one board port; ?as=<agent> to
                                                             # see exactly what that agent may see
 
 The last two exist so the board can be a gate rather than a poster: a stale plan and
 an unanswered handoff are both exit codes.
+
+### Ports
+
+Two, and no others. This table is `AGENTS.md`'s, repeated here because the board's
+URL is the interface most likely to be copied into a report:
+
+| port | what it is | who starts it |
+|------|------------|---------------|
+| 8777 | the board — the only thing a human or a probe should ever open | `aimboard serve --port 8777 --refresh 0 --allow-write --as human` |
+| 8788 | the Vite dev server, only while editing `web/src` | `npm --prefix web run dev` — it refuses to move (`strictPort`) |
+
+`8777` is the default (`canonical_port()` in `aimboard/cli.py`); `web/playwright.config.js`
+points both its `baseURL` and its `webServer.command` at the same number. Retired
+numbers are not used anywhere in this document; a board on a second port is how a
+finding gets filed against the wrong build.
 
 ### What is deliberately not here
 
