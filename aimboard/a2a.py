@@ -1249,3 +1249,115 @@ def delete_push_config(config_id, request_id, *, configs, task_id=""):
     return error_response("TaskNotFoundError", request_id,
                           action="DeleteTaskPushNotificationConfig",
                           reason="no such push notification configuration")
+
+
+# ---------------------------------------------------------------------------
+# the JSON-RPC surface (T-0122)
+# ---------------------------------------------------------------------------
+# This is the one place that turns a wire method into an aim operation. The HTTP
+# handler in `aimboard/cli.py` stays a thin translation (parse the request, load
+# the fabric, call here, serialise the response) for the same reason every other
+# rule in this module is one-owned: a second implementation of "what GetTask
+# does" is the second-answer-to-one-question failure this project keeps finding.
+#
+# Seven operations have real backing. Four do not -- and the honest first
+# surface answers those four with UnsupportedOperationError rather than faking
+# a result or returning 200 for nothing. A surface that claims the operations it
+# cannot perform is the same lie as §3.4's pushNotifications flag on a fabric
+# with no doorbell: it reads as a capability and is not one. `-32004` is the
+# JSON-RPC code for UnsupportedOperation (design/07), so a client that branches
+# on the code stays correct.
+#
+# The two streaming operations that have no backing are answered with the same
+# error but over `text/event-stream`, because that is the content-type honouring
+# the operation's own contract: a streaming method that answers `application/json`
+# is a method that lied about being streamable, and a client that opened an SSE
+# reader would hang forever on a JSON body it never asked for. One event, one
+# error, and the stream is closed.
+STREAMING = {"SendStreamingMessage", "SubscribeToTask"}
+UNSUPPORTED = {
+    "SendMessage": "no message send surface without a room binding",
+    "SendStreamingMessage": "no streaming transport is bound on this server",
+    "CancelTask": "no task-cancel operation is defined for a planning plate",
+    "SubscribeToTask": "no task subscription without a streaming transport",
+}
+
+
+def handle_rpc(method, params, *, request_id=1, viewer="",
+               tasks=None, channels=None, registry=None, configs=None):
+    """Dispatch one JSON-RPC method to the aim operation it names.
+
+    Returns `(response, mime)` so the HTTP layer can pick the content-type:
+    `application/json` for the nine, `text/event-stream` for the two streaming
+    operations. Everything a caller must not see is decided upstream — the
+    viewer is the server's own identity, and the fabric state was already gated
+    by the server before it reached here. This function never hands a caller
+    something the caller's viewer could not have seen through any other read.
+    """
+    tasks = tasks or {}
+    channels = channels or []
+    registry = registry or {}
+    configs = configs or []
+    CCTV_INVALID = -32602
+    rid = params.get("id") or request_id if isinstance(params, dict) else request_id
+
+    def mime():
+        return "text/event-stream" if method in STREAMING else "application/json"
+
+    if method == "GetTask":
+        return (get_task(params.get("id", ""), rid, tasks=tasks, viewer=viewer,
+                         channels=channels, registry=registry,
+                         history_length=int(params.get("historyLength") or 0),
+                         include_artifacts=bool(params.get("includeArtifacts"))),
+                mime())
+    if method == "ListTasks":
+        return (list_tasks(rid, tasks=tasks, viewer=viewer, channels=channels,
+                           registry=registry,
+                           context_id=str(params.get("contextId") or ""),
+                           page_size=int(params.get("pageSize") or 50),
+                           page_token=str(params.get("pageToken") or ""),
+                           history_length=int(params.get("historyLength") or 0),
+                           include_artifacts=bool(params.get("includeArtifacts"))),
+                mime())
+    if method == "GetExtendedAgentCard":
+        agent = registry.get(viewer) or {}
+        if not agent:
+            return (error_response("TaskNotFoundError", rid, action="GetExtendedAgentCard",
+                                   reason="the caller is not a registered agent"),
+                    mime())
+        return ({"jsonrpc": "2.0", "id": rid,
+                 "result": agent_card(agent, "", description=agent.get("description"))},
+                mime())
+    if method == "CreateTaskPushNotificationConfig":
+        config = dict(params or {})
+        for key in ("taskId", "url", "token"):
+            if key not in config:
+                return ({"jsonrpc": "2.0", "id": rid,
+                         "error": {"code": CCTV_INVALID, "message": "Invalid params",
+                                   "data": [{"@type": "type.googleapis.com/google.rpc.BadRequest",
+                                             "fieldViolations": [{"field": key, "description": "missing"}]}]}},
+                        mime())
+        return (create_push_config(config["taskId"], rid, config=config,
+                                   tasks=tasks, viewer=viewer, channels=channels,
+                                   registry=registry),
+                mime())
+    if method == "GetTaskPushNotificationConfig":
+        return (get_push_config(str(params.get("configId") or ""), rid,
+                                configs=configs,
+                                task_id=str(params.get("taskId") or "")),
+                mime())
+    if method == "ListTaskPushNotificationConfigs":
+        return (list_push_configs(str(params.get("taskId") or ""), rid, configs=configs),
+                mime())
+    if method == "DeleteTaskPushNotificationConfig":
+        return (delete_push_config(str(params.get("configId") or ""), rid,
+                                   configs=configs,
+                                   task_id=str(params.get("taskId") or "")),
+                mime())
+    if method in UNSUPPORTED:
+        return (error_response("UnsupportedOperationError", rid,
+                               action=method, detail=UNSUPPORTED[method]), mime())
+    # Anything else is not an A2A operation at all, so it is the JSON-RPC
+    # standard's own word (Method not found), not one of the nine A2A types.
+    return ({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601,
+            "message": "Method not found", "data": [method]}}, mime())

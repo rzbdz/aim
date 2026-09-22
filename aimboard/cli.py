@@ -211,8 +211,91 @@ def cmd_serve(args):
             allowed = {f"http://{host}", f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
             return any(origin == a or origin.startswith(a + "/") for a in allowed)
 
+        def _public_configs(self):
+            """Flat [(task, config)] of every doorbell config, for the push ops.
+
+            The module's push operations take a flat list of (task, config)
+            pairs, which is the shape a foreign client implies (a config is
+            addressed by task). Folding `push.jsonl` here, next to the fabric
+            load, keeps the one place that knows the wire. A config whose record
+            was superseded by a later append is dropped the same way the module's
+            own read would drop it (newest state per config id).
+            """
+            from json import loads as _loads
+            live = {}
+            if (root / "channels").is_dir():
+                for path in sorted((root / "channels").glob("*/push.jsonl")):
+                    try:
+                        recs = [_loads(l) for l in path.read_text().splitlines() if l.strip()]
+                    except (OSError, ValueError):
+                        continue
+                    for r in recs:
+                        if r.get("event") == "deleted":
+                            live.pop((r.get("task"), r.get("configId")), None)
+                            continue
+                        if r.get("event") == "doorbell_created":
+                            live[(r.get("task"), r.get("configId"))] = r
+            return [(task, c) for (task, _cid), c in live.items()]
+
+        def _rpc_POST(self):
+            """Serve the A2A JSON-RPC surface at /rpc (T-0122)."""
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._send(json.dumps({"jsonrpc": "2.0", "id": None,
+                                       "error": {"code": -32700, "message": "Parse error"}}),
+                           "application/json; charset=utf-8")
+                return
+            method = req.get("method") or ""
+            params = req.get("params") or {}
+            try:
+                sys.path.insert(0, str(aim_bin.resolve().parent.parent))
+                from aimboard.a2a import handle_rpc
+            except Exception as exc:
+                self._send(json.dumps({"jsonrpc": "2.0",
+                                       "id": req.get("id"),
+                                       "error": {"code": -32004, "message": f"Unsupported operation: {exc}"}}),
+                           "application/json; charset=utf-8")
+                return
+            state = self._state()
+            response, mime = handle_rpc(
+                method, dict(params) if isinstance(params, dict) else {},
+                request_id=req.get("id", 1),
+                viewer=self._viewer(),
+                tasks=state.get("tasks", {}),
+                channels=state.get("channels", []),
+                registry=state.get("registry", {}),
+                configs=self._public_configs(),
+            )
+            if mime == "text/event-stream":
+                # One honest event, then close: the stream contract is honoured
+                # by its content-type, and a client that opened an SSE reader
+                # gets the error as the event it expects, not a JSON body it
+                # would hang on forever.
+                body = f"data: {json.dumps(response, ensure_ascii=False)}\n\n"
+                header = "text/event-stream; charset=utf-8"
+            else:
+                body = json.dumps(response, ensure_ascii=False)
+                header = "application/json; charset=utf-8"
+            self._send(body, header)
+
         def do_POST(self):
             path = (self.path or "/").split("?")[0]
+            # The A2A JSON-RPC surface (T-0122). Seven operations route to their
+            # real backing functions; the four that have none answer honestly
+            # with UnsupportedOperationError. The viewer is the server's own
+            # identity, never a field in the request, which is the same rule
+            # /api/command and mcp.py keep: a caller that could name its own
+            # author could forge one. Note the allow-write gate deliberately does
+            # NOT apply here — A2A callers are the fabric's peers, not the
+            # dashboard browser, and §3.4 makes `pushNotifications` only
+            # meaningful if CreateTaskPushNotificationConfig can actually be
+            # called. This is the one judgement in the surface; it is stated in
+            # design/07 and re-evaluated there.
+            if path == "/rpc":
+                self._rpc_POST()
+                return
             if path != "/api/command":
                 self.send_error(404)
                 return

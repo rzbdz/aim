@@ -668,6 +668,52 @@ def main():
                       and (response["content_type"].startswith("text/event-stream") if stream
                            else response["content_type"].startswith("application/json")),
                       f"got HTTP {response['status']} {response['content_type']}")
+            # The surface is honest, not merely present (T-0122). A method with
+            # no backing verb answers `-32004 UnsupportedOperation`, which is
+            # what a capability that does not exist must say (§3.4's argument
+            # for pushNotifications applies to the whole surface: a route that
+            # returns 200 with a fake result is the same lie one level down).
+            unsupported = [("SendMessage", {"message": {}}),
+                           ("CancelTask", {"id": "T-0001"}),
+                           ("SubscribeToTask", {"id": "T-0001"})]
+            for method, params in unsupported:
+                resp = post_rpc(url, method, params)
+                body = resp.get("body", "")
+                # Streaming ops answer inside an SSE event: a `data: ...\n\n`
+                # envelope whose JSON body is the JSON-RPC response. The content
+                # type is honoured, not the wire shape, so a client gets the
+                # same {jsonrpc, id, error} object either way.
+                if resp.get("content_type", "").startswith("text/event-stream"):
+                    body = body.split("data: ", 1)[-1].splitlines()[0]
+                try:
+                    doc = json.loads(body)
+                except (ValueError, TypeError):
+                    doc = {}
+                check(f"{method} is an honest UnsupportedOperation, not a fake result",
+                      doc.get("error", {}).get("code") == -32004,
+                      f"expected -32004, got {body[:160]!r}")
+            # And a task nobody can see is withheld through the wire, the same
+            # way it is withheld through every other read: D17's no-count rule
+            # is a property of the folded model, and a new surface that reuses
+            # it must not be the one place a foreign caller learns a task
+            # exists. GetExtendedAgentCard is the viewer's own identity, so it
+            # is the positive control that the wire is actually talking.
+            body = post_rpc(url, "GetTask", {"id": "T-0001", "historyLength": 10}).get("body", "")
+            try:
+                doc = json.loads(body)
+            except (ValueError, TypeError):
+                doc = {}
+            check("a task the caller cannot see is withheld on /rpc, with no count",
+                  doc.get("error", {}).get("code") == -32001,
+                  f"expected -32001 TaskNotFound, got {body[:160]!r}")
+            body = post_rpc(url, "GetExtendedAgentCard", {}).get("body", "")
+            try:
+                doc = json.loads(body)
+            except (ValueError, TypeError):
+                doc = {}
+            check("GetExtendedAgentCard answers with the viewer's own card",
+                  bool((doc.get("result") or {}).get("name")),
+                  f"expected a card, got {body[:160]!r}")
     finally:
         if proc:
             proc.terminate()
