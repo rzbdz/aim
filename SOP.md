@@ -575,11 +575,12 @@ Measured live, one line of evidence for the "read by nothing" rows: all five
 channels return `kind` and `state` nowhere in the payload, and
 `grep -rn "CLAIM:\|RELEASED:"` over `bin/aim aimboard/ web/src/` is empty.
 
-**Fourteen rows, one shape: a rule that reads as enforced and is only written
+**Sixteen rows, one shape: a rule that reads as enforced and is only written
 down.** That is the same failure the barrier was built to catch, one level up —
 and it is the reason the SOP has to carry the three marks rather than a list of
-steps. Rows 11–14 were added after the first draft; rows 1–10 are unchanged, and
-every one of the fourteen now carries a command in its evidence cell.
+steps. Rows 11–14 were added after the first draft, 15–16 after the second; rows
+1–10 are unchanged since the first, and every one of the sixteen now carries a
+command in its evidence cell.
 
 **One corollary, measured:** the two ends of the identity chain are not recorded
 the same. A refused `advance` writes a ledger row naming the actor **and the
@@ -737,14 +738,14 @@ not in the machine.
 **Row 11 is the master key.** The others are separate failures of separate
 mechanisms; that one is a single condition — `kind == "human"`, declared by the
 agent it describes — spelled at every gate in the tool and in the board. Fixing
-it first is not a preference: it is what makes the other thirteen measurable,
+it first is not a preference: it is what makes the other fifteen measurable,
 because until it lands, any measurement of "who could reach this" has an actor
 who can reach everything and left no refusal row while doing it.
 
 **The single highest-value fix after that is not a feature: it is to make the
 three marks the contract.** Every step in Parts I and II already carries one.
 Where a step reads **PROSE** and the leader believes it is **ENFORCED**, that is
-the defect — and there are fourteen of them above, each with a line number and a
+the defect — and there are sixteen of them above, each with a line number and a
 command you can re-run.
 
 **What has to be decided before an end-of-life SOP can be written:** who, or what
