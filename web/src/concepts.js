@@ -318,3 +318,61 @@ export const ID_PREFIXES = [
       + 'without one is a worry, not a tracked thing.',
   },
 ]
+
+/**
+ * What a phase lets a *participant* do. Copied from `PHASE_RULES` in `bin/aim`,
+ * which is the authority: the tool refuses on these flags, and this table exists
+ * so a reader can see the shape without reading the tool. If the two ever
+ * disagree, the tool is right.
+ *
+ * The first three rows are identical. That is not a mistake, and it is why
+ * "why am I being asked to approve this?" is a fair question — see TRANSITIONS.
+ */
+export const PHASE_ACCESS = [
+  { key: 'SEALED_DIVERGENT', read: false, say: false, private: true },
+  { key: 'COMMIT', read: false, say: false, private: true },
+  { key: 'SYNTHESIS', read: false, say: false, private: true },
+  { key: 'CROSS_EXAMINE', read: true, say: true, private: true },
+  { key: 'RESOLVE', read: true, say: false, private: false },
+  { key: 'CLOSED', read: true, say: false, private: false },
+]
+
+/**
+ * Every edge in the phase machine, and what crossing it actually changes.
+ *
+ * `unlocks` is the honest answer, and for three of the seven edges it is
+ * "nothing": the phase changes and no permission does. Only
+ * SYNTHESIS -> CROSS_EXAMINE opens reading, which is the moment the positions
+ * stop being independent — which is why the leader, and not a participant,
+ * holds every edge.
+ */
+export const TRANSITIONS = [
+  {
+    from: 'SEALED_DIVERGENT', to: 'COMMIT', unlocks: 'nothing',
+    why: 'Both participants have written their positions down. The record becomes formal; nobody gains a permission.',
+  },
+  {
+    from: 'COMMIT', to: 'SYNTHESIS', unlocks: 'nothing',
+    why: 'A synthesizer may be named and a map drawn from the committed claims. Participants still cannot read each other.',
+  },
+  {
+    from: 'SYNTHESIS', to: 'CROSS_EXAMINE', unlocks: 'reading each other, and speaking publicly',
+    why: 'The one edge that ends independence. Everything the barrier protects is protected until this moment, which is why a person holds it.',
+  },
+  {
+    from: 'CROSS_EXAMINE', to: 'SYNTHESIS', unlocks: 'closes reading again',
+    why: 'A channel can go back and re-seal, so a round can be restarted rather than argued through.',
+  },
+  {
+    from: 'CROSS_EXAMINE', to: 'RESOLVE', unlocks: 'closes the argument',
+    why: 'The leader weighs the positions as recorded and writes the decision the channel carries forward.',
+  },
+  {
+    from: 'RESOLVE', to: 'CLOSED', unlocks: 'nothing new — it is final',
+    why: 'Everything stays readable and hash-chained; nothing further is added. A reopened question is a new channel, and the closed one stays as evidence.',
+  },
+  {
+    from: 'RESOLVE', to: 'CROSS_EXAMINE', unlocks: 'reopens the argument',
+    why: 'A decision that will not hold is sent back rather than quietly patched.',
+  },
+]

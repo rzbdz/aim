@@ -13,7 +13,8 @@
  * broken, so add to this page rather than renaming what is here.
  */
 import { computed } from 'vue'
-import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASES, phaseAnchor } from '../concepts'
+import PhaseChip from '../components/PhaseChip.vue'
+import { GLOSSARY, CONCEPTS, ID_PREFIXES, PHASE_ACCESS, PHASES, TRANSITIONS, phaseAnchor } from '../concepts'
 import { useBoard } from '../stores/board'
 
 const board = useBoard()
@@ -93,6 +94,69 @@ const identifierRows = computed(() =>
           </tr>
         </tbody>
       </table>
+    </el-card>
+
+    <el-card shadow="never" style="margin-bottom:14px">
+      <template #header><span>The state machine — how a channel moves, and who may move it</span></template>
+      <p class="aim-dim" style="font-size:12.5px;margin-top:0">
+        Phase transitions are <strong>leader-only</strong> — every one of them, not just the
+        important ones. <code class="aim-mono">bin/aim</code> checks this before it looks at the
+        target phase, so a participant cannot advance a channel at all. What a participant can do
+        is ask: <code class="aim-mono">aim request-advance</code> records the request in the log
+        and prints <em>awaiting &lt;leader&gt;</em>. Those requests are what the Leader decisions
+        card on Attention is a queue of.
+      </p>
+
+      <h4 style="margin:16px 0 6px;font-size:12.5px">What each phase lets a participant do</h4>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:190px">phase</th>
+            <th style="width:150px">may read each other</th>
+            <th style="width:150px">may speak on the channel</th>
+            <th>may write privately to the leader</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in PHASE_ACCESS" :key="row.key" :id="'access-' + phaseAnchor(row.key)">
+            <td><PhaseChip :phase="row.key" link /></td>
+            <td :class="row.read ? '' : 'aim-dim'">{{ row.read ? 'yes' : 'no' }}</td>
+            <td :class="row.say ? '' : 'aim-dim'">{{ row.say ? 'yes' : 'no' }}</td>
+            <td :class="row.private ? '' : 'aim-dim'">{{ row.private ? 'yes' : 'no' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="aim-dim" style="font-size:12px;margin:6px 0 0">
+        The first three rows are identical, and that is not a typo. Sealed, Committed and
+        Synthesising grant exactly the same access — the phase changes, the permissions do not.
+        That is why approving the first two edges is bookkeeping rather than a decision.
+      </p>
+
+      <h4 style="margin:18px 0 6px;font-size:12.5px">Every edge, and what crossing it unlocks</h4>
+      <table class="aim-help-table">
+        <thead>
+          <tr>
+            <th style="width:120px">from</th>
+            <th style="width:190px">to</th>
+            <th style="width:250px">what it unlocks</th>
+            <th>why it is that way</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="edge in TRANSITIONS" :key="edge.from + '->' + edge.to">
+            <td><PhaseChip :phase="edge.from" link /></td>
+            <td><PhaseChip :phase="edge.to" link /></td>
+            <td :class="edge.unlocks.startsWith('nothing') ? 'aim-dim' : ''">{{ edge.unlocks }}</td>
+            <td class="aim-dim">{{ edge.why }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="aim-dim" style="font-size:12px;margin:6px 0 0">
+        Only one edge in this table ends independence: Synthesising → Cross-examining. If you are
+        ever asked to approve a transition and you cannot say what it unlocks, this table is the
+        answer — and where it says <em>nothing</em>, the honest decision is that there is none to
+        make.
+      </p>
     </el-card>
 
     <el-card shadow="never" style="margin-bottom:14px">
