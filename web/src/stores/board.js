@@ -34,15 +34,104 @@ export const directScope = (a, b) => [a, b].map(String).sort().join(' ⇄ ')
 const TOP_EPSILON = 2
 
 /**
- * The DOM `input` types that hold something a person typed.
+ * What counts as text, and what counts as the reader's.
  *
- * A checkbox is an `<input>` whose `value` is the string "on" whether or not the
+ * The `input` set is the DOM's, minus the types that accept no typing: a
+ * checkbox is an `<input>` whose `value` is the string "on" whether or not the
  * reader has touched it, so a rule that reads `input.value` without this list
  * finds unsent text in every unchecked box on the page and never updates the
- * board again. That is not a hypothetical: it is exactly how this rule first
- * behaved, and the Live pane's own tests caught it.
+ * board again. That is not hypothetical -- it is how this rule first behaved, and
+ * the Live pane's own tests caught it.
+ *
+ * The membership is not the whole rule any more, and the reason is worth
+ * recording because it cost three tests. A `value` inside one of these types is a
+ * *default*: a component can write one without the reader, and the widest example
+ * is Element Plus's pagination jumper -- `<input type="number" aria-label="Page">`
+ * -- whose value the component keeps at the current page ("0" on the Items pane,
+ * "1" on the Gantt).
+ *
+ * Read off the live board (127.0.0.1:8777, probe
+ * /tmp/aim-tasks/probe-t0163-realpage.mjs, no route interception, the rule
+ * replicated in the page) that one box was the *only* hit on each of `#/items`,
+ * `#/kanban`, `#/gantt` and `#/reports`. On four of the five main panes the veto
+ * was therefore permanently on: the digest poll saw a new digest, `update()`
+ * refused it, and the footer read "held back because a field has unsent text" for
+ * a reader who had typed nothing. `tests/live.spec.js` and `tests/chat.spec.js`
+ * were both green on the same code and red on the live board -- their fixtures
+ * never rendered a paginator.
  */
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'email', 'password', 'number'])
+
+/**
+ * A field a person has actually put something into.
+ *
+ * The signal is an event, and it has to be, because the obvious structural one
+ * does not survive contact with the widget. The tempting comparison is the
+ * `value` *attribute* -- assigning `.value`, which is what every framework
+ * binding does, does not write it, so a rendered field and a typed one ought to
+ * differ there. Measured, the Element Plus jumper has `getAttribute('value')` of
+ * `null` and `.value` of `"0"`: writing `.value` writes no attribute *at all*,
+ * so a comparison whose fallback for a missing attribute is the empty string
+ * finds `"0" !== ""` and calls the pager the reader's -- which is what an earlier
+ * version of this file did, and why it did not fix the defect it was written for.
+ * An attribute can only testify when there is one (`attr !== null` below); when
+ * there is not, it has nothing to say and this function must not take silence for
+ * assent.
+ *
+ * So the load-bearing signal is direct: a keystroke produces `input` and `change`
+ * events, and a programmatic `.value =` assignment produces neither. Nothing in
+ * `web/src` dispatches one (`grep -rn dispatchEvent web/src` is empty), so an
+ * event means a reader. Measured on the live board: four keystrokes into the Items
+ * filter fire four, the pager's own value change (0 -> 1 on a next-page click)
+ * fires none. Playwright's `fill()` and `type()` both dispatch them, which is how
+ * every spec that types a draft is still protected.
+ *
+ * Two rejected alternatives, recorded because both look simpler than this:
+ *
+ *   * Dropping `'number'` from the type list. It would fix the pager and take the
+ *     veto off every numeric field with it -- a reader who has typed a number into
+ *     a real one would have it discarded by a refresh that is not supposed to
+ *     discard it.
+ *   * Excluding the widget nominally, `el.closest('.el-pagination')`. It is the
+ *     smallest fix and an earlier version of this file used it, but it encodes
+ *     "fields Element Plus's pager draws are the page's" -- true of that one
+ *     widget and inadmissible as a rule for a board whose list keeps growing
+ *     vendor controls. The event rule needs no list of widgets to stay true.
+ *
+ * An entry is never removed, and does not need to be: a re-render replaces the
+ * input *element*, so the WeakSet entry goes with it, and blurring a field does
+ * not clear one either. The score is an upper bound, which is the safe direction
+ * for a veto -- a stale entry can hold one refresh back, never let a draft be
+ * discarded. The residual gap is named precisely: a *programmatic* write to a
+ * field the reader had *already* typed into would go unnoticed. The board has no
+ * such control today.
+ */
+const readerAuthored = new WeakSet()
+
+if (typeof document !== 'undefined') {
+  const mark = (event) => {
+    const el = event.target
+    if (el && el.nodeType === 1) readerAuthored.add(el)
+  }
+  document.addEventListener('input', mark, true)
+  document.addEventListener('change', mark, true)
+}
+
+const holdsText = (el) => {
+  if (readerAuthored.has(el)) return true
+  const tag = (el.tagName || '').toLowerCase()
+  if (tag === 'textarea' || tag === 'input') {
+    if (tag === 'input' && !TEXT_INPUT_TYPES.has(el.type)) return false
+    const value = el.value || ''
+    if (!value) return false
+    // A missing attribute is not an empty one: `null` here means the value was
+    // written rather than rendered, and that is the widget's own bookkeeping.
+    const attr = el.getAttribute('value')
+    return attr !== null && value !== attr
+  }
+  if (!el.isContentEditable) return false
+  return Boolean((el.textContent || '').trim())
+}
 
 /**
  * A plan seed is a promise, and a promise is not work.
@@ -60,13 +149,6 @@ const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'email', '
  * asked once, or the number is decoration.
  */
 export const isPromise = (task) => (task?.provenance || '').includes('seed')
-
-const holdsText = (el) => {
-  const tag = (el.tagName || '').toLowerCase()
-  if (tag === 'textarea') return (el.value || '').length > 0
-  if (tag === 'input') return TEXT_INPUT_TYPES.has(el.type) && (el.value || '').length > 0
-  return Boolean(el.isContentEditable) && (el.textContent || '').trim().length > 0
-}
 
 /**
  * Who is in the middle of something that a re-render would take away.
