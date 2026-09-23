@@ -21,6 +21,20 @@ present tense, in a document whose first rule is that a count belongs to a tree 
 so the second count is *removed* rather than restated. The rule it was meant to
 illustrate was being broken by the illustration.)*
 
+*(Third correction to the same line, 2026-09-23, measured: `git rev-list --count
+7def563..HEAD` is **77**, and `git rev-list --count cb42bba..HEAD` is **95**. The
+first three brackets were all about the *distance from the first draft*; the line
+the reader actually acts on is the one two paragraphs up, `7def563`, and that
+distance had never been printed here at all. It is printed now, at a named tree,
+because it is the number that says how far to trust the 66 citations below:
+**58 of 66 cited `bin/aim` lines are not byte-identical at `7def563` and at
+HEAD** — the figure `tests/test_sop_citations.py` prints, and the reason this
+document's citations are to be read as "the code this argument is about", not as
+"where to look". The `OverviewPane.vue` citations in §1.3.1 were worse than
+moved: the path was wrong outright (`web/src/components/`, which has never held
+it; it is `web/src/panes/OverviewPane.vue`) and the line numbers were the
+pre-move file's. Corrected in place.)*
+
 Twelve read-only subagents measured one segment each, and then four more were
 pointed at the finished text and told to *falsify* it. Every claim is marked with
 who measured it: **[V]** means I re-ran it myself on a throwaway root, and a row
@@ -481,8 +495,8 @@ request on the board right now:
 
 | button | argv, verbatim from the component | result |
 |---|---|---|
-| Approve (`OverviewPane.vue:474`) | `advance --channel ch --to CROSS_EXAMINE --note …` | **rc 2** `illegal transition COMMIT -> CROSS_EXAMINE (allowed: ['SYNTHESIS'])` |
-| Decline (`OverviewPane.vue:483-485`) | `say --channel ch --kind note --subject … --body …` | **rc 2** `channel_say is False — the public channel is closed` |
+| Approve (`web/src/panes/OverviewPane.vue:475-479` at HEAD) | `advance --channel ch --to CROSS_EXAMINE --note …` | **rc 2** `illegal transition COMMIT -> CROSS_EXAMINE (allowed: ['SYNTHESIS'])` |
+| Decline (`web/src/panes/OverviewPane.vue:483-489` at HEAD) | `say --channel ch --kind note --subject … --body …` | **rc 2** `channel_say is False — the public channel is closed` |
 
 **Approve is refused because the request names the wrong edge.** The button
 posts `request.targetPhase`; `COMMIT`'s only legal edge is `SYNTHESIS`
@@ -571,7 +585,7 @@ same argv is then refused for a second reason:
                 No free-floating broadcasts … (An opening message is the one
                 exception, and only into an empty channel.)
 
-`OverviewPane.vue:483-485` posts no `--responds-to`, and the live `hello` log has
+`web/src/panes/OverviewPane.vue:483-489` posts no `--responds-to`, and the live `hello` log has
 **three** messages, so on the board the leader is actually looking at, the
 Decline button is refused *twice over*: once for `channel_say` in the phase the
 button is drawn in, and once more for a missing argument in the phase the
@@ -3477,7 +3491,7 @@ the wrong table and "sixteen" of the right one, in two different edits), which i
 what makes the mistake look like a measurement: the number was correct and the
 object was wrong. Three was right only if step 8's hybrid is excluded *and*
 machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
-`PROSE` above this paragraph are five — `:166`, `:173`, `:2441`, `:2444`, `:2445` —
+`PROSE` above this paragraph are five — `:180`, `:187`, `:2455`, `:2458`, `:2459` —
 while this note's earlier text listed four uses of the token, one of
 which it then excluded and one of which it called a machine row: the sentence and
 its note were counting different sets. *(These are the five cells the paragraph
