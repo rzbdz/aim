@@ -492,8 +492,15 @@ expect_fail "--blocked-by on a task that does not exist is refused" \
 # The flag was parsed and never read: `task new --blocked-by T-0001` succeeded and
 # recorded nothing, so a board could show an item that nothing was holding up.
 # A dependency that exists only in the command line is worse than a missing one.
+# `--accept` is here because this card is closed further down and the accept
+# gate (T-0251) refuses a close on a card that has none. The fixture predates
+# that gate and this line was not moved with it, so `selftest.sh` has been red
+# since the gate landed: 198 pass, 1 fail, on the close this card exists to
+# exercise. The card's subject is `--blocked-by` being recorded, and the accept
+# line is a second field on the same command rather than a second subject.
 expect_ok   "--blocked-by on 'task new' is recorded, not silently dropped" \
-  $AIM task new --as beta --channel t5 --title "dep at birth" --blocked-by T-0001
+  $AIM task new --as beta --channel t5 --title "dep at birth" --blocked-by T-0001 \
+    --accept "the dependent card can be closed once its blocker is finished"
 expect_ok   "and the stored record carries it" \
   bash -c "python3 -c \"
 import json,sys
@@ -534,7 +541,8 @@ expect_ok   "clear the blocker by finishing it" bash -c "
   $AIM task move --as alpha --channel t5 --id T-0001 --to review >/dev/null &&
   $AIM task move --as alpha --channel t5 --id T-0001 --to done --force >/dev/null"
 expect_ok   "now the dependent item can be done" \
-  $AIM task move --as beta --channel t5 --id T-0003 --to done
+  $AIM task move --as beta --channel t5 --id T-0003 --to done \
+    --evidence "read this fixture: T-0001 is done, so the edge T-0003 was blocked on is met"
 expect_fail "a dropped task is a record, not a workspace" bash -c "
   $AIM task move --as beta --channel t5 --id T-0002 --to dropped --reason 'superseded' >/dev/null &&
   $AIM task move --as beta --channel t5 --id T-0002 --to ready"
