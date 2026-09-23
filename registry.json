@@ -12,7 +12,33 @@
       "kind": "codex",
       "model": "gpt-5",
       "session": "primary-review",
-      "registered_at": "2026-09-21T08:03:20.924Z"
+      "registered_at": "2026-09-23T15:31:41.963Z",
+      "registration_events": [
+        {
+          "at": "2026-09-21T08:03:20.924Z",
+          "kind": "codex",
+          "session": "primary-review",
+          "reason": "initial registration"
+        },
+        {
+          "at": "2026-09-23T15:29:35.407Z",
+          "kind": "codex",
+          "session": "probe duplicate session",
+          "reason": "forced takeover"
+        },
+        {
+          "at": "2026-09-23T15:29:35.465Z",
+          "kind": "codex",
+          "session": "primary-review",
+          "reason": "forced takeover"
+        },
+        {
+          "at": "2026-09-23T15:31:41.963Z",
+          "kind": "codex",
+          "session": "primary-review",
+          "reason": "forced takeover"
+        }
+      ]
     },
     "human": {
       "id": "human",
