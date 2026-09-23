@@ -492,6 +492,20 @@ def agent_kind(agent_id):
     return a["kind"] if a else None
 
 
+def _departed_at(agent_id):
+    """When this id last declared its session finished, or "" if it never did.
+
+    T-0253. Read off the registry on every call rather than cached: the record
+    this reads is the one `depart` and `register --force` write, so a cache here
+    is a refusal aimed at a seat that has already come back. `resolve_actor`
+    already reads the same file once inside `agent_kind`; the second read is one
+    small file per process, and folding the two would mean changing an identity
+    function that ten call sites share for the sake of a buffer.
+    """
+    rec = load_registry()["agents"].get(agent_id) or {}
+    return rec.get("departed_at") or ""
+
+
 def channel_dir(ch):
     return ROOT / "channels" / ch
 
@@ -803,8 +817,14 @@ def session_of():
     return f"{host[:24]}:{tty}:pid{os.getpid()}@{_PROCESS_STARTED}"
 
 
-def resolve_actor(args, manifest=None):
-    """Validate --as and return (agent_id, kind)."""
+def resolve_actor(args, manifest=None, allow_departed=False):
+    """Validate --as and return (agent_id, kind).
+
+    `allow_departed` is for `depart` alone. It is a keyword rather than a
+    `--force` argument on purpose: the gate below refuses a finished session on
+    every verb, and the one verb whose whole subject is a session's life has to
+    be able to see past it or the refusal would name a command that cannot run.
+    """
     who = args.__dict__.get("actor")
     if not who:
         # Both refusals here are about the caller rather than the request: a
@@ -823,8 +843,45 @@ def resolve_actor(args, manifest=None):
             f"  aim register --as {who} --kind claude|codex|human|orchestration|other",
             cls="barrier",
         )
+    # Named before the gate below, and after the one above, and the order is the
+    # point: an id nobody registered has no actor to record (that empty field is
+    # the documented finding T-0222 leaves behind), while an id that *did*
+    # register is a real actor whose refusal should say so. A departure refusal
+    # that recorded `agent: ""` would read, in the one artifact a reader audits,
+    # exactly like the identity failure it is not.
     note_context(actor=who)
+    if not allow_departed:
+        _refuse_if_departed(who)
     return who, kind
+
+
+def _refuse_if_departed(who):
+    """Refuse a caller whose session has already declared itself finished.
+
+    T-0253, and it is the second half of the same idea `resolve_actor` already
+    holds: an unknown id and a finished id are both "nobody is asking" rather
+    than "your command was malformed", so this is `cls="barrier"` for the same
+    reason the `unknown agent` refusal beside it is.
+
+    `--force` does **not** reach here, and that is deliberately not the shape the
+    `register` refusal uses. `register --force` is a *takeover*, and a takeover
+    is a statement about the id; this gate fires on every verb, so a `--force`
+    term here would mean `aim say --as <someone who left> --force` — an ordinary
+    speaking verb reading as an identity guard. The two ways to become live again
+    are named in the message instead, and one of them is a verb whose whole
+    subject is the caller.
+    """
+    at = _departed_at(who)
+    if not at:
+        return
+    die(
+        f"REFUSED: '{who}' departed at {at} — this session declared itself "
+        f"finished, so it no longer speaks for this id.\n"
+        f"If you are that agent coming back: aim depart --as {who} --return\n"
+        f"If a new session is taking the id over: aim register --as {who} "
+        f"--kind <kind> --force --session '<why>'",
+        cls="barrier",
+    )
 
 
 def require_leader(who, kind, manifest, what="advance the barrier"):
@@ -1025,6 +1082,102 @@ def cmd_register(args):
               f"recorded in the registry")
     else:
         print(f"registered {args.actor} ({args.kind})")
+
+
+def cmd_depart(args):
+    """Declare that this session has finished with an id.
+
+    The gap first, or this reads as a feature rather than a repair. A registered
+    id was permanent: `agent_kind` answers "does this id exist", never "is
+    anybody still here", so a session that finished kept its name, its channel
+    memberships and its voice, and nothing in the fabric could tell a session
+    that was *finished* from one that was merely *idle*. Measured before this
+    verb existed: `grep -c depart bin/aim` was 0, and none of the 26 verbs ended,
+    left or unregistered anything.
+
+    What this is, stated so it is not oversold: **self-declaration**. A session
+    that crashes cannot call it, so `departed_at` covers orderly exits and
+    nothing else. The case that prompted it -- sessions that died without saying
+    so -- is exactly the one a flag cannot cover, and it needs a witness outside
+    the session (a `last_seen` written by `resolve_actor`, or the outbox read as
+    a heartbeat) rather than a verb. This does not add that witness.
+
+    The threat model is the one `register` already states: anything that can run
+    `aim` can claim any unused id, and here anything that can run `aim` can
+    depart any id or clear any departure. What is refused is the *silent* switch,
+    not the switch -- the same argument, and the same `--force`-shaped escape.
+    """
+    # `allow_departed=True`: this verb is the one whose whole subject is a
+    # session's life, so the gate every other verb takes would make its own
+    # message unrunnable.
+    who, kind = resolve_actor(args, allow_departed=True)
+    at = _departed_at(who)
+    now = now_iso()
+    session = session_of()
+    reason = (args.reason or "").strip()
+
+    if args.returning and not at:
+        # Nothing to clear, and saying so is cheaper than writing a return event
+        # for a departure that never happened -- a history whose first entry is
+        # "return" is a history that reads as if something was lost.
+        print(f"{who}: no departure on the record — nothing to clear.")
+        return
+
+    if not args.returning and at:
+        # Re-departing is a no-op that would otherwise add a second departure
+        # event and move `departed_at`, which is the field the refusal prints.
+        print(f"{who}: already departed at {at} — nothing changed. "
+              f"(To take the id over as a new session: aim register --as {who} "
+              f"--kind {kind} --force --session '<why>')")
+        return
+
+    what = "return" if args.returning else "departure"
+
+    def _mark(reg):
+        rec = reg["agents"].get(who)
+        if rec is None:
+            # Unreachable: `resolve_actor` ran two lines up and `agent_kind`
+            # answered from this same file. Refused rather than KeyError'd,
+            # because the one way to get here is a registry replaced between the
+            # two reads, and that is a race this file should report rather than
+            # traceback on.
+            die(f"REFUSED: '{who}' vanished from the registry between the identity "
+                f"check and the write; nothing was recorded.", cls="form")
+        # The same list `register --force` builds, seeded the same way, so a
+        # reader of one id's history gets one shape whichever verb moved it.
+        rec["registration_events"] = list(rec.get("registration_events") or [{
+            "at": rec.get("registered_at"), "kind": rec.get("kind", ""),
+            "session": rec.get("session", ""), "reason": "initial registration",
+        }]) + [{"at": now, "kind": kind, "session": session, "reason": what}]
+        if args.returning:
+            for k in ("departed_at", "departed_session", "departed_reason"):
+                rec.pop(k, None)
+        else:
+            # `session` is recorded beside the timestamp because T-0242 measured
+            # two live sessions holding one id: "this id left" is not the same
+            # claim as "the session that just left is gone", and only the second
+            # is evidence about who is still here.
+            rec["departed_at"] = now
+            rec["departed_session"] = session
+            rec["departed_reason"] = reason
+        return reg
+
+    update_json(registry_path(), _mark, {"agents": {}})
+
+    if args.returning:
+        print(f"{who} ({kind}): departure at {at} cleared — this session speaks for "
+              f"the id again, and the return is in the registry")
+        return
+    print(f"{who} ({kind}): departed at {now}. The id keeps its name and its "
+          f"history; every verb now refuses it with class=barrier until a session "
+          f"calls `aim depart --as {who} --return` or takes the id over with "
+          f"`aim register --force`.")
+    if reason:
+        print(f"  reason: {reason}")
+    else:
+        print("  (no --reason given. A departure with no reason is the one line of "
+              "this record a reader cannot reconstruct; `register --force` asks for "
+              "one for the same reason.)")
 
 
 def cmd_new_channel(args):
@@ -4439,6 +4592,25 @@ def main():
     p.add_argument("--session", default="")
     p.add_argument("--force", action="store_true",
                    help="take over an id that is already registered (recorded as a takeover)")
+
+    p = add("depart", cmd_depart,
+            help="declare that this session has finished with an id (the exit "
+                 "mechanism; self-declaration, so it cannot cover a crash)",
+            description="Declare that this session has finished with an id. The id "
+                        "keeps its name, its kind and its channel memberships; what "
+                        "changes is that every verb refuses it with class=barrier "
+                        "until a session calls `aim depart --as <you> --return` or "
+                        "takes the id over with `aim register --force`.\n\n"
+                        "This is self-declaration, not liveness: a session that "
+                        "crashes cannot call it, so it covers orderly exits and "
+                        "nothing else. The case that prompted the verb -- sessions "
+                        "that died without saying so -- needs a witness outside the "
+                        "session and does not have one.")
+    p.add_argument("--as", dest="actor", required=True)
+    p.add_argument("--reason", default="",
+                   help="why the session is finishing, recorded in the registry")
+    p.add_argument("--return", dest="returning", action="store_true",
+                   help="clear a departure: this session speaks for the id again")
 
     p = add("new-channel", cmd_new_channel)
     p.add_argument("--id", required=True)
