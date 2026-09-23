@@ -2095,9 +2095,17 @@ show is the 36 rows the class was invented for** — the class minus the refusal
 `187 − 151`, `190 − 154`, `195 − 159` and `197 − 161` alike. *(This said "the
 fixed 35-or-so rows", hedging a number the paragraph ten lines below prints
 exactly as **36**. The hedge is not a range: it is 36 at every base this caption
-names, and in `hello` its composition is 33 `push` + 3 `seal` + 1 `phase` — no
-publication row at all, since the one `channel_member_added` here wears `barrier`
-and is a refusal's neighbour, not a non-refusal.)*)*
+names, and its composition does not change either — 35
+`task_published_during_divergence` + 1 `channel_member_added`, at `7def563`, at
+`01a1735`, at `9de1c29` and on the working tree alike. *(The first version of this
+parenthesis described the wrong set: it gave the composition of the **complement**
+— 33 `push` + 3 `seal` + 1 `phase`, which is the 37-row set thirty lines up, not
+this 36-row one — and then drew from it the conclusion "no publication row at
+all", which is true of the complement and false here, where 35 of the 36 *are*
+publication rows. The two sets are adjacent, both in `hello`, both stable across
+the same three revisions, and differ by exactly the one `channel_member_added`
+that wears `barrier`: 36 + 1 = 37. A reader who wants the number without the
+distinction gets the wrong mechanism.)*)*
 
 The pane's own filter (`:300-308`, a `v-if` over `row.class !==
 filters.refusalClass`) is correct and keys on a token that, for the rows it can
