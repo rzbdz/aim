@@ -1055,7 +1055,15 @@ def main():
         check("participant view renders", p.returncode == 0, p.stderr or p.stdout)
         if p.returncode != 0:
             print("  stderr:", (p.stderr or p.stdout)[-800:])
-            return finish()
+            # `finish()` was called here and does not exist in this file, which
+            # pyflakes reports as an undefined name. It never raised: `main` is
+            # only reached with a render that succeeds, so the line is dead
+            # under every run this file has had. A dead line naming a missing
+            # function is not harmless -- it is the branch a reader checks when
+            # the render *does* fail, and that is the run where it would have
+            # replaced the real reason with a NameError. The sibling blocks
+            # above exit with a bare `return`, so this is one too.
+            return
         peer_html = peer.read_text(encoding="utf-8")
         check("ABSENCE: the peer seal claim is not in the bytes", PEER_SEAL not in peer_html,
               "the dashboard is a route around the cross-read refusal")
