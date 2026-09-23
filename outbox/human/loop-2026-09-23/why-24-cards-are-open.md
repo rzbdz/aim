@@ -62,7 +62,7 @@ published). Each has an accept line that is a test, and I measured it this sessi
 | `T-0258` | a test asserts the served page's geometry | not re-derived by me | open |
 | `T-0259` | `depart` refuses an id that is not yours, or the tree says why not | under separate verification | open |
 | `T-0261` | every quantified accept line names its set and a commit | **51 of 69 quantified lines name no commit** | NOT SATISFIED |
-| `T-0262` | SOP.md's line 4 prints `rev-list --count <base>..HEAD`, or says it does not track it | **it prints `cb42bba..7def563 = 18`; base→HEAD is 109 today** | NOT SATISFIED |
+| `T-0262` | SOP.md's line 4 prints `rev-list --count <base>..HEAD`, or says it does not track it | **it prints `cb42bba..7def563 = 18`; `7def563..HEAD` is 109 at `b00590b` and 110 at `f807ea0`** | NOT SATISFIED |
 | `T-0263` | Approve either succeeds or the row says why it cannot | separately measured: both live requests are rc 2 | NOT SATISFIED |
 | `T-0264` | `doing -> dropped` is gated, or the undrop verb is named | under separate verification | open |
 | `T-0216` | each channel states its purpose and owning work; dev holds the development conversation; idle channels are closed | **`channels/dev/log.jsonl` holds 0 rows; `dev`, `s2-scratch`, `s2-scratch2` sit at SEALED_DIVERGENT with no traffic** | NOT SATISFIED |
