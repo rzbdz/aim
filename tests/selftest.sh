@@ -583,6 +583,33 @@ expect_ok   "now the dependent item can be done" \
 expect_fail "a dropped task is a record, not a workspace" bash -c "
   $AIM task move --as beta --channel t5 --id T-0002 --to dropped --reason 'superseded' >/dev/null &&
   $AIM task move --as beta --channel t5 --id T-0002 --to ready"
+# T-0264. The block above drops T-0002 as `beta`, which this gate *allows*: the
+# card is beta's own and it was created by beta, so owner and creator are the
+# same session and there is nobody to protect. The case the gate exists for is
+# the one T-0246 died of -- a caller who owns neither the card nor the position
+# it is in. Two checks, because a gate that refuses everyone is not a fix: the
+# bystander is refused on a card whose owner is another session, and the owner
+# still clears their own work through the same verb.
+expect_ok   "set up a card owned by beta and created by alpha" bash -c "
+  out=\$($AIM task new --as alpha --channel t5 --title 'bystander drop target' --owner beta \
+    --accept 'the bystander gate is exercised and the owner is not');
+  id=\$(echo \"\$out\" | sed -n 's/^\(T-[0-9]*\) created.*/\1/p');
+  echo \"\$id\" > '$AIM_ROOT/t5-bystander-id';
+  $AIM task move --as beta --channel t5 --id \"\$id\" --to ready --reason 'walked by its owner' >/dev/null &&
+  $AIM task move --as beta --channel t5 --id \"\$id\" --to doing --reason 'walked by its owner' >/dev/null"
+expect_ok   "alpha, the creator but not the owner, is refused, and by name" bash -c "
+  id=\$(cat '$AIM_ROOT/t5-bystander-id');
+  $AIM task move --as alpha --channel t5 --id \"\$id\" --to dropped --reason 'probe' 2>&1 |
+    grep -q 'is owned by .beta. and you are not its owner'"
+expect_ok   "and the refusal names the verb that is the way out" bash -c "
+  id=\$(cat '$AIM_ROOT/t5-bystander-id');
+  $AIM task move --as alpha --channel t5 --id \"\$id\" --to dropped --reason 'probe' 2>&1 |
+    grep -q 'aim task retract'"
+expect_ok   "but its owner still drops it, through the same verb" bash -c "
+  id=\$(cat '$AIM_ROOT/t5-bystander-id');
+  $AIM task move --as beta --channel t5 --id \"\$id\" --to dropped --reason 'superseded by its owner' >/dev/null &&
+  $AIM task move --as alpha --channel t5 --id \"\$id\" --to dropped --reason 'too late' 2>&1 |
+    grep -q 'is dropped; a dropped task is a record'"
 expect_ok   "the task log is covered by aim verify" $AIM verify --channel t5
 expect_ok   "--json folds to the same state the list shows" \
   bash -c "$AIM task list --as beta --channel t5 --json | grep -q '\"id\": \"T-0003\"'"

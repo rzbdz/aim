@@ -2572,6 +2572,68 @@ def cmd_task_move(args):
                 cls="barrier",
             )
         overridden.append(f"owner:{owner}")
+    if args.to == "dropped" and owner and who != owner and not actor_exempt:
+        # T-0264. The third of the three directions, and the one that was
+        # missing. `review` is the submission and belongs to the author; `done`
+        # is the approval and belongs to somebody other than the author; a
+        # bystander moving a card into `dropped` says nothing about the work at
+        # all and is nevertheless the only act in this verb that nothing walks
+        # back -- `TASK_FLOW["dropped"]` is empty, so the card is a record from
+        # here on, and the leader is refused by the same line as everyone else
+        # (`T-0003 is dropped; a dropped task is a record, not a workspace`, rc
+        # 2, measured with `--as h`).
+        #
+        # Measured before this gate, on a throwaway root, with the filer's own
+        # reproduction of the accident: `z` creates a card owned by `b`; `b`
+        # walks it `backlog -> ready -> doing`; then `z` — creator, not owner —
+        # runs `--to dropped --reason probe` and gets **rc 0**, one `dropped`
+        # event carrying `"owner": "b"` and `"actor": "z"`, no `--force`, no
+        # `--overrode`. The card was `T-0246`, codex's, in `doing`, and it is
+        # still gone from every view.
+        #
+        # The rule is `owner` alone, which is *stricter* than the accept line's
+        # minimum: the card asks for a refusal "to a caller who is neither the
+        # card's owner nor its creator", and this refuses the creator too when
+        # the card has been handed to somebody else. That is deliberate, and it
+        # is the half that matters for the accident this card was filed about:
+        # `assign` exists precisely so that ownership can move, so a creator who
+        # has handed the card on is not a bystander only by a technicality --
+        # the filer of this card was exactly that caller, and the card they
+        # destroyed was codex's. Measured after the gate, with `z` the creator
+        # and `b` the owner: `z --to dropped` is refused rc 2, while `b --to
+        # dropped` is rc 0. A creator who means to remove their own card is not
+        # stuck -- the refusal names `retract`, which works for them and costs
+        # the card without marking it dead.
+        #
+        # `owner` is not read when the card has none: a task with an empty owner
+        # is a card nobody holds, and the verb that clears an owner is
+        # `aim task claim`/`assign`, not this one. So the gate fires exactly when
+        # there is a holder to protect.
+        #
+        # `--force` reaches it, and unlike the `review` gate this is the honest
+        # shape: dropping codex's card was never the filer's to do, and the one
+        # thing a leader has to be able to do in a channel that has gone wrong
+        # is clear a card out of the way. What was missing was the record. So
+        # the override is named on the event and the refusal names the
+        # alternative, which here is the only thing that *is* recoverable:
+        # `aim task retract` removes the card from every view without touching
+        # the chain, so a card that should not exist can be taken out of the
+        # board by its creator or the leader without being marked dead.
+        if not args.force:
+            die(
+                f"REFUSED: {args.id} is owned by '{owner}' and you are not its owner.\n"
+                f"Dropping a card is the one move in this verb with no way back: "
+                f"`dropped` is terminal (`backlog`, `ready` and `doing` all refuse "
+                f"it), and the leader is refused by this same line, so a bystander "
+                f"who runs this on a peer's card ends that session's open work.\n"
+                f"If the card should not exist at all, `aim task retract --id "
+                f"{args.id} --reason '...'` is the verb for that, and its creator "
+                f"or the leader may run it. If it is genuinely superseded, ask "
+                f"its owner ({owner}), or state the reason with --force, and the "
+                f"override is recorded with the owner it overrode.",
+                cls="barrier",
+            )
+        overridden.append(f"owner:{owner}")
     if args.to == "done" and who == owner and not actor_exempt:
         # The approval. `owner` is read off the card and not off the `from`
         # event, so a card whose owner was released and re-claimed cannot be
