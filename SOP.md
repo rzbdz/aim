@@ -60,12 +60,36 @@ way rather than silently forced into `PROSE` because a taxonomy with a hole in
 it is more useful when the hole is named — and because `PROSE` would have been
 the wrong word for a step that is not even promised in prose.
 
-So §1.1 measures **7 ENFORCED, 1 PROSE, 1 read, 1 MISSING** and 7 + 1 + 1 + 1 =
-**10** marks over 9 rows, because step 2 carries two (`ENFORCED`, but
+So §1.1 measures **6 ENFORCED, 2 PROSE, 1 read, 1 MISSING** and 6 + 2 + 1 + 1 =
+**10** marks over 9 rows, plus the skippable that makes step 2 carry two, giving
+**11** marks in nine cells, because step 2 carries two (`ENFORCED`, but
 **skippable**) and step 8 carries two in one cell (**ENFORCED** that you sealed,
-**PROSE** what a seal means). *(This paragraph said `read` "appears in one row of
-§1.1" and left it there, which was true and incomplete by one token and one
-row-count; a falsifier counted the cells.)*
+**PROSE** what a seal means). *(Three corrections are stacked here and each one
+was the same defect one indirection down. This paragraph first said `read`
+"appears in one row of §1.1" and left it there — true and incomplete by one token
+and one row-count. It then said **7 ENFORCED** while §1.1's own cells carry
+**six** — and the arithmetic beside it, `7 + 1 + 1 + 1 = 10`, was right about the
+total and wrong about every term that produced it. The correction then said
+**5 ENFORCED** and listed the five by hand as "rows 2, 3, 4, 5, 7" — **omitting
+row 8, which is the row the same sentence names two clauses earlier**. The cause
+is worth stating precisely, because the wrong version of it was written here
+first: it is **not** a parsing failure. Splitting each row on `|` returns row 3's
+mark cell correctly (`\|` is escaped in the source and the cell survives), and a
+split that did break it would have lost row **3** and *kept* row 8 — the opposite
+of what happened. What happened is a **matcher** failure, and it is visible in one
+line: row 8's cell is `**ENFORCED that you sealed; PROSE what a seal means**`, so
+the closed-bold token `**ENFORCED**` **does not occur in it**, while the bare word
+does. `grep '\*\*ENFORCED\*\*'` over the nine cells returns rows 2, 3, 4, 5, 7 —
+exactly the five the correction printed — and `grep PROSE` (no asterisks) returns
+rows 1 and 8. **The two terms of the old tally came from two different patterns**,
+one anchored to bold markup and one not, and neither was anchored to the cell
+boundary; that is the error, and it is the more likely one to make. The six are
+rows 2, 3, 4, 5, 7 and 8; the two `PROSE` are rows 1 and 8 — row 1 is the `PATH`
+entry, which is prose in `AGENTS.md:13` and nothing else; and the count below is
+now the mark cells read one at a time rather than a program's opinion of them.
+Three attempts at one tally, each wrong in a different direction, in a document
+whose §1.4 is about exactly this: *a count of the marks is the one place in this
+system where that is checkable at a glance*.)*
 
 | mark | means | what it survives |
 |---|---|---|
@@ -303,10 +327,13 @@ the three measurements alone.
 
 *(The sentence above ended "and it is what makes `require_leader`'s being the
 only *name-checking* site a real guarantee rather than a decorative one" — and
-"only" is false, which a falsifier measured. `require_leader` has **six call
+"only" is false, which a falsifier measured. `require_leader` has **five call
 sites over five verbs** — `channel workspace` (`:620`), `channel add` (`:688`),
-`channel remove` (`:735`), `say --kind ruling` (`:1165`), `advance` (`:1453`),
-plus the definition at `:830`) — and it is not the only place a leader is named:
+`channel remove` (`:735`), `say --kind ruling` (`:1165`), `advance` (`:1453`) —
+plus the definition at `:830`; the earlier phrasing said "six call sites over five
+verbs … plus the definition", which counts the `def` twice, so that six call
+sites over five verbs and a separate definition came to seven sites for six
+occurrences.)* *(and it is not the only place a leader is named:
 `cmd_channel_remove` refuses by name to remove the leader (`:736`), and
 `cmd_tension` (`:3765`) is `if who not in (m["leader"], m.get("synthesizer")) and
 kind != "human"`, a *second* leader name check with the same human disjunct. The
@@ -314,8 +341,11 @@ claim that carries is the one the rest of the paragraph already makes — the
 exemption is a self-declared flag at three depths, not a name check — and the
 superlative was decoration. It is removed rather than softened.)*
 
-The code comment says *the leader* is exempt (`bin/aim:2126`); the code exempts
-any name that typed `human`. `aim register` asks nobody's permission. The same
+The code comment says *the leader* is exempt (`bin/aim:2103-2104`, in
+`cmd_task_move`'s docstring); the code exempts any name that typed `human`
+(`:2126`, `actor_exempt = kind == "human"`). *(The comment anchor here read
+`:2126`, which is the code itself — the sentence was citing the line it was
+contrasting with, so the contrast had no citation on one side.)* `aim register` asks nobody's permission. The same
 field is the board's read-side leader predicate (`aimboard/gate.py:159`,
 `aimboard/views/chat.py:25`), so the two surfaces agree on a value neither
 verifies.
@@ -527,11 +557,16 @@ is the third time it has happened in this one table.
 **Two things about that pair have to be stated or the arithmetic is not
 re-derivable.** First, **both `board_scope` halves are viewer-scoped, and this
 paragraph said only one of them was.** Measured through `api.payload` for all
-four seats: `visible.undone` is **26** for `human`, **17** for `codex`, **5** for
-`codex-orangement` and **2** for `claude-session1`, while `fabric.undone` is
-**26** for every one of them; `api.py:442` folds `state["tasks"]`, and
+four seats — the figure lives at `reports["board_scope"]`, built at
+`aimboard/api.py:454-471`, not at the payload's root: `visible.undone` is **2**
+for `synthesizer-v0`, **2** for `claude-session1`, **19** for `codex`, **5** for
+`codex-orangement` and **28** for `human`, while `fabric.undone` is **28** for
+every one of them; `api.py:442` folds `state["tasks"]`, and
 `state["tasks"]` is the store the *server* loaded, not the set the viewer may
-read. *(This said "viewer-scoped on one of them", which is a real distinction
+read. *(This printed `26 / 17 / 5 / 2` and named `human` beside the 26. Re-measured
+live it is `28 / 19 / 5 / 2`, with the leader at 28 — the pair had gone stale by
+two cards while the four excess rows it is weighed against did not move, which is
+the same asymmetry the paragraph above relies on.)* *(This said "viewer-scoped on one of them", which is a real distinction
 that does not exist: folding a different dict is not a different scope, and the
 `fabric` block goes through the identical loop. Both blocks are per-seat if the
 seat changes the store; what `reports_scope: "fabric"` adjacent to the payload's
@@ -802,17 +837,36 @@ which is itself the point):
 | `s2-scratch` | SEALED_DIVERGENT | 1 | 2 | 0 | 2 |
 | `s2-scratch2` | SEALED_DIVERGENT | 0 | 1 | 0 | 1 |
 
-Re-measured again at `e6ba913`, from the blobs rather than the worktree, every
-cell is identical except `hello`'s ledger, **348 → 349**: one more row, added by
-the same work this document describes, in the hours between the two readings.
-`barrier-v0`'s 6 was checked two ways: `git show 7def563:channels/barrier-v0/
+Re-measured again at `e6ba913`, from the blobs rather than the worktree, **every
+cell is identical — including `hello`'s ledger**, which reads 348 rows / 275
+refusals / 344 class-bearing at both revisions. *(This said "identical except
+`hello`'s ledger, **348 → 349**: one more row" — and **no revision holds 349**.
+Measured from the blobs across `git rev-list --all`, the distinct sizes that
+`channels/hello/ledger.jsonl` has ever had are 2, 3, 268, 269, 348, 351, 353,
+354, 359; 348 holds from `f4b8310`'s successors through `7def563` and `e6ba913`
+alike, and the working tree is **362**. 349 is not a row count at all: it is
+`hello`'s **class-bearing** count at `01a1735`. The cell was also not changed by
+the falsifier who read the committed `barrier-v0` ledger as empty — that
+misreading touched a different channel.)* `barrier-v0`'s 6 was checked two ways:
+`git show 7def563:channels/barrier-v0/
 ledger.jsonl | wc -l` returns 6 (blob `a175be050f30d8107fbe2bcc065600c32fc63f58`),
 and the worktree is 6. A falsifier read the committed copy as empty by mistake —
 it is not, and the cell was not changed by that misreading. The `hello` ledger
-grew 320 → 348 → 349 while this document was being written — every row of it a
-refusal or a phase row from the same work the document describes. The census is
-the one place where a number that moves is *evidence* rather than drift: five
-channels, none above `COMMIT` after two days of real use.
+grew 320 → 348 → 362 while this document was being written — every row of it a
+refusal or a phase row from the same work the document describes. *(This read
+"320 → 348 → **349**". 320 is a worktree reading from before `7def563` was
+committed and cannot now be re-derived; 348 is the blob at `7def563` and at
+`e6ba913`; **349 is not a `hello` row count at any revision** — it is that
+ledger's class-bearing count at `01a1735`. The live figure is 362.)* The census is
+the one place where a number that moves is *evidence* rather than drift: of the
+five channels under `channels/`, **none above `SYNTHESIS`** after two days of
+real use. *(This read "none above `COMMIT`", which the table three lines above it
+contradicts: `barrier-v0` is at `SYNTHESIS`, the table's own second column says
+so, and the paragraph above the table already names it as the furthest of the
+five. The `COMMIT` claim is true of `hello` alone. The tracked
+`.dbg/channels/c` is one phase higher still, at `CROSS_EXAMINE` — but it is not
+under `channels/`, which is why both of those paragraphs scope themselves to that
+directory by name.)*
 
 **Two columns of the table are counts of messages and three are counts of
 files, and the caption has to say which.** `seals`, `private` and `public` are
@@ -1211,12 +1265,12 @@ a `file:line`.
 | 9 | `RESOLVE` is where the leader decides | **`channel_say=False` there refuses the leader's own ruling** | **[V]** |
 | 10 | the write-set protocol prevents collisions | **nothing reads `CLAIM:`/`RELEASED:`; two hands on one file leave no trace** | `grep` = 0 hits **[V]** |
 | 11 | a `human` is the leader, and only the leader | **every gate in the tool exempts any name that typed `--kind human`, and the mail gate never compares the viewer against a channel's `leader` field at all** — see below, it is the largest single hole | `aimboard/gate.py:159,191` **[V]**, §4.1 |
-| 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns the drafts the board withholds from the same caller — measured 182 vs the board's 107, a 75-draft divergence** | `aimboard/a2a.py:794` **[V]** |
+| 12 | a foreign A2A client sees what the board sees | **`/rpc?as=<registered stranger>` returns the drafts the board withholds from the same caller — measured 184 against the board's 107, a 77-draft divergence** | `aimboard/a2a.py:794` **[V]** |
 | 13 | the seal hides a participant's reasoning from everyone but the synthesizer | **any self-declared `human` can read the mixed bundle — including one who never sealed and is not a participant** | `bin/aim:1610` **[V]** |
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
 | 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
-| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563`, in `channels/*` only, the five ledgers hold 358 rows and 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree those five files have grown to **372 rows / 293 refusals / 363 class-bearing / 162 `barrier`** | measured **[V]**, §4.6 |
+| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563`, in `channels/*` only, the five ledgers hold 358 rows and 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree those five files have grown to **373 rows / 294 refusals / 364 class-bearing, of which **198** wear `barrier` and only **162** of those are refusals** | measured **[V]**, §4.6 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -1276,6 +1330,18 @@ self-declared flag". That is true of at most 21 of the 30 that are not
 `require_leader`; the other **8 stand alone**, and the joins that exist are
 **`and`s**, not disjunctions. The narrow claim — one site compares the caller to
 `manifest["leader"]` — is the one that survives, and it is the one measured.)*
+*(A second falsifier then broke the narrower claim too, and it is right. The
+count above is of `ast.Compare` nodes whose *own text* mentions the leader, and
+that is the wrong unit: what matters is the **enclosing test expression**, which
+is what `die` is actually gated on. Read that way there are **two**, and the
+second is `cmd_tension:3765` — `if who not in (m["leader"], m.get("synthesizer"))
+and kind != "human"` — whose `human` operand sits in the *right* conjunct while
+the leader is named in the left, so the node's own text never contains the word.
+The true sentence: **exactly one of the thirty-one *requires* the caller to be
+the leader — `:831`, the one gate where the flag is not sufficient on its own —
+and one other, `:3765`, names the leader in a membership test that the flag
+simply bypasses.** Different machines, and the difference is why one is a
+requirement and the other is a widening.)*
 
 **But "every gate" is itself the wrong shape of sentence, and the falsifier was
 right to break it.** Seven gates on the barrier path carry **no** exemption at
@@ -1453,32 +1519,46 @@ participates in **no** channel, on one served root in one second:
 
 | seat | `/api/state` tasks | `withheld_tasks` | `/rpc` `ListTasks` (whole store) | `rpc \ board` |
 |---|---|---|---|---|
-| `synthesizer-v0` | 107 | **75** | **182** | **75** |
-| `claude-session1` | 148 | **34** | **150** | **2** |
-| `codex` | 131 | **51** | **144** | **13** |
-| `human` | **182** | 0 | **182** | 0 |
+| `synthesizer-v0` | 107 | **77** | **184** | **77** |
+| `claude-session1` | 148 | **36** | **150** | **2** |
+| `codex` | **133** | **51** | **146** | **13** |
+| `human` | **184** | 0 | **184** | 0 |
 
-(**182/182** is the whole store, and it is the number that matters: the
+(**184/184** is the whole store, and it is the number that matters: the
 non-participant's `/rpc` view *is* the board's own `human` view, id for id.)
 
-*(This table has now been wrong twice and the second time is the instructive one.
-The earlier version printed `71` and `179 returned, 178 distinct`: the 71 was one
-draft stale, and the `179/178` was an artefact of the default `pageSize` —
-`ListTasks` with no params returns **50** rows and a non-empty `nextPageToken`
-for every seat, so "179" was whatever `pageSize` the earlier probe passed. That
-was fixed by re-deriving every column at one `pageSize` (`500`). **What was not
-fixed is the fourth column, and it was wrong in the more serious direction: it
-printed `rpc \ board` = 0 for `claude-session1` and `codex`, while §4.4 three
-hundred lines below measures the same two seats at 2 and 13.** Two tables, one
-document, opposite answers, both labelled measured — the failure this section is
-itself about. Re-derived on the working tree with the real call signature
+*(This table has now been wrong three times and each time the instructive part is
+different. The earliest version printed `71` and `179 returned, 178 distinct`:
+the 71 was one draft stale, and the `179/178` was an artefact of the default
+`pageSize` — `ListTasks` with no params returns **50** rows and a non-empty
+`nextPageToken` for every seat, so "179" was whatever `pageSize` the earlier
+probe passed; fixed by re-deriving every column at one `pageSize` (`500`). **The
+next version had the fourth column wrong in the more serious direction: it printed
+`rpc \ board` = 0 for `claude-session1` and `codex`, while §4.4 three hundred
+lines below measures the same two seats at 2 and 13.** Two tables, one document,
+opposite answers, both labelled measured — the failure this section is itself
+about. Re-derived on the working tree with the real call signature
 (`a2a.list_tasks(request_id, *, tasks, viewer, channels, registry, page_size=500)`),
-the board columns are unchanged at 107/148/131, the withheld column is 75/34/51,
-and `rpc \ board` is 75/2/13/0. The 0s were a probe that had not passed
+the board columns are 107/148/133/184, the withheld column is 77/36/51/0, and
+`rpc \ board` is 77/2/13/0 — which now agrees with §4.4's gate-side table
+(107/148/133/184). The 0s were a probe that had not passed
 `registry`, so `list_tasks` raised and the earlier reader recorded the empty
-envelope as "nothing extra".)*
+envelope as "nothing extra".
 
-Every one of the 75 is a draft. The board counts them and withholds them; `/rpc`
+**The third correction is a units error and it is the one §4.2 exists to
+prevent.** This table's cells read 107/**75**/182 and 182/0/182 an hour ago, and
+107/77/184 now — but the *rows* did not change and neither did the store: the
+table is a live one, and the store grew from 180 to 184 cards while the document
+was being written (two cards this pass filed, plus the plan rows). §4.2 was
+re-derived and §4.4 was not, so for one revision the document carried two
+adjacent measurements of one quantity that differed by two — the exact defect the
+note above describes, committed against the fix for it. **Both are now stated at
+the same tree and the same second, and both say 107/148/133/184 with deltas
+77/2/13/0.** A table of live numbers is a photograph, not a property; the rule
+this section has had to learn three times is that two photographs of the same
+thing must carry the same timestamp or they are not the same measurement.)*
+
+Every one of the 77 is a draft. The board counts them and withholds them; `/rpc`
 serves them, on the same port, to the same caller, in the same second.
 `aimboard/a2a.py:794` spells the stranger test as
 `if viewer not in channel.get("participants", []): return True` — *a stranger is
@@ -1822,7 +1902,8 @@ below names.
 `barrier` 109 → 152 is 43 rows, and a message an agent sends is not a refusal —
 a refusal is a verb refusing. The structural counts are the ones that have not
 moved: 36 non-refusal rows carrying a refusal class, 33 `push` rows carrying
-`record`, 9 no-class rows in `channels/*`.
+`record` (34 at the working tree — the `push` family grows with mail, which is
+the point), 9 no-class rows in `channels/*`.
 
 **The first two of those three triples are not re-derivable, and that is a
 distinct defect from being stale.** `git show 9fc4d7d:channels/hello/ledger.jsonl`
@@ -1855,7 +1936,16 @@ at four revisions and in both denominators, so the reader can see which is which
 | `9fc4d7d` | 229 | 265 | **36** | 145 | 109 | **36** |
 | `7def563` | 280 | 349 | **69** | 188 | 152 | **36** |
 | `d7130fc` | 283 | 352 | **69** | 191 | 155 | **36** |
-| working tree, `channels/*` | 293 | 363 | **70** | 198 | 162 | **36** |
+| `9de1c29` (HEAD) | 292 | 361 | **69** | 197 | 161 | **36** |
+| working tree, `channels/*` | 294 | 364 | **70** | 198 | 162 | **36** |
+
+*(The working-tree row is a reading of a moment, and the moment moves: every
+`aim task list` this document runs writes a refusal row. 293/363 was correct when
+the table was first derived and 294/364 is correct now, and neither is a fact
+about the machine. The **shape** is the finding — gap B at 36 in all six rows,
+gap A following the `push` count — and the absolute values in the last row should
+be read as "at the time of writing", which the paragraph below says about the
+other table and this one owes the reader too.)*
 
 **Gap B is a fact about the store and does not move: 36, at every revision.** It
 is `task_published_during_divergence` 35 + `channel_member_added` 1 — one row per
@@ -1871,10 +1961,21 @@ mail. **That is this section's own subject one table further down**: a count tha
 only rises is a ledger, a count that does not move is a structure, and the two
 were printed as a pair. (Re-derived here rather than re-read; the counts above are
 blob-for-blob from `git show <rev>:<path>`, over every *tracked* ledger, `.dbg`
-included — which is another unit this section had been quoting loosely. `grep -c`
-does not read `**` recursively, so a shell glob that misses `.dbg` reports 186 for
-the `barrier` rows at `7def563` and 196 at the working tree; the file counts above
-are the ones that include it. The `349` is correct at `7def563` in both.)
+included — which is another unit this section had been quoting loosely. **The
+`.dbg` hedge in that sentence was itself wrong, and wrong in the direction this
+section is about.** It used to read *"a shell glob that misses `.dbg` reports 186
+for the `barrier` rows at `7def563` and 196 at the working tree; the file counts
+above are the ones that include it."* — implying a glob that omits `.dbg`
+under-counts. It does not, and it cannot: **`.dbg`'s five rows carry no `class` at
+all**, so they contribute to the row count and to neither the barrier count nor
+the class-bearing count. The correct pair is **188 at `7def563`, 198 at the
+working tree, in *both* denominators** — and `186` is not a number any glob
+produces: swept over every revision in `git rev-list --all`, the `channels/*`
+barrier total takes the values 0, 144, 145, 188, 191, 192, 197 and never 186. So
+the sentence was a wrong number about a wrong mechanism inside a paragraph whose
+subject is a wrong number about a wrong mechanism. The `349` claim held: `.dbg`
+carries 0 class-bearing rows, so 349 is right under `channels/*` and over the
+whole tracked tree alike.)*
 
 **The 36 rows are not noise. They are the mechanism README §3 asks for.** The
 comment above the writer (`bin/aim:2373-2381`) says so outright:
@@ -1894,15 +1995,25 @@ draws its table from `channel.refusals`, which the board fills at
 `aimboard/api.py:372` out of `ch["refusals"]`, which is `fabric.py:265` —
 `[r for r in ledger if r.get("event") == "refusal"]`. The 35 divergent
 publications are in the ledger, carry `class: barrier`, and are filtered out
-one layer below the pane. Measured on `hello` at `7def563`, the channel where all
-of this lives:
+one layer below the pane. Measured on `hello` at HEAD `9de1c29`, the channel
+where all of this lives:
 
-| rows in `channels/hello/ledger.jsonl` | **353** | |
+| rows in `channels/hello/ledger.jsonl` | **359** | |
 |---|---|---|
-| `class: barrier` | **190** | caught by `grep` |
-| `event: refusal` | **280** | what the pane receives |
-| both — the refusals a reader calls `barrier` | **154** | the intersection |
-| **neither** — non-refusals not marked `barrier` | **37** | *(this row used to read "151 — neither of the above", which is the intersection, not the complement; the complement is 353 − 190 − 280 + 154)* |
+| `class: barrier` | **195** | caught by `grep` |
+| `event: refusal` | **286** | what the pane receives |
+| both — the refusals a reader calls `barrier` | **159** | the intersection |
+| **neither** — non-refusals not marked `barrier` | **37** | *(this row used to read "151 — neither of the above", which is the intersection, not the complement; the complement is rows − barrier − refusal + both)* |
+
+*(The caption above used to say "at `7def563`" over values measured at
+**`01a1735`** — a third revision in a section whose subject is revisions. At
+`7def563` this file is 348 / 187 / 275 / 151 and the complement is again **37**.
+The complement is the one number that does not move, and that is the finding:
+37 rows of `hello`'s ledger are neither a refusal nor classed `barrier`, at
+`7def563`, at `01a1735` and at HEAD alike, because they are the `seal`, `phase`,
+`push` and `channel_member_added` records. **What the pane shows tracks the
+refusal count; what it can never show is the fixed 35-or-so rows the class was
+invented for.**)*
 
 The pane's own filter (`:300-308`, a `v-if` over `row.class !==
 filters.refusalClass`) is correct and keys on a token that, for the rows it can
@@ -1957,7 +2068,7 @@ not a reader, so that cell is a category slip rather than a miscitation.
 | **receipt** | the push record's own fields | `confirm` `:3497` | `outbox` — gated on the caller's own inbox | first-class, narrow |
 | **seal** | `seals/<a>.json` | `seal` `:1354` | `synthesis-input` `bin/aim:1610` (leader + synthesizer); `status`/`verify` show digests to anyone | first-class **with one real gate and two ungated readers** |
 | **barrier phase** | `manifest.barrier` | `advance` `:1450` | the write side (`require_leader` `:830`, `advance`'s edge check `:1450`); the read side is `PHASE_RULES`, a **table**, not a reader — the same sentence the intro above makes about `:56`, so the two agree and a reader who saw them as contradicting twelve lines apart was reading a row that had already been corrected | first-class |
-| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **293** rows for every viewer, including a stranger — `287` of them in `hello` alone; this cell read `285` when it was written and has been re-derived twice since, which is the cost of a live store rather than a defect in the cell) | first-class, **append-only and fully public** |
+| **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **294** rows for every viewer, including a stranger — `288` of them in `hello` alone; this cell read `285` when it was written and has been re-derived three times since, which is the cost of a live store rather than a defect in the cell) | first-class, **append-only and fully public** |
 | **room** | `rooms/<id>.jsonl` | `room new` `:2822` | `visible_rooms` `gate.py:133` — **a real gate**, reached from the payload at `conversation.rooms` (`views/chat.py:44`) | first-class |
 | **friction** | `friction.jsonl` | `friction --add` `:4011` | `friction` `:4042` — gated on membership, and the payload also carries it unscoped (`channels[].friction`) | first-class, narrow, **and published anyway** |
 | **milestone** | `plan/plan.json` | **none** | `fold.report_data` | **read-only seed** |
@@ -1999,7 +2110,16 @@ the same. A refused `advance` writes a ledger row naming the actor **and the
 session** (`bin/aim:299`); the successful `advance` that follows writes a `phase`
 row with the actor and no session. So the caller who was stopped is identified in
 the record and the caller who got through is not — which is backwards for the
-one question the ledger exists to answer.
+one question the ledger exists to answer. *(The reader is owed the date on
+this, because the asymmetry is a property of the writer as it now stands and not
+of the store as it is: `session_of()` landed on the refusal path at
+`2026-09-22T09:29:54.451Z`, the first row anywhere in the store that carries the
+key. Of the four refused `advance` rows that exist, **three predate it**
+(`08:55:30Z`, `03:26:04Z`, `08:48:01Z`) and only one — `T-0242`'s own run at
+`09:33:36Z` — carries a `session`. All three successful `phase` rows carry the
+same nine keys, `agent` among them and `session` not, at every revision. So the
+asymmetry is real in the code and one-row-thin in the record, which is the
+difference between a defect and a defect with evidence.)*
 
 ---
 
@@ -2007,20 +2127,28 @@ one question the ledger exists to answer.
 
 Part IV is a list of defects. This is the *set* view, because the leader asked
 for it directly — *状态机，范畴的关系* — and because the defects are better
-explained by the shape of the set than one at a time. There are **twelve**
-machines in this fabric. Counted from the table's own `mark` column: **five
+explained by the shape of the set than one at a time. There are **thirteen**
+machines in this table, and the thirteenth is the one the first twelve were
+short of: the push-notification config, found by a falsifier reading the event
+enumeration in IV-c.1 rather than the table (it is a four-edge, ENFORCED machine
+in `channels/<ch>/push.jsonl` that no row named — see row 13 below). Counted from
+the table's own `mark` column: **six
 carry `ENFORCED` as their verdict, two are partial, and five are prose or
 absent** — and the sentence and the column only agree because the split is read
-at the level of the *verdict* rather than the *word*. Six rows contain the
-string `ENFORCED`: rows 1, 4, 5, 6, 7 and **row 2, whose full mark is
+at the level of the *verdict* rather than the *word*. Seven rows contain the
+string `ENFORCED`: rows 1, 4, 5, 6, 7, 13 and **row 2, whose full mark is
 "ENFORCED at move, absent at birth"** — a partial machine that names the
-enforced half first. Counting the word gives 6/1/5; counting the verdict gives
-5/2/5. Both sum to twelve and the table is the same table.
+enforced half first. Counting the word gives 7/1/5; counting the verdict gives
+6/2/5. Both sum to thirteen and the table is the same table.
 **This is the document's own recurring defect, one paragraph up from its own
 census**, so it is stated rather than smoothed: a count taken from a string is
-not a count taken from the thing. (An earlier pass counted eight; a reader re-deriving the list from
-the code found the two enforced machines the eight missed — room publication
-and push‑ack — and the event vocabulary the document already called a ninth.
+not a count taken from the thing. (An earlier pass counted eight, then eleven,
+then twelve — each time by re-reading the tree rather than the table, and each
+time one short: the twelve came from a reader who found the two enforced machines
+the eight missed — room publication
+and push‑ack — and the event vocabulary the document already called a ninth,
+and the thirteenth came from a reader who asked what store the *other* sixteen
+event names are appended to.
 A later pass added the twelfth, **closure**, which is not a machine of its own
 but the condition row 2's `review -> done` edge never reads; it is listed
 separately because an edge with an unread precondition is a different defect
@@ -2072,7 +2200,36 @@ stranger's write.)*
 | 9 | **obligation** (who owes the leader an action) | none | — | — | 5 `@expectedFailure` tests (`tests/test_decisions_have_actions.py:249,263,276,291,313`) | **ABSENT by design, on the record** |
 | 10 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
 | 11 | **event vocabulary** | the `event` field of a **task** row in `tasks.jsonl` | unenforced; the vocabulary lives in one declared list nothing reads | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing**; the fold has branches for eight names and its stray-name counter (`fold.py:120`) fires only for an event with no `created`, never for an unknown name | **PROSE — and the one writer outside the eight drops silently** |
-| 12 | **closure** (was the work done?) — not a competing machine but *the condition row 2's `review -> done` edge never reads* | `accept` on the card's `created` row (`bin/aim:1982`) | unenforced; nothing reads the sentence | — nothing reads it — | `--accept` is *"the sentence that makes this verifiable"* (`:4570`), and it is stored (`:1696`), folded (`fold.py:358`), exported (`exporters.py:174`), rendered (`components.py:33-35`) and **searched** (`:4158`) — and never *evaluated*. The only gate on `review -> done` is identity: `:2141` refuses `who == owner` unless `actor_exempt` (`:2126`), and `:2128` keeps the author out of `-> review`. Both are about *who*, and neither is about *what*. On the live root **64 cards carry a non-empty `accept` line and a recorded `moved`→`done`**, and **2** of the 65 recorded closes has a comment at or after the move (`T-0199`, `T-0219`); the vocabulary a task event can carry has **no** `evidence`, `verified` or `proof` field at all (28 keys, measured) | **PROSE — and the prose is written by the closer** |
+| 12 | **closure** (was the work done?) — not a competing machine but *the condition row 2's `review -> done` edge never reads* | `accept` on the card's `created` row — the line carrying the key, `bin/aim:1982` (`:1969` is the bare `ev = {` opener) | unenforced by the tool; nothing in `bin/aim` or `aimboard/*.py` reads the sentence | — nothing reads it — | `--accept` is *"the sentence that makes this verifiable"* (`:4570`), and it is stored (`:1696`), folded (`aimboard/fold.py:77` via `PLAN_FIELDS`, `const.py:16`), exported (`exporters.py:174`), rendered (`components.py:33-35`) and **searched** (`:4158`) — and never *evaluated* **by the tool**. Of the three gates on `review -> done`, two are about identity (`:2141` keeps the **owner** out of `-> done` unless `actor_exempt` at `:2126`; `:2128` is the mirror — it keeps the **bystander** out of `-> review`) and the third asks *what* the card depends on (`:2156` refuses while any `blocked_by` card is not `done`, and that gate is **not** exempt for a `human` — reproduced with the leader as caller). **None of the three reads `accept`.** On the live root **64 cards carry a non-empty `accept` line and a recorded `moved`→`done`**, and **2** of the 65 recorded closes has a comment at or after the move (`T-0199`, `T-0219`); the vocabulary a task event can carry has **no** `evidence`, `verified` or `proof` field at all (28 keys, measured) | **PROSE — and the prose is written by the closer** |
+| **13** | **push notification config** (the doorbell) — **added by a falsifier who found the table was one short, and it is the strictest machine in the set after the phase machine** | `channels/<ch>/push.jsonl` — a **chained store**, listed in `VERIFY_CHAIN` (`bin/aim:3992`) | four edges: `doorbell_created` `:3162` → `doorbell_rotated` `:3199` → **`deleted` `:3222`**, folded by `_push_config_recs:3058` (`deleted` pops the id, a rotation supersedes it, newest state per id wins), plus a **no-write** edge: a second create on the same `configId` is idempotent on purpose (`:3152-3159`) | **any identity that can load the task, and any `kind == "human"` whether or not it can** — `_load_task_or_die:3122`, whose `:2079` refusal is `if not _visible_to(t, who, m["barrier"]["phase"]) and kind != "human"`: `_visible_to` ends at `:1785` on `task.get("owner") == who or task.get("created_by") == who`, so a non-owner of an owned draft in a divergence phase is refused, and a caller that typed `human` is not; no leader rule and no `actor_exempt` — the human exemption in the loader is spelled as `kind`, not as the flag | `validate_push_config` (`aimboard/a2a.py:1065`) — **ENFORCED**, and it is a precondition rather than a shape check: an unregistered field, a missing token, a remote `http://`, or `credentials ≠ token` are each refused, and the *field list is checked first* so a typo is reported as a typo. Shared by both surfaces — `bin/aim:3131` and `/rpc` via `a2a.py:1231`, which turns the same problems into `-32602` + `fieldViolations` | **ENFORCED** |
+
+*(Four corrections are stacked on this row, and the fourth is the one that
+changes where the defect lives. **`:2128` was described backwards**: it reads
+`if args.to == "review" and owner and who != owner and not actor_exempt` and
+refuses a caller who is **not** the owner — *"you are not its owner. … a
+bystander moving it says no such thing."* The direction "keeps the author out"
+belongs to `:2141`, four lines down. Confirmed behaviourally: `beta` (the owner)
+`doing -> review` **accepted**; a non-owner **REFUSED**. **`fold.py:358` does not
+carry the card's `accept`**: `:358` is inside `report_data()` (`def` at `:298`)
+and reads `m.get("accept")` — the *milestone* — not the card; the card's copy is
+`fold_tasks:77`, which applies `PLAN_FIELDS` (`const.py:16`) to the `created`
+event, and *that* path is what `bin/aim`'s own fold at `:1696` mirrors. *(And a
+fourth correction, to this note's own first draft: it said "`:1982` was the wrong
+line for the `created` row (it is `:1969`)". That is backwards — `:1969` is the
+bare `ev = {` opener, carrying no key at all, and `:1982` is the line that
+carries `"accept": args.accept`, the only such line in the file
+(`grep -n '"accept": args.accept' bin/aim` → `1982`). The original citation was
+right and the correction broke it, which is the same failure one line down: a
+line number asserted from the shape of the surrounding code rather than read off
+the key.)* And the scope: **the
+sentence is never evaluated by the tool, and the tool is not the whole tree.**
+`web/src/components/TaskDecisionDrawer.vue:119` really does compare it —
+`(row.accept || '').trim() === accept` inside a `recordedAs` computed — and the
+same component's checklist at `:319-321` reads `!task.accept`. That is a
+**client-side** comparison driving a **drawer's** affordance; nothing on the
+write path consults it, no refusal cites it, and the ledger would not notice.
+The row's verdict is unchanged and its sentence is now narrower, which is the
+direction this document keeps having to move.)*
 
 Measured for #4, on a throwaway root — this is the machine that is *better* than
 its documentation:
@@ -2111,12 +2268,46 @@ those reads are the load-bearing ones in the whole system:
 
 Two reads I expected and did **not** find, measured rather than assumed, because
 a relation that is absent is as load-bearing as one that is present: **the task
-status machine does not read the phase machine.** `cmd_task_move:2114` reads
-`TASK_FLOW` and nothing else — the task machine and the phase machine are
-genuinely independent, so a card can be created and closed in `SEALED_DIVERGENT`
-with the barrier up. And **the seal machine's only membership read is its own
+status machine's own edge table does not read the phase machine.**
+`cmd_task_move:2114` reads `TASK_FLOW` and nothing else **on the edge** — the
+verb reaches the phase table first, through its loader (`_load_task_or_die:2079`,
+which passes `m["barrier"]["phase"]` into `_visible_to`) — and the sentence this
+replaces said the two machines were "genuinely independent", which is false.
+`cmd_task_move:2110` is `_load_task_or_die(args.channel, args.id, who, kind)`,
+and that helper's refusal clause is `:2079` `if not _visible_to(t, who,
+m["barrier"]["phase"]) and kind != "human"`. Reproduced on a throwaway root —
+channel `ch`, participants `alpha,beta`, a `draft` card owned by `alpha`, phase
+`SEALED_DIVERGENT`:
+
+    aim task move --as beta  --channel ch --id T-0001 --to ready
+      rc=2  REFUSED: 'T-0001' is a draft owned by someone else and the channel
+            is in SEALED_DIVERGENT.        (ledger: action "task move", class "barrier")
+    aim task move --as alpha --channel ch --id T-0001 --to ready
+      T-0001: backlog -> ready              (the owner is not gated)
+
+So the barrier is on the path of every task verb, not only the read ones; what is
+independent is the *edge* table, and the observable consequence is narrower than
+the sentence claimed — a card can be created and closed in `SEALED_DIVERGENT`
+**by its own owner**, with the barrier up, which is the one caller the barrier
+does not stop. And **the seal machine's only membership read is its own
 `:1365`** — `_load_room_or_die`'s participant check at `:2747` is the room
-machine's, not the seal's.
+machine's, not the seal's. *(The membership test is not what makes the seal
+machine singular — `who not in m["participants"]` appears at nineteen sites in
+`bin/aim`. What is singular is that `:1365` is the **only** membership test on
+the path to writing a file into `channels/<ch>/seals/`: the other **six** reads
+of that store — `:1477` `advance`'s quorum, `:1620` `synthesis-input`, `:3270`
+**`reveal`**, `:3777` `tension`, `:3895` `status`, `:4275` `verify` — are reads
+of seals that must already exist, and a second bare membership gate, `:1593` in
+`cmd_request_advance`, guards a `log.jsonl` write and not a seal. *(This sentence
+said "the other four reads" and then listed six, and it labelled `:3270`
+`doorbell` — which is wrong: `cmd_task_doorbell` spans `:3081-3229`, its only
+loader is `:3122`, and it reads no seal at all. `:3270` is `cmd_reveal`, whose
+`read_json(.../seals/{who}.json)` at that line refuses `you have no seal in this
+channel` as a `form` error, not a barrier one. A count, a list and a name, all
+three wrong in one clause, in a parenthetical written to defend a number.)* The
+sentence
+is kept because it is true of the seal store and false as a claim about
+membership tests in general.)*
 
 **The phase machine is the only one every other machine consults**, which is why
 Part IV's row 1 (`fabric.py:281`) and row 7 (`bin/aim:51`, the rule-changing
@@ -2165,11 +2356,18 @@ this repo already has the receipt for what happens when one of them lands in onl
 some of the copies. `TASK_EVENTS` (`bin/aim:127`, the eight event names a card may
 carry) is declared and **read by nothing** — `grep TASK_EVENTS` finds the
 declaration and no reader — so the store's `tasks.jsonl` carries exactly those
-eight and never a stray one (`created 100, moved 249, commented 94, published 35,
-assigned 15, dropped 2, linked 1, retracted 1` — **501** rows on the working tree, 497 at the revision this vector was read from; the vector the
-earlier draft printed, `created 97 … commented 91 … dropped 1`, matches **no
-single revision**: `created` is 97 at `5529368` and 98/99/100 after, `commented`
-is 87/92/93/94 and never 91, so it was assembled from more than one read), while
+eight and never a stray one (`created 104, moved 249, commented 97, published 35,
+assigned 15, dropped 2, linked 1, retracted 1` — **504** rows on the working
+tree; the vector this paragraph printed two revisions ago, `created 100, moved
+249, commented 94, …`, is **`01a1735`'s store exactly** — 497 rows, all eight
+counts right, the same vector at `790af75` — so it was one revision's read rather
+than an assembly, and the "497 at the revision this vector was read from" in that
+sentence was the correct total for it; the vector true of **no** revision is the
+*earlier draft*'s, `created 97 … commented 91 … dropped 1`: `created` runs
+97 at `5529368` → 98 at `7def563` → 99 at `d94c809` → 100 at `01a1735`/`790af75`
+→ 102 at `9de1c29` → 104 live, and `commented` runs 87 → 92 → 93 → 94 → 96 → 97,
+so 91 is the one count in it that lands nowhere, while its 97 and its `dropped 1`
+are both `5529368`'s), while
 `ledger.jsonl` next to it
 carries `seal`, `phase`, `push`, `refusal`,
 `task_published_during_divergence`, `channel_member_added/removed/noop` and
@@ -2193,8 +2391,10 @@ than assume it, and it did not move either. The verb reports success, the board
 does not move, and the store's own alarm stays at zero: a rule that exists in
 prose (`TASK_EVENTS`) and in a reading (`unknown`) and in neither machine.
 
-Scanning every literal `"event": "…"` pair in `bin/aim` gives **24 distinct
-names**, and matching them against the fold's branches splits them three ways.
+Scanning `bin/aim` for literal `"event": "…"` pairs gives **24 distinct
+names**; the AST gives **23** `Constant` values, plus the ternary's two arms,
+**25 together**. Matching those against the fold's branches splits them three
+ways.
 **Eight reach `tasks.jsonl` and are folded** — `created`, `assigned`,
 `published`, `linked`, `commented`, `dropped`, `retracted`, plus `moved`, which
 is the one name written as a *value* rather than a literal
@@ -2202,22 +2402,58 @@ is the one name written as a *value* rather than a literal
 exactly the eight `TASK_EVENTS` declares at `:127`. **Sixteen are written *not*
 into `tasks.jsonl`** — `phase`, `seal`, `push`, `refusal`, `concession`,
 `friction`, `room_created`, `room_published`, `workspace_cleared`, the three
-`channel_member_*`, `task_published_during_divergence`, the two `doorbell_*`
-(`:3162`, `:3199` — there is no third; `doorbell_cmd` is an argparse `dest` at
-`:4656`, not an event) and `deleted` — and those are *ledger* events, correctly
-outside a task fold. **`edited` is the odd one out: the only name written into
+`channel_member_*`, `task_published_during_divergence`, the **three** doorbell
+names (`doorbell_created` `:3162`, `doorbell_rotated` `:3199`, **`deleted`
+`:3222`** — and `doorbell_cmd` is an argparse `dest` at `:4656`, not an event) —
+and they are **not one store**: traced with `ast` from each name to the
+`append_chained` target its dict feeds, **twelve go to `ledger.jsonl`**
+(`phase`, `seal`, `push`, `refusal`, `concession`, `room_created`,
+`room_published`, `workspace_cleared`, the three `channel_member_*`,
+`task_published_during_divergence` — `room_published` belongs here, not with the
+rooms: `_record_room_event:2772` is called by both room verbs and its entire body
+is `append_chained(channel_dir(ch) / "ledger.jsonl", ev)` at `:2782`, and
+`rooms/<rid>.jsonl` holds room *messages*, which carry no `event` key at all;
+seven of the twelve reach the ledger as direct literals — `concession :1347`,
+`phase :1572`, `push :3393`, `refusal :291`, `seal :1392`,
+`task_published_during_divergence :2385`, `workspace_cleared :626` — and five
+through the two helpers just named, `_record_member_event:664→:667` and
+`_record_room_event:2772→:2782`),
+**three to `channels/<ch>/push.jsonl`**
+(`_push_configs_path:3055` — the doorbell machine), and **one to
+`channels/<ch>/friction.jsonl`** (`_friction_path:4008`). **`edited` is the odd one
+out: the only name written into
 `tasks.jsonl` that the fold has no branch for.** That is the
 whole defect, and it is one branch.
 
 *(This paragraph said "eighteen names" and listed seventeen of them, which is
-what sent me back to the scan: the two errors were one item — the three
-`doorbell_*` — and the corrected counts are 24 literals, 8 folded, 16 not, 1
-`edited`. The enumeration had also missed that `moved` is present in the store
-but absent from a literal scan, so "every literal" and "every name the store
-holds" were never the same set.)*
+what sent me back to the scan, and it has now been corrected twice more. **The
+counts are 25 distinct names.** `grep -o '"event": "[a-z_]*"'` finds **24**, the
+parser finds **23**, and the difference runs the opposite way from the first
+write-up of it: the **grep** set is the larger one because it matches the
+ternary's `"dropped"` arm at `:2177`, and `dropped` appears nowhere else as an
+`event` value — while `moved`, the ternary's *other* arm, appears as a literal
+nowhere either, so the parser's 23 Constants and the grep's 24 differ by exactly
+`dropped`. Adding `moved` back gives the store's 25. Of those, **8 fold, 16 go to
+the other three stores above, and 1 (`edited`) is written to `tasks.jsonl` with
+no branch to catch it.** (This said "23 literal strings plus the ternary … which
+is why grep finds 24 while the parser finds 23" — the right numbers and the
+reversed reason, which is the same slip as the `!= "human"` grep count in §4.1:
+a text matcher and a parser count different populations, and which one is larger
+depends on the string, not on the tool.) The earlier correction said "24
+literals, 8 folded, 16
+not, 1 `edited`", which sums to 25 and calls itself 24. It also said "there is
+no third" about the `doorbell_*` pair while listing `deleted` on the same line —
+`deleted` is appended by `cmd_task_doorbell` (`:3220-3227`) to the **same**
+`push.jsonl` the other two go to, and `_push_config_recs` (`:3058-3078`) folds
+all three, popping the id on `deleted`. **The doorbell machine has three edges,
+not two** — and it is the **thirteenth machine**, which the record above now
+carries as its own row rather than as a footnote here. And "those are *ledger*
+events" was true of eleven of the sixteen; `friction` has its own file, whose
+writer's own docstring says the log and the ledger it sits *beside* — and this
+paragraph converted *beside* into *ledger*.)*
 
-**Two of the twelve cannot be seen from the page** — and they are not the same
-kind of invisible. Row 8, the channel lifecycle, is computed on every
+**Two of the thirteen cannot be seen from the page** — and they are not the same
+kind of invisible, which is why the count is worth stating before the pair is. Row 8, the channel lifecycle, is computed on every
 `load_fabric` and dropped by `aimboard/api.py:363`'s projection, which keeps
 `id, topic, phase, round, leader, synthesizer, participants, history, sealed,
 chain, tasks_recorded, tasks_store_exists, tasks_unknown_events, refusals,
@@ -2253,8 +2489,20 @@ board teaches the rule it does not run.
     channel 1 ──1  project    (there is no project object; §2.1 is what that costs)
     channel 1 ──n  task       (ids are per-channel; the *board* keys them per-root — the collision)
     task   1 ──1  owner       (a **field**, `str`, on the card — nullable: an unowned card
-                               short-circuits two actor rules; measured on the working tree, 251/251 owner values are strings
-                               (247 at `7def563`)
+                               short-circuits two actor rules; measured on the working tree, 253 owner-bearing
+                               events carry a string and **none** carries `null` — the key is *absent* on the
+                               other 251 rows, and **116 of those are `moved`**, not "rows that have not moved":
+                               `cmd_task_move` emits `"owner": owner` on every move (`:2186`) under a comment at
+                               `:2182` saying "every move carries the owner as it stood before the move", so 133
+                               of the 249 moves carry a name and 116 carry `""`. The rest of the absence is
+                               `commented` 97 / `published` 35 / `linked` 1 / `retracted` 1 / `dropped` 1.
+                               (**250/250/246** *absent*-counts at `9de1c29`, `9de1c29`'s parent and
+                               `7def563` — i.e. 251/251/247 owner-**bearing**.) The fold never
+                               sees the absence at all: `cmd_task_new` writes `"owner": args.owner or ""` on
+                               every `created` row, so all **103** folded cards carry the key — 97 at
+                               `7def563`, 101 at `9de1c29`, 103 live — and exactly **3** carry
+                               `""` (1 / 3 / 3 across the same three bases) — which is the value
+                               `t.get("owner")` returns when the unowned clause fires)
     task   1 ──n  event       (tasks.jsonl is an event log, folded on read)
     agent  1 ──1  seal        (a seal is per **participant per channel**, not per task:
                                channels/hello/seals/{claude-session1,codex,codex-orangement}.json)
@@ -2270,8 +2518,9 @@ board teaches the rule it does not run.
                                `agent=ghost` — so the dropped fault is naming, not context)
                                (the class on a *refusal* row is `barrier|form|unrecorded`;
                                `class` is not a refusal field — 36 non-refusal rows carry
-                               `class: "barrier"` on purpose and 33 `push` rows carry
-                               `class: "record"`, which is in no vocabulary)
+                               `class: "barrier"` on purpose and **34** `push` rows carry
+                               `class: "record"` on the working tree (33 at `7def563` and at
+                               `9de1c29`), which is in no vocabulary)
 
 **Two of these are lossy in the direction a reader would not guess.** `channel
 n─n task` loses work silently (§2.1: an id space per channel, merged per root, so
@@ -2346,8 +2595,8 @@ it by re-deriving, and the delta is the finding the section is about, committed
 against the section. Re-derived again **on the working tree** (the phrase "at
 HEAD" is replaced here too: HEAD is a pointer that moves under a reader, and this
 very paragraph is about a number that moved while someone was looking at it):
-**thirteen rows across four actions** have moved since `7def563`, and one of them is
-a whole `action` the cross-tab had no row for:
+**fifteen rows across five actions** have moved since `7def563`, and one of them
+is a whole `action` the cross-tab had no row for:
 
 | `action` | rows | `form` | `unrecorded` | `barrier` |
 |---|---|---|---|---|
@@ -2357,55 +2606,115 @@ a whole `action` the cross-tab had no row for:
 | `friction` | **8** | 3 | 0 | **5** |
 | `say` | **6** | 2 | 0 | **4** |
 | `advance` | 4 | 2 | 0 | 2 |
-| `search` | **3** | 3 | 0 | 0 |
+| `search` | **4** | 4 | 0 | 0 |
 | `inbox` | 2 | 1 | 0 | 1 |
 | `tension` | 2 | 0 | 0 | 2 |
 | `task comment` | 2 | 1 | 0 | 1 |
 | `task publish` | 2 | 0 | 0 | 2 |
 | `task claim` | 1 | 0 | 0 | 1 |
-| **total** | **293** | **129** | **2** | **162** |
+| **total** | **294** | **130** | **2** | **162** |
 
-*(`task list` read 54 and the total 292 / 161 when this table was re-derived;
-the two figures moved together because this session ran `aim task list` twice
-more while checking its own work, and each run writes a refusal row — the exact
-cost §4.6 measures. The total is therefore the row count of the moment, and the
+*(`task list` read 54 and the total 292 / 161 when this table was re-derived; the
+two figures moved together because this session ran `aim task list` twice more
+while checking its own work, and each run writes a refusal row — the exact cost
+§4.6 measures. The total is therefore the row count of the moment, and the
 *shape* is the finding: `task list` is the second-largest refusal family in the
 store, and every row of it is a peer being refused a read of work they can see
 by another route.)*
 
-*(This note has been rewritten twice, and the sequence is the section's own
+*(This table carries **three bases** inside one subsection, and a falsifier
+caught it by reading all three at once: the sentence says *fifteen* (working
+tree), the table under it sums to **294 / 130 / 2 / 162** (working tree), and the
+pid block forty lines down enumerates the same fifteen rows one by one. At HEAD
+the delta is `task list` +1,
+`search` +1 and the `push` record +1 = **3**; on the working tree it is
+`task list` +3, `say` +2, `search` +4, `friction` +4, `push` +1 = **15**,
+because `pid1279492` (a third `task list`) and `pid1300551` (a fourth `search`)
+are not in `git show 9de1c29`. *(The earlier form of this parenthesis gave "12 at
+HEAD / 14 on the working tree" and named four actions — it omitted the `push`
+record entirely and counted `friction` +5 where the window holds +4 in `hello`
+and +1 in `barrier-v0`. A note whose subject is that the subsection carries three
+bases was itself a fourth pair of numbers.)* The pid table below is
+on the working-tree basis, and the paragraph that says *"thirteen"* has been
+rewritten to fifteen with its own arithmetic shown, because a section whose
+subject is *a count that moved while you were looking at it* cannot afford to
+carry the movement in its own body as an unexplained discrepancy.)*
+
+*(This note has been rewritten three times, and the sequence is the section's own
 finding happening to the section's own table. It first said "five rows have
-moved"; a re-derivation mid-write made that "six"; the pid trace below makes it
-what it is — **thirteen rows over `task list` +3, `say` +2, `search` +3 and
-`friction` +5** — because every one of those three attempts counted *the actions
-whose columns changed* and printed them as *rows*. One table below the sentence
-about how counts move, written in the one currency that sentence says not to
-trust. The numbers above are a working-tree measurement and the *delta* rather
-than a total is what the paragraphs below reason from. *(The sentence above
-said twelve; the running ledger said twelve when it was written; a third
-`task list` refusal landed while this paragraph was being committed
-(`claude-session1`, pid 1279492 — `aim task list --as claude-session1 --channel
-hello`, the same verb the document is describing).)*
+moved"; a re-derivation mid-write made that "six"; a third version counted
+fifteen as twelve by printing *the actions whose columns changed* as *rows*. The
+pid trace below now enumerates it row by row: **fifteen rows against `7def563` —
+fourteen in `hello` (`task list` +3, `say` +2, `search` +4, `friction` +4, `push`
++1) and one `friction` in `barrier-v0`**, of which fourteen are refusals and the
+`push` is a `record`. The numbers above are a working-tree measurement and the
+*delta* rather than a total is what the paragraphs below reason from. *(At HEAD
+the same delta is **three**, not fifteen: `task list` +1, `search` +1 and the
+`push` record +1. Everything else in the window had already landed by `9de1c29`,
+including all five `friction` rows and both `say` rows. The table and the
+pid-block below are on the working-tree basis; the paragraph about how counts
+move describes a phenomenon, not a tree.)*)*
 
-**The thirteen new rows are mostly not mine, and this paragraph said they all
-were.** Traced by session pid against `git show 7def563`, six of the thirteen are
-a falsifier's own probes — **and they are the entire `friction` delta**: five
-`friction` rows, four in `hello` and one in `barrier-v0`, every one of them a
-non-participant being refused the friction report — three as `synthesizer-v0`,
-one as `synthesizer-v0` in `barrier-v0`, and one as an unregistered name
-(`unknown agent 'fakeh'`) — plus one `search` (`1239293`). Five carry
-`claude-session1`, i.e. are mine: three `task list` (`1152553`, `1237959`, and
-`1279492`, the third one run while this paragraph was being written) and two
-`say` (a `--kind report` refused as *"only meaningful in CROSS_EXAMINE"* and a
-`--kind note` refused as *"channel_say is False"*). **The remaining two are
-`search` rows written as agent `human` (`1202338`, `1202351`), and I cannot
-attribute them to a session from the record** — `human` is what `--as human`
-writes, and more than one hand has run it here. They are counted in the table and
-claimed by nobody in this paragraph.
+**The fifteen new rows are mostly not mine, and this paragraph said they all
+were.** Traced by **row hash** against `git show 7def563` across all five
+channels — the exact method, and it matters which one, because the wrong one
+produced the number this paragraph printed before: **15 rows** are new, **14
+refusals and one `push` record**. By channel that is **14 in `hello`** (three
+`task list`, two `say`, four `search`, four `friction`, one `push`) and **1 in
+`barrier-v0`** (one `friction`); by class it is 10 `barrier`, 4 `form` and 1
+`record`. Of the fifteen, **five** are a falsifier's own probes — all five
+`friction` rows: four as `synthesizer-v0`, and one as an unregistered name
+(`unknown agent 'fakeh'`, the one row in this group whose `agent` is the **empty
+string**, because the name it was refused under never resolved). **Six** are
+mine, carrying `claude-session1`: **three** `task list` (`1152553`, `1237959`,
+`1279492` — the third run while this paragraph was being written), **two** `say`
+(a `--kind report` refused as *"only meaningful in CROSS_EXAMINE"* and a
+`--kind note` refused as *"channel_say is False"*) and the one `push` **record**,
+which is a message leaving this session and not a refusal at all. **Four are
+nobody's**: `search` rows written as agent `human` (`1202338`, `1202351`,
+`1239293`, `1300551`), and I cannot attribute them to a session from the record —
+`human` is what `--as human` writes, and more than one hand has run it here. All
+four are byte-identical apart from `ts` and the session pid: `agent: "human"`,
+`phase: "COMMIT"`, `class: "form"`, and the same `reason` string, `REFUSED: name
+at least one scope to search (--log, --tasks, --rooms).` *(This paragraph said
+"25 rows" and decomposed them across channels and event kinds that do not exist
+in the record — 5 in `barrier-v0` where there is 1, 4 across
+`dev`/`s2-scratch`/`s2-scratch2` where there are none, five `task move` refusals
+where there are none, one `seal` where there is none, and two rows by
+`claude-session2`, an agent with no row in the window. The cause is a set
+difference taken against **one channel's** hash set instead of five: every row of
+`barrier-v0`, `dev`, `s2-scratch` and `s2-scratch2` — eleven of them, unchanged
+since `7def563` — was counted as new. **A hash-set difference is only as good as
+the set you build the base from**, and the paragraph's own method sentence said
+"across all five channels" while the code did one. The falsifier who caught it
+ran the same method with all five and got 15; so did I, on re-derivation, which
+is the first time in this document that a number has been wrong and the method
+that produced it was wrong in a way the prose had already forbid.)*
 
-    since 7def563, by pid:   falsifier        friction x5, search x1   (pids 1239855, 1239293, 1240246, 1240248, 1240301, 1240307)
-                             claude-session1  task list x2, say x2
-                             unattributed     search x2 (agent `human`)
+    since 7def563, by pid:   falsifier        friction x5             (pids 1239855, 1240246, 1240301, 1240307 in `hello`; 1240248 in `barrier-v0`)
+                             claude-session1  task list x3, say x2, push x1  (pids 1152553, 1237959, 1279492, 1153873, 1153920, 1281692)
+                             unattributed     search x4 (agent `human`; pids 1202338, 1202351, 1239293, 1300551)
+
+*(**This block sums to fifteen, which is the whole new-row set**, and every one of
+its fifteen pids is a row that exists in the store and is absent from `7def563`.
+The three earlier revisions of this block each summed to something else and each
+said so in a note: twelve, then eleven, now fifteen. *(The note immediately above
+this one said "the block sums to eleven, not twelve and not fourteen, and it is
+not the same eleven as the paragraph above it: it enumerates the `refusal` rows in
+`hello` only" — three claims, and **all three are false**: the block summed to 13
+(5 + 2 + 2 + 3 + 3's predecessor counts), it is not `hello`-only (`1240248` is
+`channels/barrier-v0/ledger.jsonl:7`), and it was not eleven. The one thing the
+note got right is that the block and the paragraph were describing different sets;
+it then made up a fourth set to explain the gap. **The bucket was also wrong in
+the direction the prose had just forbidden**: the block filed `1239293` under the
+falsifier while the prose three lines above it said that row cannot be separated
+from the other three by any field — and it is true, all four carry
+`agent: "human"`, `class: "form"` and a byte-identical `reason`, so the row is
+`unattributed` here and the count is four, not three.)* The lesson this section
+keeps relearning, and this block is its fourth instance, is that **an enumeration
+is not a total**: a list of rows with counts beside them is checkable by adding,
+which is why this one is printed with its pids and why every earlier version of it
+was wrong in a way that addition would have caught.)*
 
 So the sentence that stood here — *"the new rows are all this document's own
 author's"* — was false in exactly the way this section is about, and false about
@@ -2415,34 +2724,53 @@ section. The cause is worth naming because it is the same one three times now:
 the count was taken from a grep, the attribution was not taken at all, and the
 two were written as one sentence.
 
-Across the twelve, the `barrier` column grew by 9 and the `form` column by 3, and
+Across the **fifteen**, the `barrier` column grew by 10, the `form` column by 4
+and the `record` column by 1 — 188/126/33 at `7def563` against 198/130/34 live,
+so **ten of the eleven class-bearing new rows are `barrier` or `form` and the
+eleventh is the `push` record**, which by §4.6's own accounting wears a token in
+no refusal vocabulary and therefore belongs to neither refusal column. *(At HEAD
+`9de1c29` the delta is three rows and each column gains exactly one: the third
+`task list` (`pid1279492`, `barrier`), the fourth `search` (`pid1300551`,
+`form`) and the `push` record (`pid1281692`, `record`).)* — and
 the honest reading of *"152"* is that it was a working-tree number at one second,
 not a property of the machine. **The number in the sentence is a measurement at
 a tree and a second; the number in the table is too; and a section about how
 counts move printed one without the other** — and then attributed the movement to
 the wrong hand.
 
-**So of the 152 rows classed `barrier`, 134 are the withholding family and 18
-are something else entirely.** The split, by the reason text the tool itself
-wrote:
+**So of the 162 rows that carry the `barrier` class *by refusing something*, 135
+are the withholding family and 27 are something else entirely.** The split, by
+the reason text the tool itself wrote — and it is a split of the **refusal**
+rows only, because the class is worn by rows that refuse nothing:
 
 | what the row refused | rows | is it about one agent seeing another's work? |
 |---|---|---|
-| a peer's card in a divergence phase (the **draft gate**) | **134** — 76 `task move`, 54 `task list`, 2 `task publish`, 1 `task claim`, 1 `task comment` | **yes**, and it is the same mechanism as the barrier: a draft is a position wearing a task title |
+| a peer's card in a divergence phase (the **draft gate**) | **135** — 76 `task move`, 55 `task list`, **2 `task publish`**, 1 `task claim`, 1 `task comment` (**80** rows name a draft in their `reason`; the family is that plus every `task list` gate, which names the count rather than a card) | **yes**, and it is the same mechanism as the barrier: a draft is a position wearing a task title |
 | `channel_say is False` — public speech while the phase is closed | **3** | **yes** — this is the barrier proper, refusing a write across it |
 | the owner rule on `task move` (submit / approve) | **7** | no — a card's owner, not a phase |
 | `task new` publishing while the channel is closed | **6** | no — a creation rule |
 | `advance`: *"may not advance the barrier"*, a non-leader | **2** | no — a leadership check that happens to say "barrier" |
 | the tension report's reader gate (leader + synthesizer only) | **2** | no — a reader gate on a report, not on a position |
-| unknown agent / wrong-phase `kind` — pure form errors | **7** | no — and **four of these are this document's own falsifiers** being refused as non-participants while measuring this section |
+| form errors — `unknown agent` (2), `not a participant` (4), wrong-phase `kind` (1) | **7** | no — and **four of the seven are this document's own falsifiers** being refused as non-participants while measuring this section |
+| **subtotal, refusals** | **162** | |
 
-**Three of the 161 rows are the barrier the whole system exists for; 134 more are
-the same withholding mechanism one step off; and 24 are not about the barrier at
-all.** The class token and the thing it names are 158 rows apart on the strictest
-reading and 24 apart on the loosest, which is a wider gap than §4.6's 36, in the
-same direction and for the same cause.
+and the class also holds **36 rows that refused nothing at all** — 35
+`task_published_during_divergence` and 1 `channel_member_added`. Those two events
+are the *record* half of the same lifecycle: they say a divergence happened and a
+card was published through it, not that anything was denied. **198 rows wear the
+`barrier` class; 162 of them are refusals; the class token is therefore 36 rows
+wider than "a refusal about the barrier" before a single one is read.**
 
-*(Two corrections are stacked on this table and they point the same way. The
+**Three of the 162 refusal rows are the barrier the whole system exists for; 135
+more are the same withholding mechanism one step off; 24 are not about the
+barrier at all; and 36 are not refusals.** The class token and the thing it names
+are **195 rows apart on the strictest reading** (198 − 3 — every row wearing the
+class that is not the barrier proper) and **60 apart on the loosest** (the 24
+unrelated refusals plus the 36 that refuse nothing), which is a wider gap than
+§4.6's 36, in the same direction and for the same cause: *a class name is a
+label, and a label is not a mechanism.*
+
+*(Three corrections are stacked on this table and they all point the same way. The
 first: it used to read "of the 152 rows classed `barrier`, five are the barrier …
 the other 147 are the draft gate (128), the owner and publish rules (16) and
 `advance` (2)", and **128 + 16 + 2 = 146, not 147** — arithmetic performed on a
@@ -2458,7 +2786,33 @@ That is §4.6's finding arriving inside §4.6's own supporting table: the class
 token is assigned by the refuse site, not by the reason, and a row can say one
 thing and be labelled another. Four of the seven are this document's own
 falsifiers — refused as non-participants while measuring the very paragraph that
-counts them.)*
+counts them.
+
+**The third correction is this document's own named failure mode, arriving a
+third time in the same table, and it is why the sentence above now says 162.**
+The table's rows summed to **161** while the sentence it belonged to said
+*"of the **152** rows classed `barrier`, 134 are the withholding family and 18
+are something else"* — and `134 + 18 = 152` exactly. The 18 was not a
+measurement; it was **`152 − 134`**, a subtraction performed on a total from an
+older revision and printed as the composition of a 161-row table. §1.4 names
+this failure mode and this table was an instance of it: *the count was taken from
+one tree, the attribution from another, and the two were written as one
+sentence.* Re-derived here from the rows themselves, the refusal-bearing members
+of the class are 162 at the working tree / 161 at HEAD `9de1c29` / 152 at
+`7def563`, and the families are **135 / 3 / 7 / 6 / 2 / 2 / 7 = 162** with a
+further **36 non-refusing rows** wearing the class (35
+`task_published_during_divergence`, 1 `channel_member_added`) — which the table
+had been silently excluding from a sentence that claimed to cover the whole
+class. **198 rows carry the class; 162 are refusals; 135 are the withholding
+family.** `134`, the number the earlier paragraphs re-derived, is the value of that
+family at **HEAD `9de1c29`** — the three readings are **132 at `7def563`, 134 at
+HEAD, 135 at the working tree**, and the composition is invariant across all
+three (76 `task move` + 2 `task publish` + 1 `task claim` + 1 `task comment` = 80
+rows whose `reason` names a card, plus 52/54/55 `task list` gates, which name a
+count instead). So the re-derivation was one revision behind the sentence it was
+correcting, and the note that says so then named the wrong revision — a third
+turn of the same error, which is why all three readings are now printed instead
+of the one being defended.)*
 
 **And the deeper fact, which no count reaches:** `read_others` is `True` only in
 `CROSS_EXAMINE`, `RESOLVE` and `CLOSED`, and **no channel that ever held work has
@@ -2561,7 +2915,7 @@ categories are Parts IV-c.1 and IV-c.2. This is the other half — what the shap
 of the code is, and what the design says it is for — and it is here rather than
 in Part IV because it is a judgement about the whole, not a defect in a row.*
 
-## 6.1 The five layers the design names, and the three that exist
+## 6.1 The five layers the design names, and the one that exists
 
 `design/08-solution-shape.md` is the note that answers the leader's own
 instruction (*"最终整个项目需要是一整套解决方案：Skills、MCP、tools、services。web
@@ -2571,10 +2925,10 @@ against the tree:
 | layer, as `design/08` names it | the directory | what is actually there |
 |---|---|---|
 | `skills/` — "how an agent knows to use any of this" | **exists**, 2 files | `skills/aim/SKILL.md` and `skills/aim/install.sh` — and `install.sh` answers the note's own complaint, which this row carried forward as a measurement (see below) |
-| `protocols/` — "A2A and MCP (adapters, no rules)" | **absent** | the code is `aimboard/a2a.py` (1480 lines) and `aimboard/mcp.py` (204), and both live **inside** what the note calls the services layer |
-| `tools/` — "`aim` — the verbs, one implementation" | **absent** | `bin/aim`, 4911 lines, at the repo root |
+| `protocols/` — "A2A (foreign agents) and MCP (agent tools)" ("adapters, no rules") | **absent** | the code is `aimboard/a2a.py` (1480 lines) and `aimboard/mcp.py` (204), and both live **inside** what the note calls the services layer |
+| `tools/` — "`aim` - the verbs, one implementation" | **absent** | `bin/aim`, 4911 lines, at the repo root — and `design/08`'s own second table marks this layer **"yes"**, as it does `services`; only the *directory* is absent, and the row's column header says "the directory", which is the one place the difference is visible |
 | `services/` — "the fabric: log, ledger, task store, rooms, gate" | **absent** | `aimboard/`, 25 Python modules |
-| `dashboard/` — "the human's view" | **absent** | `web/src`, 40 files and 10833 lines (the `.vue` + `.js` subset; `web/src` whole is 41 files / 11463, and `web/` is 211 files), plus `aimboard/cli.py` as its server |
+| `dashboard/` — "the human's view" | **absent** | `web/src`, 40 files and 10833 lines (the `.vue` + `.js` subset; `web/src` whole is 41 files / 11463, and `web/` is **240** tracked files), plus `aimboard/cli.py` as its server |
 
 **The `skills/` row was the one row here doing the thing this document keeps
 catching.** It said *"`AGENTS.md` and `skills/aim/SKILL.md`. The note's own
@@ -2582,16 +2936,23 @@ verdict — *'half'* — is generous: neither is installable, versioned or share
 Measured:
 
 - The two files in `skills/` are `SKILL.md` and **`install.sh`**. `AGENTS.md` is
-  at the repo root and always has been.
-- `install.sh` is tracked at this document's own commit
-  (`git cat-file -e 4bcb0cb:skills/aim/install.sh` → present), and it does all
+  at the repo root — true of every commit since `fa6d92f`, which added it, though
+  not of the root commit `c8289cb`.
+- `install.sh` is tracked and present at this document's commit
+  (`git cat-file -e 4bcb0cb:skills/aim/install.sh` → present; it was added in
+  `01d53d0`, and `4bcb0cb` is 11 SOP commits older than HEAD, so the anchor is a
+  fixed point rather than "this document's own commit"), and it does all
   three of the things the sentence says are missing: `--print-version` prints
   the tree revision and both sha256s; a real run puts byte-identical `SKILL.md`
   into `$CLAUDE_HOME/skills/aim/` and `$CODEX_HOME/skills/aim/` from the one
   source and symlinks `aim`/`aimboard` onto PATH; `--uninstall` removes exactly
-  those two. Its header names this section's complaint **verbatim** — *"It is not
-  installable … not versioned with the tool … and it is written for a reader who
-  is already inside the repo"*. That is `design/08 §2`'s own prose about the
+  those two. Its header states the same three complaints in its own words — three
+  sentences (`install.sh:6-10`), not one, and its spelling is *"not versioned
+  *with* the tool"*. *(This said "names this section's complaint **verbatim**" and
+  then quoted an ellipsis-joined rewrite of three separate sentences with a word
+  dropped — which is the failure mode this document exists to catch, committed
+  against a file whose whole purpose is to be quotable. The claim holds; the word
+  "verbatim" did not.)* That is `design/08 §2`'s own prose about the
   state *before* the script, quoted in this table as a description of the state
   after it.
 
@@ -2614,10 +2975,19 @@ nothing was split into the directories it named:
 - **"Every adapter in `protocols/` either calls `bin/aim` or returns
   `UnsupportedOperation`, and there is no third option."** Measured, and the two
   adapters answer differently: `aimboard/mcp.py` is a **wrapper that shells out** —
-  four `subprocess` sites and its own description string, *"Thin MCP wrapper
-  around the aim CLI; `bin/aim` remains the only writer."* `aimboard/a2a.py` is
+  **one** `subprocess.run` (`mcp.py:23`) and its own description string, *"Thin MCP
+  wrapper around the aim CLI; `bin/aim` remains the only writer."* (This said
+  "four `subprocess` sites": the file *mentions* `subprocess` four times — the
+  import at `:15`, the call at `:23`, and two type annotations at `:111` and
+  `:156` — and a grep count is not a call count, which is the same slip §4.1
+  records for `!= "human"`.) `aimboard/a2a.py` is
   **not** a wrapper: zero `subprocess`, and it re-implements the visibility rule
-  (`task_visible`), the serialiser and the gate rather than calling `bin/aim`.
+  (`task_visible`) and carries its **own copy of the divergence-phase tuple**
+  rather than importing `gate`'s — `tests/test_a2a_conformance.py` is what pins
+  the two equal. (This row also said it re-implements "the serialiser and the
+  gate": neither holds. The serialiser is one implementation — `api.payload`
+  builds state from `fabric.load_fabric`, and `a2a.py` writes no JSONL — and
+  `a2a.py` does not import `gate` at all.)
 
 **The adapter rule is therefore true of one adapter and false of the other, and
 the one that violates it is the one that is 7× larger.** That is the architecture
@@ -2651,12 +3021,15 @@ control, and the design says outright that it is not enforceable.
 **Measured against that, the whole system is doing the half it can do, and doing
 it well, on a case that never arrived.** Part V records the arithmetic: 280
 recorded refusals at `7def563`, **132** of them concerning a peer's draft in a
-divergence phase (134 at the working tree — the family grows with use, which is
-the point), and **in `channels/` not one channel that held work has ever entered
+divergence phase (134 at HEAD `9de1c29`, **135** at the working tree — the family
+grows with use, which is the point, and it grows by a row every time a session
+reads a board it is not in), and **in `channels/` not one channel that held work has ever entered
 a phase where the barrier is open** — five channels, every one of them
 `≤ COMMIT` or at `SYNTHESIS`, **the two that hold any tasks** (`barrier-v0` and
 `hello`) at the divergence phases `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS`, and
-only one (`hello`) at `COMMIT` with a substantial store (495 task rows).
+only one (`hello`) at `COMMIT` with a substantial store (**498** task rows on the
+working tree; 495 at HEAD, 487 at `7def563` — a store this section has now quoted
+at three bases in three places).
 *(This paragraph said "150 of them" — a number that matches no class and no
 reason at any revision: it is the `barrier` class total minus the two
 `channel_say` rows at `7def563`, i.e. a right number given a false description,
@@ -2666,7 +3039,9 @@ any tasks (`barrier-v0`, `hello`, `dev`)": measured, **`dev` has no
 carried over from the four-*channel* count.)*
 `.dbg/channels/c` is tracked, sits at `CROSS_EXAMINE`, and holds two public
 cross-examination messages with `echo_ratio: 0.0` — but **no `tasks.jsonl`**,
-so by §1.5's own definition of "held work" it is not a counter-example. So
+so by **this section's own reading of "held work"** — a channel with a task store
+(the two it counted are exactly those with a `tasks.jsonl`; §1.5 defines no such
+term, and this sentence used to credit it) it is not a counter-example. So
 the contact-control machinery has been exercised 280 times as *refusal* on a
 channel with work in it and zero times as *permission* on a channel with work
 in it; the case it was built for has never arrived. What that means is not
@@ -2679,15 +3054,31 @@ This is the part of the leader's question (*"到底如何开始，如何progress
 如何结束"*) that the code cannot answer, and the SOP should say so plainly rather
 than imply it with a census: **the start is `aim init`; progress is the phase
 machine; the human's interaction is a read-only dashboard by default with an
-opt-in `--allow-write` write path to seven allowlisted commands (four of them
-requiring the leader, one of those seven being `advance`); and the end is a
+opt-in `--allow-write` write path to seven allowlisted commands (**two** of them
+refused to anyone but the leader — `advance`, and `say` *when its `--kind` is
+`ruling`*); and the end is a
 phase (`CLOSED`) that the tool makes reachable and nothing ever asks for.**
-Four of those five are machine-enforced. The one that is not is *when to stop*,
-and no amount of contact control can make it so. *(The earlier bullet said
-"the human's interaction is a read-only dashboard and five leader-only
-verbs"; `aim say` enumerates five verbs and `aim channel` four — the count
-"five" was a guess, and with `--allow-write` the dashboard is not strictly
-read-only — `cli.py:440`'s `writable = {"say", "push", "confirm", "task",
+Three of those four are machine-enforced — a phase machine with a terminal phase,
+a seven-command allowlist, and a rank gate on two of the seven; the one that is
+not is *when to stop*, the fourth thing the leader named, and the one no verb
+rule can make enforceable. *(This sentence has now been wrong three times, and
+all three errors are one shape: a rank claim read off a verb name instead of off
+a `require_leader` call, and a rank count read off a list of the leader's
+questions instead of off the verbs. The first version
+said "five leader-only verbs"; the second said "seven allowlisted commands
+(**four** of them requiring the leader)"; the third said "Four of those five are
+machine-enforced" over a sentence of four clauses. Of `cli.py:440`'s seven only
+**two** are refused by rank — `advance` (`:1453`) and `say --kind ruling`
+(`:1165`) — and
+`say` counts only under that one kind, which is exactly why both counts caught it
+as one item and then multiplied it. The rest are refused, where they are refused
+at all, by the phase or by an owner rule: `push`, `task list` and `task new` run
+rc 0 for a non-leader. The earlier bullet said "the human's interaction is a
+read-only dashboard and five leader-only verbs"; **`aim say` has no subcommands
+at all** (it is a leaf verb taking `--kind`) and **`aim channel` has three**
+(`workspace`, `add`, `remove`, `:4456`), so the "five" was a guess and the "four"
+that replaced it was a second one. With `--allow-write` the dashboard is not
+strictly read-only — `cli.py:440`'s `writable = {"say", "push", "confirm", "task",
 "advance", "request-advance", "reveal"}` is the truth of the sentence, and
 `advance` is gated by `require_leader` in `bin/aim` but reachable from the
 browser with the flag turned on. The check belongs in the allowlist comment,
@@ -2695,23 +3086,45 @@ not on the wire.)*
 
 ## 6.3 What the architecture gets right, stated as measurements
 
-Three structural decisions in this tree are load-bearing and none of them is
-stated anywhere as a rule:
+Three structural decisions in this tree are load-bearing. **One of them is stated
+as a rule — twice, in the two places a reader would look** — and the other two are
+not stated as rules anywhere:
+
+> `design/05-project-management.md:74` — `## 3. Storage: an event log, not a board file`
+> `README.md:525` — **The board is a view, never a file.** Board state is a fold
+> over `channels/<ch>/tasks.jsonl`, which is hash-chained like the log. There is
+> no mutable board document to lose a write to.
+
+*(The header used to say "none of them is stated anywhere as a rule", and the
+first decision below is stated as a rule in a design note **and** in the README —
+so the sentence was falsified by the document it was introducing an item of. The
+claim that survives is the interesting one and it is narrower: the two decisions
+after it are unstated, and the first is stated by the two documents that are not
+this one.)*
 
 1. **The task store is an append-only event log with a fold on read.** `fold_tasks`
-   (`aimboard/fold.py:61`) has no writer, recomputes board state from
-   `tasks.jsonl` on every load, and has a retraction branch (`:104-121`) rather
+   (`aimboard/fold.py:61`) writes no board file — it recomputes board state from
+   `tasks.jsonl` on every load — and has a retraction branch (`:104-121`) rather
    than a delete path. Measured: the *dashboard's* copy of the fold opens no
    store for writing (see §6.1's zero-writer finding), and there is no board
    file anywhere that a renderer mutates. The strongest form of the claim needs
    one caveat: `bin/aim:1666` defines a **second** `fold_tasks`, so "the store is
    a fold on read" is true of two implementations, not of one — and no file in
    the tree is *written* by either. The `edited` event (§IV-c, and T-0246) is a
-   whole-**record** bug and not a whole-board one: the fold has no branch for
-   that name, so the one card that emits it loses that one field silently while
-   its `created`/`moved` branches still fire. (The earlier sentence said
-   "whole-board"; the measured effect is one card, and the sentence reached past
-   its own evidence.)
+   **whole-event** bug and not a whole-board one, and it is a **future** bug
+   rather than a measured one: **no store in this repo has ever held an `edited`
+   row** (`grep -rh '"event": "edited"'` over `channels/` and `.dbg/` is 0), so
+   nothing is losing anything today. When one does arrive, the fold appends it to
+   `item["events"]` (`aimboard/fold.py:122`) and then matches **no** `kind ==`
+   branch — `moved`, `assigned`, `linked`, `published`, `dropped`, `commented`
+   are the arms, and `edited` is not one — so the **whole event** is dropped, not
+   one field: the card keeps its old values and `tasks_unknown_events` stays 0,
+   because that counter fires on a missing `created` and not on an unknown name.
+   (This sentence said "loses that one field silently while its
+   `created`/`moved` branches still fire" — one field where the mechanism is the
+   event, and a claim about *this* event's other branches when it meant a later
+   `created`/`moved` on the same card. Corrected in place; the defect is real and
+   it is one branch wide, which is why the sentence reached past its evidence.)
 2. **The ledger is hash-chained, and the check is a reader, not a writer.**
    `aim verify` walks `prev`/`hash` on every chained file and returns rc 1 on a
    broken chain — measured in §1.2, where a hand-written seal passes the advance
@@ -2719,11 +3132,20 @@ stated anywhere as a rule:
    match its hash`, `chain BROKEN`). It is **not the only** mechanism in this
    repo that *detects* rather than *prevents*; at least four others read and
    never write: `fold.drift` (`aimboard/fold.py:284`, *"Where the plan and the
-   store disagree"*); the task-id allocator (`bin/aim:1810-1860`) which calls it
-   and so *avoids* the colliding id rather than protecting it; `fabric`'s
-   `tasks_unknown_events` (`aimboard/fabric.py:269`) — the count the board
-   publishes and, per §4.6, nothing renders; and `bin/aim-doctor`, whose own
-   header says the tripwire lives outside the tool it watches. Plus the
+   store disagree"* — a reader called by `aimboard/api.py:401` and
+   `aimboard/cli.py:58`, and by **nothing in `bin/aim`**: `grep -c 'drift('
+   bin/aim` is 0, and the allocator cannot call it, because `drift` takes a seed
+   dict of plan tasks and the allocator computes a max over two sources); the
+   **task-id allocator** (`_plan_id_floor` `bin/aim:1788`, `_next_task_id`
+   `:1832`), which *avoids* the colliding id by taking the higher of the plan's
+   floor and the store's high-water mark — a different mechanism, not a second
+   reader of `drift`; `fabric`'s `tasks_unknown_events` (`aimboard/fabric.py:269`,
+   published at `aimboard/api.py:371`) — which **is** rendered, at
+   `web/src/panes/BarrierPane.vue:536`, as an `el-alert` warning over the
+   barrier pane (this clause used to say "nothing renders", and §4.6 has never
+   said it; the counter in this repo that genuinely has no reader is a different
+   one — no pane answers whether an `edited` ever landed); and `bin/aim-doctor`,
+   whose own header says the tripwire lives outside the tool it watches. Plus the
    conformance check at `tests/test_a2a_conformance.py:438`, which parses
    `_visible_to` out of `bin/aim`'s source and compares it against
    `a2a.TASK_VISIBILITY_RULE` — the crude check that would have caught the
@@ -2733,7 +3155,8 @@ stated anywhere as a rule:
    right.** §6.1's zero-writer finding is the positive half, and it holds.
    The negative half is bigger than §4.4 stated and simpler than it implied:
    the copies do not disagree about the *predicate* — all three spell
-   owner-or-creator — and they do not disagree about T-0041's stranger case.
+   owner-or-creator — and they **do** disagree about T-0041's stranger case,
+   which is the case that ticket exists to name.
    **They disagree about which phase governs a card that names no channel, and
    the disagreement is not symmetric.** §4.4 measured it on the live board as
    `rpc \ board = {T-0018, T-0027}` — a delta of two. Re-measured at this tree
@@ -2742,39 +3165,75 @@ stated anywhere as a rule:
 
    | viewer | `gate.visible_tasks` hidden | `a2a.hidden_count` | delta |
    |---|---|---|---|
-   | `a` (participant of nothing) | **75** | **0** | 75 |
+   | `a` (registered? — see below) | **75** | **0** | 75 |
    | `codex` | **51** | **38** | 13 |
    | `claude-session1` | **34** | **32** | 2 |
    | `human` | 0 | 0 | 0 |
 
    *(The four hidden counts here read 73/49/32/0 when this table was written and
    were re-derived at the tree §4.2 had just been corrected to — 75/51/34/0,
-   against a store that had grown from 180 to 182 cards. **That is the defect this
-   whole section is about, one table away from the table that fixed it:** §4.2
-   was re-derived and this one was not, so for one revision the document carried
-   two adjacent measurements of the same quantity that disagreed by exactly the
-   two channel-less plan rows — `T-0018`/`T-0027` — that the section exists to
-   explain. **And that causal claim is itself false, which a second falsifier
-   measured by re-materialising both trees and gating them.** `T-0018` and
-   `T-0027` are hidden in **both** tables; the +2 separating 73/49/32 from
-   75/51/34 is two *new* cards, `T-0249` and `T-0250` (both `context_id: hello`,
-   `visibility: draft`, no owner) — the two the room and `created_by` findings in
-   §4.4 were filed from. So the rows the section is about never moved, and the
-   two cards that did move are the ones this pass added. The `a` row's delta
-   moved with it, 73 → 75, because `a2a.hidden_count` returns `0` for a
-   non-participant at every revision. Only the `codex` and `claude-session1`
-   deltas held at 13 and 2 across the two trees, and they held for the reason
-   the note already gave and I should have stopped at: **both terms grew by the
-   same two cards**, so the difference stayed put while the numbers either side
-   of it moved — which is precisely the stability that let a stale pair survive
-   a reading in §1.4.)*
+   against a store that had grown. **That is the defect this whole section is
+   about, one table away from the table that fixed it:** §4.2 was re-derived and
+   this one was not, so for one revision the document carried two adjacent
+   measurements of the same quantity that disagreed. **And the causal claim that
+   replaced it — "the +2 is `T-0249`/`T-0250`" — is refuted by the test it
+   proposes, which a falsifier ran: materialise a tree at `9de1c29` with those
+   two cards withheld and re-derive.** `T-0249` and `T-0250` **are** in the
+   hidden set for `codex` and `claude-session1` (51 = 38 hidden + 13; 34 = 32
+   hidden + 2 — both terms fall by exactly two, so those deltas hold), and they
+   are **not** what moves the `a` row: `a2a.hidden_count('a')` is 0 at every
+   revision, so the `a` row's delta is its gate-side count, which is a **gate**
+   number and not a second term falling. **The `a` row is three trees, not one
+   number moving**: 71 at `7def563` (178 cards), 73 at the 180-card tree, 75 at
+   the 182-card tree. There is no single quantity here that went up by two and a
+   reason underneath it; there is an unregistered viewer whose whole delta is
+   whatever the gate withheld that week.)*
 
-   and end-to-end on a throwaway root with one draft: `GET /api/state?as=c`
-   (a registered stranger) → `tasks []`, `withheld_tasks 1`; `POST /rpc?as=c`
-   `ListTasks` → `["T-0001"]`. **So the board is not the conservative half and
+   **And `a` is not a non-participant — it is nobody.** `registry.json` holds
+   six ids (`claude-session1`, `claude-session2`, `codex`, `codex-orangement`,
+   `human`, `synthesizer-v0`) and **`a` is not among them**, so
+   `registry.get("a")` is `None` and the "registered stranger" branch of
+   `walled_off` (`gate.py:24`, the branch that returns `False` for a `human`)
+   never even runs. Decomposed by cause on this tree, the `a` row's 75 gate-side
+   hidden cards are **15 that name no channel and 60 that name a real one**,
+   while `codex`'s 13 and `claude-session1`'s 2 are channel-less only. So the
+   section's own gloss — *"a card that carries no channel"* — describes the two
+   small rows and **60 of the 75** of the large one; the rest is the stranger
+   clause, which is 80% of it. The corrected sentence is: *the `codex` and
+   `claude-session1` gaps are the channel-less case; the `a` gap is 20% that case
+   and 80% the stranger clause, because `a` is not in the registry and a
+   registered stranger is a case the two surfaces answer oppositely.*
+
+   **The stranger case, isolated on a throwaway root** (channel `ch`,
+   participant `c`, leader `lead`, one owned draft `T-0001`, phase
+   `SEALED_DIVERGENT`, registered non-participant `s`):
+
+       gate.visible_tasks(state, "s", {})  ->  visible 0, hidden 1
+       gate.walled_off(state, ch, "s")     ->  True
+       a2a.task_visible(card, "s", ch, reg) ->  True      # a2a.py:794
+       a2a.hidden_count("s")                ->  0
+
+   `gate.walled_off` (`gate.py:6-22`) makes a registered non-participant a
+   **stranger**; `task_visible` (`a2a.py:794-795`) returns `True` on the
+   identical condition, and the branch is **commented with the ticket number** —
+   `# a stranger is not a participant; T-0041's case`. Measured on this root,
+   `codex`'s own copy hides `T-0156` (a `hello` draft) while `a2a.task_visible`
+   returns `True` for the same card and viewer. **So the divergences are two, not
+   one, and the second is the one the ticket is named after.** §6.4's verdict
+   below follows from that and is corrected with it.)
+
+   and end-to-end on a throwaway root with one draft, **served `--as` a
+   registered non-participant**: `GET /api/state?as=s` → `tasks []`,
+   `withheld_tasks 1`; `POST /rpc` (the viewer is the server's `--as`, not a
+   request field) `ListTasks` → `["T-0001"]`. *(The earlier version of this line
+   said `?as=c` and called `c` "a registered stranger"; `c` was the channel's own
+   participant, and the same call as an unregistered id returns `[]`, so the
+   result depends on the viewer being registered — which is the whole point of
+   the clause above.)* **So the board is not the conservative half and
    `/rpc` is not the leaky one — `/rpc` is the generous one, and the board
-   withholds strictly more, for every viewer that is not the leader.** The two
-   differ where a card carries no channel: `gate.visible_tasks` resolves it to
+   withholds strictly more, for every viewer that is not the leader** — for two
+   separate reasons, not one. The two differ where a card carries no channel:
+   `gate.visible_tasks` resolves it to
    `gate.gate_channel`'s fallback (a real channel's phase), and `list_tasks`
    resolves `by_id.get("")` to `{}`, whose `phase` is `None`, and
    `None not in DIVERGENCE_PHASES` is `True` at `a2a.py:792`. Note that
@@ -2788,28 +3247,49 @@ stated anywhere as a rule:
 
 ## 6.4 The judgement this part adds
 
-**The architecture is a two-verb system wearing a five-layer diagram, and the
-diagram is why the rules drifted.** Everything that must be true for the fabric
+**The architecture is a writer-and-reader system wearing a five-layer diagram, and
+the diagram is why the rules drifted.** *Two* was the wrong number to put here,
+and it is wrong in the section's own currency. It is not a count of the CLI —
+`aim` exposes **26** top-level verbs — and it is not the dashboard's write path
+either: `cli.py:440`'s `writable` set is
+`{"say", "push", "confirm", "task", "advance", "request-advance", "reveal"}`, i.e.
+**seven** commands, exactly as §6.2 states it. *(This sentence read "it is the
+number of `bin/aim` commands the dashboard's write path can reach (`advance` and
+`task`)" — a gloss offered as the repair of a misleading count, and false in the
+same way: two is neither 26 nor 7. The two names are the ones this section goes on
+to discuss, which is how a count came to be read off the paragraph's own
+examples.)* What the sentence is reaching for is a count of *writers*, not of the
+tool: everything that must be true for the fabric
 to work is enforced in `bin/aim`; everything that is *convenient* is a read in
-`aimboard/` — *almost*: the dashboard's `POST /api/command` can run `advance`
-and `task` from a browser when the server was started with `--allow-write`
-(`cli.py:440`, see §6.2), so "convenient is a read" is the design intent and
-not the reachable surface. And the five-layer diagram is not a false
+`aimboard/` — *almost*, in two ways: the dashboard's `POST /api/command` can run
+`advance` and `task` from a browser when the server was started with
+`--allow-write` (`cli.py:440`, see §6.2), so "convenient is a read" is the design
+intent and not the reachable surface; and `POST /rpc` is a **second serving
+surface that reaches no writer at all** — `aimboard/cli.py:674` dispatches it
+*before* the allow-write branch at `:680`, so the A2A endpoint answers four of the
+eleven A2A operations from `aimboard/` with no `bin/aim` behind them, and the one
+rule it must enforce (who may read a draft) it enforces with its own copy. *The
+board's rendering* is a read; `/rpc` is not. And the five-layer diagram is not a
+false
 description of intent — it is a description of a refactor that did not happen.
 
 The causal sentence this section used to end on — *the access rule crossed from
 the writer's layer into a reader's layer and got copied there, and the cost is
 exactly §4.4* — is the part the falsifier corrected, and the correction is a
-real one. What §4.4 actually measures is not a *copied predicate* but two
-**call sites** resolving the same question differently: every copy spells
-owner-or-creator the same way; the disagreement is `gate.gate_channel`'s
-fallback (a real channel declares the barring phase) against `list_tasks`'s
-`by_id.get("") → {}` (no channel means no phase means open), for a card that
-names no channel. §4.4 named `T-0018`/`T-0027`; §6.3(3) re-measured it as a
-75/0 gap for a stranger on this same root. It is a difference in **one line of
-argument**, not a second copy of the rule — which is why §4.4's "one rule, one
-owner" verdict needs to be restated as "one rule, three call sites, one gap".
-The diagram's cost is real and it is not quite the cost this section used to
+real one. What §4.4 actually measures is not a *copied predicate*: every copy
+spells owner-or-creator the same way. It is a difference in **one line of
+argument** — `gate.gate_channel`'s fallback (a real channel declares the barring
+phase) against `list_tasks`'s `by_id.get("") → {}` (no channel means no phase
+means open), for a card that names no channel — **plus a second difference the
+correction missed**: a registered non-participant, whom `gate.walled_off` walls
+off (`gate.py:24`) and `a2a.task_visible` admits (`a2a.py:794`, commented with
+T-0041's number). Measured on this root, the `codex` gap of 13 and the
+`claude-session1` gap of 2 are **entirely** the channel-less case, and the
+unregistered viewer's gap of 75 is **15 channel-less plus 60 stranger** — so the
+section's old gloss covered the small rows and 20% of the large one. §4.4's "one
+rule, one owner" verdict therefore needs to be restated as **"one rule, three
+call sites, two gaps"**, not one. The diagram's cost is real and it is not quite
+the cost this section used to
 name.
 
 **The design philosophy is sound and its reach is stated correctly by its own
