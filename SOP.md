@@ -268,7 +268,14 @@ read back **[V]**.
 **Four of the seven edges move an access rule, and they come in two pairs that
 are the same two bits.** The version of this table that stood here said *"the
 only edge that changes an access rule"* of `SYNTHESIS → CROSS_EXAMINE` — false,
-and falsifiable from the same column three lines away, which the falsifier did.
+and falsifiable from the three rows directly under it in the same table
+(`CROSS_EXAMINE → SYNTHESIS`, `CROSS_EXAMINE → RESOLVE` and `RESOLVE →
+CROSS_EXAMINE` all carry a non-empty `rules_changed`), which the falsifier did.
+*(This said "from the same column three lines away", and both halves of that have
+since stopped being true: the falsifying entries are three rows **below**, not
+lines above, and they are in the table's **third** column, not the second. The
+distance form is what failed — the same reason the anchor in §4.6 was replaced
+this pass.)*
 The edit that fixed it then asserted *"three of the four are the same two bits"*,
 which is also false: the four are **2 + 2** — `{read_others, channel_say}` on the
 two `SYNTHESIS ⇄ CROSS_EXAMINE` edges, and `{channel_say, private_say}` on the
@@ -921,8 +928,11 @@ committed and cannot now be re-derived; 348 is the blob at `7def563` and at
 ledger's class-bearing count at `01a1735`. The live figure is 362.)* The census is
 the one place where a number that moves is *evidence* rather than drift: of the
 five channels under `channels/`, **none above `SYNTHESIS`** after two days of
-real use. *(This read "none above `COMMIT`", which the table three lines above it
-contradicts: `barrier-v0` is at `SYNTHESIS`, the table's own second column says
+real use. *(This read "none above `COMMIT`", which the census table above it
+contradicts — its own second column reads `barrier-v0 | SYNTHESIS`, four rows
+below that table's header. *(The clause said "the table three lines above it";
+the table is above, but the three-lines part was a distance and distances in this
+document do not survive the document's own edits.)* `barrier-v0` is at `SYNTHESIS`, the table's own second column says
 so, and the paragraph above the table already names it as the furthest of the
 five. The `COMMIT` claim is true of `hello` alone. The tracked
 `.dbg/channels/c` is one phase higher still, at `CROSS_EXAMINE` — but it is not
@@ -1418,8 +1428,11 @@ result in the table at the top of this section, and not the total bypass the
 phrase "master key" suggests. Stated as a number: **31 comparisons, 24 functions,
 1 of them also compares the caller against the manifest's `leader` field.**
 
-*(This line read "30 comparisons" — the table eleven lines above it says 31, and
-an AST walk says 31, so the section contradicted itself in one screen. It also
+*(This line read "30 comparisons" — the count table above it says 31 (`| comparisons
+on `"human"` | **31** — 25 `!=`, 6 `==``), and
+an AST walk says 31, so the section contradicted itself in one screen. *(That
+clause said "eleven lines above it": it was eleven when it was written and is
+forty-four now.)* It also
 said "1 of them also checks the name", which is right only under a reading the
 sentence did not give: seven of the 31 sit in a function that has the caller's
 identity in scope, and of those only `require_leader:831` compares it against
@@ -1616,8 +1629,10 @@ the 71 was one draft stale, and the `179/178` was an artefact of the default
 `nextPageToken` for every seat, so "179" was whatever `pageSize` the earlier
 probe passed; fixed by re-deriving every column at one `pageSize` (`500`). **The
 next version had the fourth column wrong in the more serious direction: it printed
-`rpc \ board` = 0 for `claude-session1` and `codex`, while §4.4 three hundred
-lines below measures the same two seats at 2 and 13.** Two tables, one document,
+`rpc \ board` = 0 for `claude-session1` and `codex`, while §4.4, the next section
+but one, measures the same two seats at 2 and 13.** *(That said "three hundred
+lines below". §4.4 is one heading down; the three-hundred was a second revision's
+distance, and every figure in both tables has been re-derived since.)* Two tables, one document,
 opposite answers, both labelled measured — the failure this section is itself
 about. Re-derived on the working tree with the real call signature
 (`a2a.list_tasks(request_id, *, tasks, viewer, channels, registry, page_size=500)`),
@@ -2140,8 +2155,13 @@ complement tracks the `push` family, and **none of the three tracks whether the
 barrier is up**. **What the pane shows tracks the refusal count; what it can never
 show is the 36 rows the class was invented for** — the class minus the refusals,
 `187 − 151`, `190 − 154`, `195 − 159`, `197 − 161` and `201 − 165` alike. *(This said "the
-fixed 35-or-so rows", hedging a number the paragraph ten lines below prints
-exactly as **36**. The hedge is not a range: it is 36 at every base this caption
+fixed 35-or-so rows", hedging a number that the closing line of this subsection —
+the one that begins *"The 36 rows it cannot see"* — prints exactly as **36**.
+(This clause used to say "ten lines below", which it was when it was written and
+was twenty by the time anyone read it: this pass's own corrections went in between
+them. A distance between two places in a document under edit moves whenever
+anything between them is edited, and both anchors in this caption have now been
+replaced with the text they point at for exactly that reason.) The hedge is not a range: it is 36 at every base this caption
 names, and its composition does not change either — 35
 `task_published_during_divergence` + 1 `channel_member_added`, at `7def563`, at
 `01a1735`, at `9de1c29` and on the working tree alike. *(The arithmetic above was
@@ -2150,7 +2170,10 @@ one row behind each of its two inputs for one pass: the store had moved to
 survives a stale pair, which is exactly why the pair has to be printed rather
 than the total.)* *(The first version of this
 parenthesis described the wrong set: it gave the composition of the **complement**
-— 33 `push` + 3 `seal` + 1 `phase`, which is the 37-row set thirty lines up, not
+— 33 `push` + 3 `seal` + 1 `phase`, which is the 37-row set whose composition is
+printed a few lines above this parenthesis (*"`seal` 3 + `phase` 1 + `push` 33 =
+**37**"*; this clause said "thirty lines up", which is what it was when it was
+written and is not now), not
 this 36-row one — and then drew from it the conclusion "no publication row at
 all", which is true of the complement and false here, where 35 of the 36 *are*
 publication rows. The two sets are adjacent, both in `hello`, both stable across
@@ -3060,8 +3083,12 @@ not the same eleven as the paragraph above it: it enumerates the `refusal` rows 
 note got right is that the block and the paragraph were describing different sets;
 it then made up a fourth set to explain the gap. **The bucket was also wrong in
 the direction the prose had just forbidden**: the block filed `1239293` under the
-falsifier while the prose three lines above it said that row cannot be separated
-from the other three by any field — and it is true, all four carry
+falsifier while the prose above it said — of these same four rows — *"I cannot
+attribute them to a session from the record … All four are byte-identical apart
+from `ts` and the session pid"*, i.e. that row cannot be separated
+from the other three by any field *(that clause read "three lines above it"; the
+prose is twelve paragraphs up, and the distance form is the one this pass has
+retired everywhere it found it)* — and it is true, all four carry
 `agent: "human"`, `class: "form"` and a byte-identical `reason`, so the row is
 `unattributed` here and the count is four, not three.)* The lesson this section
 keeps relearning, and this block is its fourth instance, is that **an enumeration
@@ -3072,8 +3099,11 @@ was wrong in a way that addition would have caught.)*
 So the sentence that stood here — *"the new rows are all this document's own
 author's"* — was false in exactly the way this section is about, and false about
 **the row class whose growth the paragraph above attributes to a batch of
-falsifiers**, i.e. it contradicted the note two paragraphs up in the same
-section. The cause is worth naming because it is the same one three times now:
+falsifiers**, i.e. it contradicted the note in the same section that says *"of the
+sixteen, **five** are a falsifier's own probes"*. *(That clause read "two
+paragraphs up", which is one of the few distances here that still measures —
+whether the indented pid block counts as a paragraph is the reader's call, and
+that is exactly why it is now the sentence rather than the distance.)* The cause is worth naming because it is the same one three times now:
 the count was taken from a grep, the attribution was not taken at all, and the
 two were written as one sentence.
 
