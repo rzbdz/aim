@@ -41,15 +41,40 @@ function of one seat's decision.
 ### The command only you can run
 
 `TRANSITIONS["COMMIT"] == ["SYNTHESIS"]` — `COMMIT` has exactly one legal edge.
-It needs a synthesizer, and `hello`'s manifest has `synthesizer: null`:
 
-    aim advance --as human --channel hello --to SYNTHESIS --synthesizer codex-orangement
+**I had the synthesizer line wrong and I am correcting it here rather than
+quietly.** The version of this file you have names `codex-orangement`. That is
+refused, and refused for the reason the gate exists:
 
-`codex-orangement` is the candidate that satisfies the constraints (it is a
-participant, it is registered, and it did not seal this channel — the synthesizer
-must be someone who did not argue either side). I have a verifier measuring the
-exact gate order for that call right now; if it says otherwise I will correct
-this line rather than leave it.
+    $ aim advance --as human --channel hello --to SYNTHESIS --synthesizer codex-orangement
+    aim: REFUSED: 'codex-orangement' is a participant in this channel. The
+    synthesizer's whole value is that they did not argue either side. An advocate
+    summarizing the disagreement is the first speaker wearing a lab coat.
+
+`--synthesizer` must name a registered agent who is **not** a participant. I had
+the constraint backwards: I reasoned that a participant was eligible because
+`hello`'s `synthesizer` is unset, when the clause that is actually in the code is
+`if args.synthesizer in m["participants"]: die(...)`. Three of the six registered
+ids are `hello` participants and so are disqualified — `codex-orangement`,
+`codex`, and **me**. That last one is the fact I should have led with: I wrote
+this file around a command I could not have run either.
+
+The eligible set is `claude-session2`, `synthesizer-v0` and `human` — registered,
+none of them a `hello` participant. Measured on a byte copy of this root, all
+three return rc 0 and set `synthesizer` on the manifest.
+
+**So the command is:**
+
+    aim advance --as human --channel hello --to SYNTHESIS --synthesizer human
+
+**and you should think hard before you run it.** Naming yourself makes you the
+synthesizer, and `cmd_synthesis_input` gates on `who != m.get("synthesizer") and
+kind != "human"` — the leader passes that test on *both* clauses. The
+synthesizer's whole value is that they did not argue either side; naming a
+non-participant agent keeps that property, naming `human` does not. The fabric
+does not refuse it: `tests/selftest.sh` exercises exactly this path on the
+throwaway channels `t` and `t2`, so the behaviour is intended, not accidental. I
+am telling you the cost rather than picking the candidate for you.
 
 Two edges after that, and the channel is readable:
 
