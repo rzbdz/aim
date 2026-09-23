@@ -31,6 +31,42 @@ REASON_FIELDS = ("reason", "status_reason", "move_reason", "notes")
 COMMENT_BODY_FIELDS = ("body", "note")
 
 
+# Every event name the *task store* can carry, and the vocabulary the unknown
+# counter is measured against (T-0246). Not the ledger's names: `phase`, `seal`,
+# `push`, `refusal`, `concession`, `friction`, `room_created`,
+# `workspace_cleared`, `channel_member_*`, `task_published_during_divergence`,
+# `doorbell_*`, `deleted` are all real events in this tree and all of them are
+# ledger or push-config rows, correctly outside a task fold. The nine below are
+# exactly what `_append_task_event` (the one function every task event is
+# appended through) is called with, which is why this list can be complete
+# rather than a guess. It is the same nine `bin/aim`'s `TASK_EVENTS` declares,
+# and *that* list is read now too: T-0251 put `_refuse_stray_task_event` in
+# front of both append paths, so a writer cannot add a name here without
+# meeting either a refusal at the writer or this counter -- the earlier reading
+# of this paragraph ("`bin/aim:127` declares the same eight ... and no code
+# reads it") was true of the CLI when it was written and is no longer, and the
+# line number in it had already gone stale because every edit to `bin/aim`
+# moves it. `grep -n TASK_EVENTS bin/aim` is the number; a citation cannot
+# survive being written into a file people keep editing.
+TASK_EVENT_NAMES = frozenset((
+    "created", "moved", "assigned", "published", "linked", "commented",
+    "dropped", "retracted",
+    # T-0235's verb, folded by the `edited` branch below. It is in the same
+    # vocabulary as the rest: `cmd_task_edit` appends it through
+    # `_append_task_event`, so it lands in `tasks.jsonl` beside them.
+    "edited",
+))
+
+# The fields `aim task edit` may change, mirrored from `bin/aim`'s
+# `TASK_EDIT_FIELDS` (`bin/aim:166`): the closed list that verb enforces, and
+# the one an `edited` event's `changes[].field` is drawn from. Held here rather
+# than read off the event because the fold's job is to know what a card may
+# carry, not to trust the writer about it -- `token` or `hash` arriving as a
+# `field` would otherwise become board state.
+TASK_EDIT_FIELDS = ("milestone", "priority", "start", "due", "estimate_pts",
+                    "tags", "title", "accept")
+
+
 # The estimate migration, stated once (T-0212). This constant is the *record* of
 # the rule: it is in the module that reads `estimate_hours`, so a reader who finds
 # an hour value on a row can find where the number came from without being told.
@@ -59,7 +95,26 @@ ESTIMATE_MIGRATION = {
 
 
 def fold_tasks(events):
-    """Board state is a fold over the event log. No board file exists."""
+    """Board state is a fold over the event log. No board file exists.
+
+    Returns `(items, unknown)`. `unknown` counts the events this fold could not
+    place, and it is the store's own alarm: it is published as
+    `channels[].tasks_unknown_events` and folded to the fabric's
+    `unplaced_events`, which `BarrierPane.vue` draws as a warning rather than
+    letting the board look quietly complete.
+
+    Two ways an event is unplaceable, and the second one was missing until
+    T-0246. An event for a task whose `created` this fold never saw is the first
+    (`T-9999` moved by a writer whose creation was truncated away), and it was
+    the only one counted. The second is an event whose **name** is not in the
+    store's vocabulary: `edited` was written into `tasks.jsonl` by
+    `cmd_task_edit` (T-0235) for a day, arrived after a `created` the fold did
+    read, matched no branch below, and left both the counter at 0 and the field
+    it edited at its old value -- the board, the A2A surface and the help page
+    all agreeing on a value the record had changed. An alarm wired to a
+    different condition than the one the writer produces is worse than no alarm,
+    because it reports "the store is clean" in the one case that is not.
+    """
     items, unknown = {}, 0
     retracted = set()
     for ev in events:
@@ -71,6 +126,15 @@ def fold_tasks(events):
         kind = kind[5:] if kind.startswith("task.") else kind
         tid = ev.get("task") or ev.get("id")
         if not tid:
+            continue
+        if kind not in TASK_EVENT_NAMES:
+            # Named before the placement test, and counted whether or not the id
+            # is one this fold has seen: an unknown *name* is unknowable for a
+            # known card and an unknown one alike, and the `items`/`retracted`
+            # branches below would otherwise classify it as an ordinary event of
+            # a card that exists -- which is exactly how `edited` disappeared.
+            # `task.` was already stripped, so both spellings land here.
+            unknown += 1
             continue
         if kind == "created":
             item = {"id": tid, "events": [], "comments": [], "visibility": "draft"}
@@ -85,6 +149,32 @@ def fold_tasks(events):
             # about one number would not have been reading the same record.
             if "estimate_hours" in ev:
                 item["estimate_hours"] = ev["estimate_hours"]
+            # Who created the card, derived the one way the store can answer it:
+            # `bin/aim` writes no `created_by` on a `created` event -- the field
+            # is derived at read time by the tool's own fold, which sets it to
+            # the event's `actor` (`bin/aim:1866`, `"created_by": e.get("actor", "")`)
+            # -- so the board's fold has to derive it the same way or publish a
+            # card with no author at all.
+            #
+            # [measured on this store: `'created_by' in <folded card>` is False
+            # for every card, while the same card's `created` event carries
+            # `actor`. 105 `created` rows across channels/barrier-v0 and
+            # channels/hello, 0 of them carrying a literal `created_by`.]
+            #
+            # `claim`/`claim_command`'s rule (`fold.py`, T-0227), the A2A
+            # binding's rule (`a2a.py:796`, `TASK_VISIBILITY_RULE`) and
+            # `gate.visible_tasks` (`gate.py:70`) all spell the same union.
+            #
+            # In the event's `actor`, and never from `ev`'s own `created_by`:
+            # `PLAN_FIELDS` names the union too, but it is the seed vocabulary --
+            # read by `merge_plan` and by the plan half of the merge -- and
+            # `load_plan` copies whatever `plan/*.json` carries (0 of the seeds
+            # carry the key today), so reading it here would let a plan file
+            # declare an author that no `created` event recorded. The same
+            # distinction `estimate_hours` above is drawn on. Assigned rather than
+            # guarded because this is a field the writer never emits, so there is
+            # no earlier reading of it to preserve.
+            item["created_by"] = ev.get("actor", "")
             # A creation that recorded its note under the singular name still
             # reaches the field every surface reads (T-0204). Guarded rather than
             # assigned: a creation's own note is a declaration, and a later
@@ -145,6 +235,39 @@ def fold_tasks(events):
                 "body": next((ev[f] for f in COMMENT_BODY_FIELDS if ev.get(f)), ""),
                 "visibility": ev.get("visibility", item["visibility"]),
             })
+        elif kind == "edited":
+            # T-0246. `aim task edit` (T-0235) writes one event per edit, and it
+            # is the only writer into `tasks.jsonl` that reaches a field the
+            # `created` branch did not freeze: `milestone` was written once by
+            # `task new` and no verb could change it, so a card filed under the
+            # wrong milestone stayed there and the milestone's denominator
+            # absorbed unrelated work. The verb exists to move that field, so a
+            # fold with no branch for its event is the board and the tool
+            # disagreeing about the card -- silently, because the event is
+            # well-formed and its task *was* created.
+            #
+            # The payload is `changes: [{field, from, to}]` (`bin/aim:2503`), a
+            # list rather than a `set`, and both halves are read: `to` is the
+            # new value, `from` is what the field was -- and the whole reason
+            # the event carries it is that "was this card always in M2" has to
+            # be answerable from the record. `from` is published as
+            # `<field>_was` so an edit is visible as an edit; a board that only
+            # carried the new value could not tell a milestone that was always
+            # M2 from one that was moved there.
+            for change in ev.get("changes") or []:
+                if not isinstance(change, dict):
+                    continue
+                field = str(change.get("field") or "")
+                # Only fields a card can carry: a change naming anything else
+                # would write a key no surface reads onto the row, which is how
+                # a payload from another generation gets to invent board state.
+                if field not in TASK_EDIT_FIELDS:
+                    continue
+                if field == "tags":
+                    item[field] = as_list(change.get("to"))
+                else:
+                    item[field] = change.get("to")
+                item[field + "_was"] = change.get("from")
     return items, unknown
 
 

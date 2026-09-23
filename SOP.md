@@ -818,6 +818,38 @@ phase simply has no membership rule attached to the task verbs.
   disabled this channel's ordinary exit", and the bullet above it is titled
   *End*.
 
+  **Corrected by T-0248, which is the half above that was still wrong.** The
+  refusal *did* say something — it said the wrong thing for this caller. Measured
+  on a throwaway root at the pre-fix writer, from `COMMIT` with a shared
+  workspace declared, and the labels are the four sentences it actually printed:
+
+      COMMIT -> SYNTHESIS  bare   rc=2  REFUSED: channel 'ch' declares a shared
+                                        workspace ... Amend the manifest (aim
+                                        channel workspace --channel ch --none)
+                                        or run this channel without a barrier.
+      COMMIT -> SYNTHESIS  --force rc=2  the identical text, to the byte
+
+  Two facts live in that output and the pair of them is the defect. The refusal
+  was the **generic** one — the same message `new-channel` and `CROSS_EXAMINE →
+  SYNTHESIS` print — so the only remedy it led with was a manifest edit, offered
+  to a leader who was asking to *move*; and the forced and bare runs were
+  indistinguishable. Nothing anywhere on stdout said that the edge just closed
+  was `COMMIT`'s only one, which is the sentence T-0248's accept line asks for,
+  and the earlier reading of this bullet — "nothing in the tool says" — was a
+  claim about a message that existed. Fixed in `assert_barrier_defensible`
+  (whose `refused_edge`/`forced` arguments `advance` passes — the `def` is at
+  `bin/aim:556` at the declared base above and `bin/aim:585` on the working tree,
+  which is the pair the paragraph one section up is about): the refusal now
+  begins `'COMMIT -> SYNTHESIS' is refused`,
+  adds `under --force as well` only when `--force` was really passed, continues
+  `It is the only legal forward edge out of COMMIT, so this channel can no longer
+  close by the ordinary route.` — with that sentence derived from
+  `TRANSITIONS[cur]` rather than asserted, so `CROSS_EXAMINE -> SYNTHESIS` prints
+  `CROSS_EXAMINE keeps its other edges: RESOLVE` instead — and offers the
+  declaration-clearing exit first. `tests/conformance.py::t_workspace_strands_commit`
+  pins it, and pins the other half: no manifest phase, no history entry and no
+  ledger `phase` row for the advance that did not happen.
+
 - `room say` works in `CLOSED` for a **participant**, refused for a non-participant
   (`aim room say --as out --channel ch --id r1` → `'out' is not a participant in
   ch`); `task publish` works for an owning participant. **Re-measured by me** on
@@ -3445,7 +3477,7 @@ the wrong table and "sixteen" of the right one, in two different edits), which i
 what makes the mistake look like a measurement: the number was correct and the
 object was wrong. Three was right only if step 8's hybrid is excluded *and*
 machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
-`PROSE` above this paragraph are five — `:166`, `:173`, `:2409`, `:2412`, `:2413` —
+`PROSE` above this paragraph are five — `:166`, `:173`, `:2441`, `:2444`, `:2445` —
 while this note's earlier text listed four uses of the token, one of
 which it then excluded and one of which it called a machine row: the sentence and
 its note were counting different sets. *(These are the five cells the paragraph

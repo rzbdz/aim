@@ -18,7 +18,7 @@ from .fabric import fabric_digest, load_fabric
 from .revision import describe as describe_revision
 from .fold import drift, flow_series, parse_span
 from .gate import gate_channel, visible_tasks
-from .page import render_html
+from .page import _build_line_html, build_line, render_html
 from .primitives import now_iso, parse_day, read_json, read_jsonl
 
 
@@ -484,8 +484,46 @@ def cmd_serve(args):
             # browser polls a cheap digest and offers a refresh only when the
             # record has actually moved, because a board that reloads under your
             # hands is a board that throws away your place in it.
+            # T-0196: the payload's own `revision` is handed in, so the drawn page and
+            # `/api/state` answer "which build" from one computation rather than two.
+            # The same call the `/api/state` branch above makes, so the page cannot
+            # name a revision the JSON endpoint does not publish.
             return render_html(state, viewer, risks, now_iso(), args.lang,
-                               digest=fabric_digest(root), poll_ms=refresh)
+                               digest=fabric_digest(root), poll_ms=refresh,
+                               payload=json_state(state, viewer, self._risks(), now_iso(),
+                                                  write={"enabled": bool(args.allow_write),
+                                                         "as": self._writer() if args.allow_write else ""},
+                                                  read={"as": viewer,
+                                                        "borrowed": "as=" in (self.path or "")}))
+
+        def _build_line(self, viewer):
+            """T-0196's build line, for the shell that `web/dist` serves.
+
+            Measured this session, and it is the reason this method exists rather than
+            the line living only in `render_html`: on this server the render path is
+            **dead for every browser**. `GET /`, `/index.html` and `/board.html` take
+            the branch below, `self._asset("index.html")` returns 1876 bytes because
+            `web/dist/index.html` exists, and `_render` is that branch's `else` -- so
+            `render_html` runs for the `aimboard render` export and for nothing a
+            browser sees. A build line drawn only there would be the same defect this
+            card is about, one layer out: the payload carries the revision and the page
+            the reader is served prints neither.
+
+            The bytes are read from `web/dist/revision.json` -- the record the build
+            wrote -- rather than recomputed, because `describe` answers "do the served
+            bytes match the source *now*", which is a different question from "what
+            built these bytes". Computed per request, so a rebuild is picked up without
+            restarting the server. Returns "" when nothing was recorded: a page that
+            cannot name its build should say nothing rather than guess.
+            """
+            inv = build_line(describe_revision(root, web))
+            line = _build_line_html(inv)
+            if not line:
+                return ""
+            return ('<style>.build-line{display:block;padding:6px 20px;font:11px/1.6 '
+                    'ui-monospace,SFMono-Regular,monospace;background:#3b2a12;color:#fbbf24;'
+                    'border-bottom:1px solid #5b4318}html.dark .build-line{background:#2a1f0c}'
+                    '</style>' + line)
 
         def _viewer(self):
             if "as=" in (self.path or ""):
@@ -885,7 +923,24 @@ def cmd_serve(args):
                 if path in ("/", "/index.html", "/board.html"):
                     asset = self._asset("index.html")
                     if asset:
+                        # T-0196: the served shell is only usable if the page can say
+                        # which build drew it, and the bundle states no revision of its
+                        # own (measured: `web/dist/index.html` and `assets/index-*.js`
+                        # each contain the substrings `revision`, `stale` and `dirty`
+                        # zero times). So the line is injected here, after `<body>`, on
+                        # the bytes the browser actually gets. The Vue shell is served
+                        # byte-for-byte otherwise, and an asset that does not open with
+                        # `<body>` is passed through untouched.
                         body, ctype = asset[0], asset[1]
+                        if str(ctype).startswith("text/html"):
+                            try:
+                                text = body.decode("utf-8")
+                                line = self._build_line(self._viewer())
+                                if line and "<body>" in text:
+                                    text = text.replace("<body>", "<body>" + line, 1)
+                                    body = text.encode("utf-8")
+                            except (UnicodeDecodeError, LookupError):
+                                pass
                     else:
                         body, ctype = self._render(self._viewer(), args.refresh), "text/html; charset=utf-8"
                 elif path == "/board.json":

@@ -161,6 +161,16 @@ def load_rooms(channel_dir):
             "id": meta.get("id") or path.stem,
             "topic": meta.get("topic", ""),
             "visibility": meta.get("visibility", "draft"),
+            # T-0249: the metadata half of the room gate. `gate.room_authors`
+            # decides a room is readable by the agent who *opened* it, and the
+            # opener is recorded on `rooms/<room>.json` (`author`/`created_by`,
+            # `bin/aim:3022`) -- so a loader that forwards only the log hands the
+            # gate half the evidence and the author of an empty room, or of a room
+            # whose opener did not write the first message, is locked out of their
+            # own draft. Forwarded, and the gate still fail-closes on a room whose
+            # log names an opener its metadata does not.
+            "author": meta.get("author") or meta.get("created_by", ""),
+            "created_by": meta.get("created_by", ""),
             "messages": msgs,
             "unread": seen,
             "mentions": mentions,

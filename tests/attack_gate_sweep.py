@@ -45,7 +45,13 @@ import tempfile
 AIM = "/root/tmp/agent-im/bin/aim"
 BOARD = "/root/tmp/agent-im/bin/aimboard.py"
 SECRET = "POSITION-omega-the-echo-check-is-the-real-failure-mode"
-CLAIMS = [{"id": "c1", "text": "t", "falsifier": "f"}]
+# The claims format, as `aim seal --claims` documents it: an object needs
+# `id`, `claim` and `kill_if` (bin/aim's `check_claims_file`). This fixture
+# used `text`/`falsifier`, which nothing reads -- it was accepted silently
+# until T-0247 gave the verb a guard, and then this file's seal probe failed
+# at open_the_barrier with "seal a1 failed". The keys were always wrong for
+# the documented format; they were only invisible.
+CLAIMS = [{"id": "c1", "claim": "t", "kill_if": "f", "confidence": 0.5}]
 
 
 def run(root, *args, stdin_text=None):

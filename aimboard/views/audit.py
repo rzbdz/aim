@@ -1,6 +1,6 @@
 """A view. Registering one is the whole extension point."""
 from ..gate import may_see_peer_secrets
-from ..primitives import esc
+from ..primitives import esc, read_seal_claims
 
 
 def render_barrier(state, viewer, labels):
@@ -14,7 +14,13 @@ def render_barrier(state, viewer, labels):
             if not seal:
                 sealed += f'<li>{esc(who)}: <span class="warn">not sealed</span></li>'
                 continue
-            claims = seal.get("claims") or []
+            # T-0247: the count and the rows come from one list, so this pane
+            # cannot print a claim count beside a smaller set of rows -- and a
+            # seal carrying a string, a number or a list of strings renders as
+            # "0 claim(s)" instead of raising. The same reader serves the JSON
+            # API, so the HTML pane and `/api/state` agree on what an unreadable
+            # seal holds: nothing. `aim verify` is where the damage is reported.
+            claims = read_seal_claims(seal)
             digest = (seal.get("digest") or seal.get("private_log_sha256") or "")[:12]
             # The gate withholds a *peer's* claims. Your own seal is your own
             # commitment and `aim` lets you read your own log; a dashboard that

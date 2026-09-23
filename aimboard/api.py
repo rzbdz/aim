@@ -18,6 +18,7 @@ from .revision import default_dist, describe as describe_revision
 from .fold import drift, report_data, task_history, fold_tasks, merge_plan
 from .gate import (conversation_view, gate_channel, may_see_peer_secrets,
                    stuck_tasks, visible_tasks)
+from .primitives import read_seal_claims
 
 
 # Every vocabulary a surface draws. Imported where the code already owns the
@@ -313,6 +314,11 @@ def scoped_digests(payload, conversation, drift_rows, blocked_rows, stuck_rows):
         "tasks": hashlib.sha256(_canon([
             tasks, payload.get("withheld_tasks"), payload.get("unplaced_events"),
             {"phase": payload.get("phase")},
+            # T-0252: the phase's *provenance* is hashed with the phase, because a
+            # reader who switched seats and got the same phase from a different
+            # channel has been shown a different statement, and a scope that did
+            # not move would let a pane keep the old one on screen.
+            {"phase_channel": payload.get("phase_channel")},
             sorted(payload.get("statuses") or []), sorted(payload.get("terminal") or []),
         ]).encode()).hexdigest(),
         "conversation": hashlib.sha256(_canon([
@@ -345,16 +351,25 @@ def channel_payload(state, ch, viewer):
         if not seal:
             sealed.append({"agent": who, "sealed": False})
             continue
+        claims = read_seal_claims(seal)
         entry = {"agent": who, "sealed": True,
                  "digest": (seal.get("digest") or seal.get("private_log_sha256") or ""),
-                 "claims_count": len(seal.get("claims") or []),
+                 # Counted from the same list that is published below, not from
+                 # `seal["claims"]` directly. T-0247 measured the two disagreeing:
+                 # a seal whose `claims` is the bare string `"not-a-list"` counted
+                 # as `(10 claims)` -- the length of the string -- and then raised
+                 # `'str' object has no attribute 'get'` on the way to publishing
+                 # them, so `/api/state` was a 500 for the leader and for every
+                 # viewer who may see the seal, while the CLI printed a claim
+                 # count it had composed rather than measured.
+                 "claims_count": len(claims),
                  "ts": seal.get("ts", "")}
         # your own seal is yours; a peer's is withheld while the channel is sealed
         if secrets or who == viewer:
             entry["claims"] = [{"id": c.get("id", ""), "claim": c.get("claim", ""),
                                 "confidence": c.get("confidence", ""),
                                 "kill_if": c.get("kill_if", "")}
-                               for c in (seal.get("claims") or [])]
+                               for c in claims]
         else:
             entry["withheld"] = True
         sealed.append(entry)
@@ -376,6 +391,36 @@ def channel_payload(state, ch, viewer):
         "concessions": len(ch["concessions"]),
         "friction": ch.get("friction", []),
     }
+
+
+def phase_channel_provenance(state, viewer, channel):
+    """Where the payload's top-level `phase` was read from, and what chose it.
+
+    T-0252. `phase` is the phase of `gate_channel`'s default channel, and that
+    function answers a question about *tasks* ("which channel's phase governs a
+    task that does not name one", `gate.py:37`), so on a root with several
+    channels the reader is shown one channel's phase with nothing naming it. The
+    channel is the provenance and it is a fact the payload already holds; the arm
+    is the other half, and it is derived here rather than asserted, because
+    "the viewer participates in it" and "no channel has them, so the store arm
+    picked the first channel with a store" are different statements about the
+    same number and the difference is the whole finding.
+
+    Measured on the live root 2026-09-23: three of the four seats resolve through
+    participation and land on three different channels; the fourth, the leader,
+    participates in none and resolves through `tasks_exists`.
+
+    `id` is `""` when the root holds no channel at all -- the same null the header
+    prints as `-`, so the provenance and the value it explains cannot disagree.
+    """
+    if not state.get("channels"):
+        return {"id": "", "arm": "no channel"}
+    if viewer in channel.get("participants", []):
+        return {"id": channel.get("id", ""), "arm": "participation"}
+    for ch in state["channels"]:
+        if ch.get("tasks_exists"):
+            return {"id": channel.get("id", ""), "arm": "tasks_exists"}
+    return {"id": channel.get("id", ""), "arm": "first channel"}
 
 
 def payload(state, viewer, register, generated_at=None, as_of=None, digest=None, write=None, read=None):
@@ -501,7 +546,24 @@ def payload(state, viewer, register, generated_at=None, as_of=None, digest=None,
         # numbers as the project's for an hour. The seat is reported here, and
         # `borrowed` says whether this server chose it or the caller did.
         "read": read or {"as": viewer, "borrowed": False},
+        # T-0252. `phase` above the channel list is the *default* channel's phase,
+        # and the default is chosen by `gate_channel`, whose three arms are about a
+        # different question ("which channel's phase governs a task that does not
+        # name one"). On a root with several channels that means the bare `phase`
+        # is a different channel's phase for almost every reader: measured on
+        # 2026-09-23, `claude-session1` and `human` read `SYNTHESIS` from
+        # `barrier-v0` (6 raw rows), `codex` read `SEALED_DIVERGENT` from `dev` (no
+        # store at all) and `codex-orangement` read `COMMIT` from `hello` (501
+        # rows). An unlabelled value that changes with who reads it is exactly the
+        # failure `reports_scope` was added for, one key away, so the channel is
+        # published beside the phase. `id` is the channel the phase was read from,
+        # `""` when the root holds no channel at all; `arm` names which arm of
+        # `gate_channel` chose it, so a reader can tell "you participate in this
+        # channel" from "nobody's choice put you here" without re-deriving the
+        # rule. This does not change which channel is picked -- that is a design
+        # decision for the leader, not a rendering one.
         "phase": channel.get("phase", "-"),
+        "phase_channel": phase_channel_provenance(state, viewer, channel),
         "withheld_tasks": hidden,
         "unplaced_events": state.get("unplaced_events", 0),
         "channels": [channel_payload(state, ch, viewer) for ch in state["channels"]],

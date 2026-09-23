@@ -237,7 +237,10 @@ check("and it fires on a citation a one-sided edit pushed onto a blank line (sel
 # decidable is the sentence's own shape, and it is decidable in two directions.
 #
 # A claim here looks like: "The cells whose mark word is `PROSE` above this
-# paragraph are five -- `:166`, `:173`, `:2409`, `:2412`, `:2413`". So:
+# paragraph are five -- `:166`, `:173`, `:2409`, `:2412`, `:2413`". (Those five
+# numbers are the ones that stood when this paragraph was written; the live claim
+# has moved, and the self-test below deliberately reads it off the document rather
+# than trusting a copy here.) So:
 #
 #   1. the spelled number must equal the number of citations listed;
 #   2. every listed line must be inside this file;
@@ -325,14 +328,46 @@ check(f"and each mark-word claim names exactly the rows that carry that mark "
 # runs the real check on that copy rather than asserting that a parse saw four
 # items. Both edits below are the two failures that actually happened -- a line
 # dropped from a list, and a line swapped for the glossary's own row.
-_probe2 = _inject(text, "`:166`, `:173`, `:2409`, `:2412`, `:2413`",
-                  "`:166`, `:173`, `:2409`, `:2412`")
+#
+# The mutation is applied to the *live* claim, located by the same `CLAIM` regex
+# the check uses, rather than to a transcription of it. This matters more here
+# than anywhere else in the file: a mark-word claim is a list of line numbers
+# checked against the document it lives in, so it is the one string in that
+# document that is *supposed* to be rewritten by every edit above it. The earlier
+# version of this self-test spelled yesterday's five numbers out as its anchor,
+# and the edit that corrected them -- the fix, not the bug -- broke the self-test
+# instead. An alarm anchored on a value that is meant to move fires on the wrong
+# event.
+_live = None
+for _m in CLAIM.finditer(text):
+    _sent = text[text.rfind("\n", 0, _m.start()) + 1:text.find("\n", _m.end())]
+    _tok = re.search(r"`([A-Z][A-Z_]{2,})`", _sent)
+    if _tok:
+        _live = (_tok.group(1), _m.group(2), line_of[_m.start()])
+        break
+assert _live, "no mark-word claim in the document to mutate"
+_word, _list, _at = _live
+
+# The glossary's own row for that word: the one above the claim whose *first*
+# cell carries the word but whose *last* cell does not. That is the exact row the
+# broken note named instead of a real instance, and it is the row the last-cell
+# rule exists to exclude -- so it is the one worth injecting.
+_glossary = None
+for _i in range(1, _at):
+    _cells = lines[_i - 1].strip().strip("|").split("|")
+    if not lines[_i - 1].startswith("|") or len(_cells) < 2:
+        continue
+    if _word in _cells[0].strip() and _word not in _cells[-1].strip():
+        _glossary = _i
+        break
+assert _glossary, f"no row above :{_at} carries `{_word}` in its first cell only"
+
+_probe2 = _inject(text, _list, re.sub(r"(?:,\s*)?`:\d+`$", "", _list))
 _f2, _ = mark_claim_failures(_probe2, _probe2.splitlines())
 check("and it fires on a claim whose list dropped a line (self-test)",
       len(_f2) == 1, f"the injected drop was not caught (got {_f2})")
 
-_probe3 = _inject(text, "`:166`, `:173`, `:2409`, `:2412`, `:2413`",
-                  "`:166`, `:98`, `:2409`, `:2412`, `:2413`")
+_probe3 = _inject(text, _list, re.sub(r"`:\d+`$", f"`:{_glossary}`", _list))
 _f3, _ = mark_claim_failures(_probe3, _probe3.splitlines())
 check("and on a claim that names the glossary's definition of the word instead of "
       "an instance of it (self-test)",

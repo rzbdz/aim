@@ -32,7 +32,7 @@ class Page:
 
     __slots__ = ("state", "viewer", "risks", "generated_at", "lang", "labels",
                  "tasks", "hidden", "milestones", "as_of", "channels", "phase",
-                 "digest", "poll_ms")
+                 "phase_channel", "digest", "poll_ms")
 
     def __init__(self, **kw):
         for key in self.__slots__:

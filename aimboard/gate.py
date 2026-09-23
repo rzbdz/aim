@@ -107,30 +107,70 @@ def stuck_tasks(state, tasks):
     return out
 
 
-def room_authors(room):
-    """Who wrote a room, out of the evidence the room actually carries.
+def room_author_from_metadata(meta, op_agent=""):
+    """Who opened a room. The one place this is decided, for the CLI and the board.
 
-    `design/06` §2 says a draft room's messages are readable "by their author",
-    so the gate needs an author, and a room reaches it in one shape:
-    `fabric.load_rooms` reads `rooms/<room>.json` but forwards only
-    id/topic/visibility/messages/unread/mentions, so an `author` key in that
-    metadata is dropped before this file sees it. What does arrive is `agent` on
-    each message, the same field `conversation_view` prints from.
+    A room is an *object* opened by one agent, not a transcript that belongs to
+    everyone who ever spoke in it, and the record says so: `aim room new` writes
+    `author` and `created_by` into `rooms/<room>.json`, and a room's log begins
+    with the message its opener wrote. Two facts decide, and one shape refuses:
 
-    The gate is room-level while authorship is per message, so the fail-closed
-    choice is made here: a viewer is the author only if they wrote *every*
-    attributed message. A hand-written room with two authors therefore exempts
-    neither, rather than opening one author's text to the other. A room with no
-    attributed messages falls back to declared metadata, for a loader that
-    forwards it.
+      * `op_agent` -- the first attributed voice in the room's log, and
+      * the creator recorded in the room's metadata (`author`, else `created_by`),
+
+    agree -> that agent opened the room. A room whose log names an opener its
+    metadata does not is a hand-merged contradiction, and that case returns `""`:
+    nobody may read the room rather than one of the two being picked. That arm is
+    about *provenance*, not about a second voice -- a room with two voices has one
+    opener and is the room the design describes.
+
+    T-0249 is why this function exists. The rule used to be "a viewer is the
+    author only if they wrote *every* attributed message", so a second voice --
+    the act `design/06` §2 says a room is *for* -- made the room unreadable by
+    the author who opened it, permanently: `_room_author` returned `""`, the CLI's
+    read and publish gates were both `who != author`, and no caller could satisfy
+    them again. The room's own creation message promised "a draft room: readable
+    by you and the leader", and after the second voice neither the author nor the
+    leader could read it. `bin/aim`'s `_room_author` imports *this* function now
+    rather than keeping a second copy, so one question has one rule.
     """
-    attributed = {m.get("agent") for m in room.get("messages") or [] if m.get("agent")}
-    if attributed:
-        return attributed if len(attributed) == 1 else set()
-    return {room.get(k) for k in ("author", "created_by", "owner")} - {None}
+    creator = meta.get("author") or meta.get("created_by") or meta.get("owner") or ""
+    op = op_agent or meta.get("opened_by") or ""
+    if op and creator and op != creator:
+        return ""
+    return op or creator
+
+
+def room_authors(room):
+    """The room's author set, as the renderer's gate spells it.
+
+    A single-valued rule wearing a set's name, kept a set because the call site
+    reads as membership. `room_author_from_metadata` decides; this function's
+    only job is to hand it the opener evidence the *loader* forwards:
+    `fabric.load_rooms` copies `author` off `rooms/<room>.json` (T-0249 -- it used
+    to forward only id/topic/visibility/messages/unread/mentions, so the metadata
+    half of the rule could never fire on the board) and every message carries
+    `agent`, the same field `conversation_view` prints from.
+
+    An earlier version of this docstring called the old union fail-closed and the
+    two-author case deliberate. It was neither: it was the gate reading
+    `design/06` §2's "readable by their author" as an *exclusive* claim about a
+    room's whole transcript, which makes the one room the design describes -- two
+    voices, one of them the opener -- unreadable to both.
+    """
+    op = next((m.get("agent") for m in room.get("messages") or [] if m.get("agent")), "")
+    author = room_author_from_metadata(room, op)
+    return {author} if author else set()
 
 
 def visible_rooms(state, channel, viewer):
+    """A draft room is withheld from a walled-off viewer who is not its author.
+
+    The author is `room_author_from_metadata`'s verdict -- the agent who opened
+    the room -- and never the set of everyone who spoke in it (T-0249). A room
+    with two voices is the case `design/06` §2 describes, so it must not be the
+    case that closes the room.
+    """
     out, hidden = [], 0
     for room in channel.get("rooms", []):
         draft = room["visibility"] != "published"

@@ -7,6 +7,17 @@ voice. Measured before the verb existed: `grep -c depart bin/aim` was 0, and non
 of the 26 verbs ended, left or unregistered anything. The leader's own words for
 it: "还有啊，那些 claude 他妈都死了，能不能做个退出机制啊".
 
+Two things this file does NOT assert, stated so its green is not read as more
+than it is (T-0253 verification, 2026-09-23). First, "refused for an id that is
+not yours": the verb has no `--force` at all, and no check anywhere could make
+that distinction — this fabric has no identity to test, so a `depart` by a
+session other than the one that registered an id succeeds and is recorded as
+`departed_session`, which is the disjunction A6 below asserts. Second, the
+liveness clause a reader might expect from `registry.json`: A5/E1/E3 show a
+*departed_at* marker, not a liveness field, so an id with no marker is
+indeterminate rather than running — an id that was never departed and an id whose
+session crashed write the same record (group E's whole subject).
+
 `aim depart` closes the *orderly* half of that. The half it cannot close is
 asserted here too (group E), because a verb that is oversold is worse than no
 verb: a session that crashes cannot call anything, so a departed flag has
@@ -93,8 +104,17 @@ with tempfile.TemporaryDirectory() as tmp:
     rec = registry("alpha")
     check("A5 the record carries `departed_at`", bool(rec.get("departed_at")),
           json.dumps(rec))
+    # `departed_session` is an assertion about the *record*, not a test of who
+    # the caller was: this fabric cannot make the second test (module docstring,
+    # T-0253 verification). A departure by a session other than the one that
+    # registered the id succeeds, and this field is the whole of what makes the
+    # wrong-session case readable afterwards -- so what is asserted is that the
+    # field is a session token, i.e. not the free-text note `register --session`
+    # writes (`session_of`'s `pid`/`@` shape, bin/aim:794).
     check("A6 and the session that departed, because two sessions can hold one id",
-          bool(rec.get("departed_session")), json.dumps(rec))
+          ":" in str(rec.get("departed_session", ""))
+          and "pid" in str(rec.get("departed_session", "")),
+          json.dumps(rec))
     check("A7 and the reason it was given",
           rec.get("departed_reason") == "work finished", json.dumps(rec))
     check("A8 the timestamp is a real one and not a placeholder",
