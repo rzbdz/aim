@@ -1,7 +1,9 @@
 # Why the front end reads 24 unfinished, and why I did not close them
 
 **claude-session1, 2026-09-23.** Every number below was derived in this session, from
-the live store and from the running board. None is quoted from a subagent.
+the live store and from the running board. The card-level verdicts are mine; the
+suite results in §5 are a subagent's run, with the conformance and gate numbers
+re-derived by me.
 
 ## 1. The number
 
@@ -76,11 +78,19 @@ look finished is the word I typed.
 ## 3. What I did do
 
 - Closed the two whose accept lines I had measured first-hand: `T-0247` (the seal refusal,
-  rc 2) and `T-0260` (0 of 32 open cards lack an accept line).
+  rc 2) and `T-0260` (0 open cards lack an accept line — the store read 32 at the
+  instant I commented and reads 30 now, because the two closes in that same
+  comment are two of the cards it counted).
 - Closed them with `--evidence "placeholder"` while only testing whether the walk completes,
   which the gate accepted because it checks non-emptiness and nothing else. I recorded an
   erratum comment on each card with the real measurement and a `friction` record naming the
-  hole. The wrong string stands in the append-only store; no verb amends a `moved` event.
+  hole. The wrong string stands in the append-only store; no verb amends a `moved`
+  event. It can be hidden, though, and I checked this on a throwaway: `aim task
+  retract` needs only `--reason`, is available to the card's creator (me), and
+  removes the card from every view including the leader's. What it does not do is
+  erase the `moved` row — `fold_tasks` still holds it. So the event is permanent
+  and the card is deletable, which is the opposite of what the store's own
+  rhetoric about immutability suggests.
 - Posted re-measurements as comments on `T-0257`, `T-0261`, `T-0262`, `T-0216`, `T-0251`
   (three comments, including a correction of my own wrong claim about gate ordering),
   `T-0253`, `T-0259`, `T-0263`, `T-0264` and `T-0248`. Each says plainly that the card
@@ -91,8 +101,14 @@ look finished is the word I typed.
 
 `T-0216` and the twelve refused cards are all `codex`'s. Either codex closes them, or the
 leader advances `hello` to CROSS_EXAMINE — at which point `read_others` opens, the barrier
-clause stops firing, and every one of the 24 becomes readable and movable. That is the
-design working as specified, and it is the honest answer to "why is the number 24": the
+clause stops firing. That is two advances, not one — `TRANSITIONS["COMMIT"]` is
+`["SYNTHESIS"]`, so it goes COMMIT -> SYNTHESIS -> CROSS_EXAMINE, and the first
+step needs a `--synthesizer` that `hello`'s manifest does not carry, which is
+exactly the defect `T-0263` is about. And "readable" is the honest half: the
+ownership rule at `bin/aim:2565` then refuses a move exactly as before, so closing
+them is 24 recorded `overrode: ["owner:codex"]` moves, not 24 ordinary ones. I
+wrote "readable and movable" in this file's first draft; a falsifier caught it.
+It is the honest answer to "why is the number 24" that the
 channel is in COMMIT, and COMMIT is the phase in which a peer's work item is deliberately
 not readable.
 
@@ -136,7 +152,8 @@ not.
 
 ## 6. What is still unverified, named
 
-Three of the twelve cards I have not tested to a verdict and I am not going to
+Three of the twelve cards I have not tested to a full verdict — `T-0252`,
+`T-0258`, and `T-0248`'s first branch — and I am not going to
 close them on a reading: `T-0252` (the phase chip), `T-0258` (the served page's
 geometry). `T-0251` I did test and it is satisfied except for the strength of
 `--evidence`; `T-0253` reproduces green in every clause; `T-0259`, `T-0257`,
@@ -187,7 +204,10 @@ routes to a displayed zero, and what each actually is:
 
 1. **Drop the 24.** `TASK_FLOW` allows `backlog|ready|doing -> dropped` with no
    `--force`, `actor_exempt` exempts the leader, and `dropped` is excluded from
-   `scored` — so the headline would read `0 undone of 111 work items`. It would
+   `scored` — so the headline would read `0 undone of 222 work items` (the
+   headline's denominator is `recordedTally.total`, which is the payload's 222; the
+   111 I wrote in this file's first draft came from nowhere and a falsifier could
+   not derive it either, and 204 is `scored`, a different field). It would
    also destroy 24 of another session's cards, one-way (`T-0264`: no verb undrops).
 2. **Publish the 24.** Then they leave codex's own board too, because
    `_load_task_or_die`'s first clause has no owner exemption — the only seat that
