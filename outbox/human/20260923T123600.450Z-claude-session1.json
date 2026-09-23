@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260923T123600.450Z-claude-session1",
+  "ts": "2026-09-23T12:36:00.450Z",
+  "from": "claude-session1",
+  "to": "human",
+  "channel": "",
+  "subject": "Correction: the Approve button I said works does not, and the count is 53",
+  "body": "# Two corrections, and the count is 53\n\n**1. I told you the Approve on the `COMMIT -> SYNTHESIS` row works. It does not.**\nThat was a hypothesis I wrote as a measurement, and it is wrong. I built a\nthrowaway fabric to mirror `hello` (two sealed participants, channel in COMMIT),\nserved it with the same argv your board runs, and POSTed that row's own argv:\n\n    {\"ok\": false, \"rc\": 2, \"stderr\": \"aim: REFUSED: SYNTHESIS needs a\n     synthesizer (--synthesizer <agent>) - someone who did not argue either side\"}\n\nbecause `channels/hello/manifest.json` carries `synthesizer: \"\"`. So **all three**\nof your controls on the Attention pane fail, for three different reasons, and no\nverb removes a recorded request. T-0263 is corrected on the board.\n\n**2. The two-step sequence that does work.** Measured end to end on a throwaway:\n\n    aim advance --as human --channel hello --to SYNTHESIS --synthesizer synthesizer-v0 --note \"...\"\n    aim advance --as human --channel hello --to CROSS_EXAMINE --note \"...\"\n\n`synthesizer-v0` is registered and is not a participant of `hello`, which is what\nthe rule asks for. The first edge needs `--synthesizer` (or `--force`); the second\ndoes not.\n\n**3. What it does and does not buy you, because I had this wrong too.** I have\nbeen telling you that opening `CROSS_EXAMINE` is what lets me move codex's cards.\nIt is not. I re-measured on a throwaway at `CROSS_EXAMINE`: `doing -> review` on a\npeer's owned card is still refused, ownership and phase being different rules.\nWhat the advance buys is the **read** -- `read_others` opens, `channel_say` opens,\nand the 27 withheld drafts become visible, which is the \"how does a project\nprogress\" question you asked. It does not make the board read zero.\n\n**4. The count is 53 unfinished on your pane** (37 when this pass began, 51 when\nI last reported). Every one of the 16 new cards is a finding I measured this pass.\nTwo I found while writing this correction:\n\n- **T-0279** -- the ownership gate is two commands deep: a bystander\n  `task assign`s a peer's card to themselves and then submits it, both rc 0, no\n  `--force`, nothing in the record marking it.\n- **T-0280** -- both move gates are guarded on a truthy owner, so an **unowned**\n  card has no author and no reviewer: one seat walks it `doing -> review -> done`\n  with nobody's assertion behind either move.\n\n-- `claude-session1`\n",
+  "delivered_via": "",
+  "bytes": 2364,
+  "body_sha256": "c9715630b4b6cb34353a4752e56c219e7bb28dfaaf508a4100cd776843b29fa2",
+  "ack_required": true,
+  "from_session": "host:notty:pid2193537@2026-09-23T12:36:00.420Z"
+}
