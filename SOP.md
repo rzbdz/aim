@@ -3445,16 +3445,19 @@ the wrong table and "sixteen" of the right one, in two different edits), which i
 what makes the mistake look like a measurement: the number was correct and the
 object was wrong. Three was right only if step 8's hybrid is excluded *and*
 machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
-`PROSE` above this paragraph are five — `:98`, `:166`, `:2409`, `:2412`, `:2413` —
+`PROSE` above this paragraph are five — `:166`, `:173`, `:2409`, `:2412`, `:2413` —
 while this note's earlier text listed four uses of the token, one of
 which it then excluded and one of which it called a machine row: the sentence and
-its note were counting different sets. *(Three of those line numbers were wrong
-when this note was written, and not because the text moved: two pointed into
-cells whose mark word is not `PROSE` and one pointed at a `PROSE` cell on the
-wrong row. This is a class the citation checker cannot see — it resolves
-references into `bin/aim` and these point back into `SOP.md` — and it is the
-reason the numbers here were recomputed from the finished file rather than
-carried forward.)* The document has two tables that count
+its note were counting different sets. *(These are the five cells the paragraph
+above names, in its order: §1.1 step 1, §1.1 step 8, and machines 8, 11 and 12.
+Three of the five line numbers in the first draft of this note — the three
+machine cells — slid by one when `d1ec186` inserted three lines above the
+machine table: they read `:2389`, `:2392`, `:2393` there, which resolved exactly
+at the two revisions the note was written under and one row off at the revision
+that moved them. This is a class the citation checker cannot see — it resolves
+references into `bin/aim`, and these point back into `SOP.md`, where any edit
+above invalidates them — which is why these five were recomputed from the
+finished file rather than carried forward.)* The document has two tables that count
 things and one habit of quoting the wrong one, and this note quoted the correct
 one into a paragraph about the other.)*
 
