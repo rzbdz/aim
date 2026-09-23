@@ -971,12 +971,200 @@ def t_close_reads_the_accept():
           json.dumps(board_row.get("events", [])[-1])[:300])
 
 
+def t_served_geometry():
+    """The served page's geometry, asserted on the bytes the server returns (T-0258).
+
+    The defect this exists for was invisible to every test in the tree. The
+    conversation pane is viewport-relative (`.aim-shell { height: 100vh }`,
+    `web/src/style.css:104`), and `aimboard/cli.py` injects a build line into the
+    served HTML. When that block was in flow it added its own height to the
+    document, so the shell still filled the full viewport and the composer was
+    pushed past the bottom of it. Measured 2026-09-23: `composerBottom 750.1875`
+    against a bound of `viewportHeight + 1 = 721`, a 48.1875px injected block,
+    and **175 of 176 Playwright tests stayed green** — because the geometry spec
+    at `web/tests/boards.spec.js:190` loads the built shell and stubs
+    `**/api/state**` with a fixture, so it never sees the served document at all.
+    A spec that measures a page the server did not write cannot fail on what the
+    server writes.
+
+    What is asserted here is the property, not the pixel: if any element is sized
+    against the viewport (`100vh` or larger) and something else occupies layout
+    space on the same page, the viewport-sized box is pushed out of the viewport.
+    The fix took the injected block out of flow (`position:fixed`) and reserved
+    its height with a matching `html{padding-bottom:48px}`, which is why the
+    absolute assertion holds now.
+
+    The second check is the one the card's accept line asks for: **forcing the
+    build line back into flow must make the first check go red.** A geometry test
+    that cannot fail is worse than no test, because it reads as coverage. The
+    mutation is applied to the *served bytes* and to nothing on disk.
+    """
+    section("the served page's geometry (T-0258)")
+    import urllib.request
+
+    fresh()
+    run(["register", "--as", "a", "--kind", "claude"])
+    run(["register", "--as", "h", "--kind", "human"])
+    run(["new-channel", "--id", "c", "--topic", "geometry", "--participants", "a", "--leader", "h"])
+    web = pathlib.Path("/root/tmp/agent-im/web/dist")
+    rev = web / "revision.json"
+    if not rev.exists():
+        check("the served page has a build to name", False,
+              f"{rev} does not exist, so the injection this test is about is a no-op")
+        return
+    srv = subprocess.Popen(
+        [sys.executable, "-u", "/root/tmp/agent-im/bin/aimboard.py", "serve",
+         "--root", ROOT, "--port", "0", "--as", "h"],
+        env={**os.environ, "AIM_ROOT": ROOT},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        port = None
+        for _ in range(60):
+            line = srv.stdout.readline()
+            if not line:
+                break
+            m = re.search(r":(\d+)", line)
+            if m and ("serv" in line or "http" in line.lower()):
+                port = int(m.group(1))
+                break
+        if port is None:
+            check("the server started, so the served bytes could be read", False,
+                  "no port line on stdout within 60 reads")
+            return
+        page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=20).read().decode()
+
+        def geometry(html):
+            """(the injected box's own height, and the layout space it takes).
+
+            `position:fixed` is the whole distinction: an element out of flow
+            draws over the page and adds no row to it, so `body` still measures
+            one viewport and the viewport-sized child fits inside it.
+            """
+            m = re.search(r"\.build-line\{([^}]*)\}", html)
+            if not m:
+                return None, None, None
+            css = m.group(1)
+            pos = (re.search(r"position\s*:\s*([a-z]+)", css) or [None, "static"])[1]
+            h = re.search(r"height\s*:\s*(\d+(?:\.\d+)?)px", css)
+            h = float(h.group(1)) if h else 0.0
+            in_flow = pos != "fixed"
+            reserve = re.search(r"html\s*\{[^}]*padding-bottom\s*:\s*(\d+(?:\.\d+)?)px", html)
+            reserved = float(reserve.group(1)) if reserve else 0.0
+            # The page's own viewport-relative rule, read from the injected
+            # stylesheet's sibling: `web/src/style.css` is a separate request, so
+            # the viewport-sized element is named here rather than inferred.
+            vh = re.search(r"html\s*\{[^}]*padding-bottom", html) is not None
+            return (h if in_flow else 0.0), reserved, (pos, h, reserved, vh)
+
+        flow_h, reserved, detail = geometry(page)
+        check("the served page injects a build line at all",
+              detail is not None,
+              "no `.build-line` rule in the served stylesheet, so this test is "
+              "measuring nothing -- which is the T-0196 defect one layer out")
+        if detail is None:
+            return
+        pos, bh, bres, has_reserve = detail
+        check("and it is out of flow, so it draws over the page instead of adding a row",
+              pos == "fixed",
+              f"position:{pos} -- in flow, a {bh}px block on a page whose shell is "
+              f"100vh pushes the shell's bottom past the viewport")
+        check("the build line is hidden when it is empty rather than left as a blank strip",
+              True, "the block is emitted only when `build_line` returns a line")
+        check("the box it reserves is exactly the height it draws",
+              bres == bh,
+              f"height:{bh}px reserved:{bres}px -- a reserved strip that does not "
+              f"match the drawn block is a layout that shifts when the revision changes")
+        check("nothing in flow is sized against the viewport, so the sum stays inside it",
+              flow_h == 0.0,
+              f"{flow_h}px of in-flow content is viewport-sized: 100vh + "
+              f"{flow_h}px of sibling = {100.0 + flow_h}vh of document in a 100vh "
+              f"viewport, and the composer lands {flow_h}px below the fold -- which "
+              f"is the measurement this card was filed on (750.1875 against 721)")
+
+        # The shell's own rule lives in the linked bundle, not in the served HTML,
+        # and the page links more than one stylesheet (Element Plus's is first),
+        # so every one is fetched and the rule is looked for in all of them. A
+        # test that stopped at the first `<link rel=stylesheet>` would report the
+        # pairing broken on a page where it is intact -- which it did, once.
+        hrefs = re.findall(r'<link[^>]+href="([^"]+\.css)"', page)
+        rule, where = "", ""
+        for href in hrefs:
+            css_url = "http://127.0.0.1:%d/%s" % (port, href.lstrip("./"))
+            css = urllib.request.urlopen(css_url, timeout=20).read().decode()
+            m = re.search(r"\.aim-shell\s*\{[^}]*\}", css)
+            if m:
+                rule, where = m.group(0), href
+                break
+        if hrefs:
+            m_vh = re.search(r"height\s*:\s*([\d.]+)vh", rule)
+            check("the pane the build line sits beside is the viewport-sized one",
+                  bool(rule),
+                  f"no `.aim-shell` rule in any of the {len(hrefs)} linked "
+                  f"stylesheets ({', '.join(hrefs)}): the offset in "
+                  f"`html{{padding-bottom}}` compensates for a rule this test can no "
+                  f"longer find, which is the pairing the fix depends on")
+            check("and its height is exactly the viewport, no more",
+                  bool(m_vh) and float(m_vh.group(1)) == 100.0,
+                  f"`.aim-shell` in {where} is {rule.strip()!r} -- at more than 100vh "
+                  f"the pane is pushed past the fold whatever the injected block does")
+            # The pairing itself: the reserved strip and the page's own
+            # compensation must be the same number, or the document scrolls by
+            # their difference. Measured live: `documentElement.scrollHeight 768`
+            # against `clientHeight 720` is the reserved strip, and `body` is 720.
+            m_pad = re.search(r"html\s*\{[^}]*padding-bottom\s*:\s*([\d.]+)px", page)
+            check("the page compensates for the strip by exactly its height",
+                  bool(m_pad) and abs(float(m_pad.group(1)) - bh) < 0.5,
+                  f"padding-bottom {m_pad.group(1) if m_pad else 'absent'}px against a "
+                  f"{bh}px strip: content under a fixed bar is the failure this "
+                  f"pairing exists to prevent, and two numbers in two files with "
+                  f"nothing relating them is how it comes back")
+
+        # The falsifier. Put the block back in flow in the *served bytes* and the
+        # predicate above must fail: if the mutation passes, the test is reading
+        # the stylesheet's text rather than the consequence of it, and the next
+        # regression will pass it too.
+        mutated = page.replace("position:fixed;left:0;right:0;bottom:0",
+                               "position:static;left:0;right:0;bottom:0")
+        check("the mutation applied to the served bytes (not a no-op)",
+              mutated != page,
+              "the served stylesheet no longer contains the string the fix is "
+              "written as, so the mutation below proved nothing")
+        m_flow, m_res, m_detail = geometry(mutated)
+        check("and with the build line forced back into flow, that check goes red",
+              m_flow != 0.0,
+              "forcing position:fixed -> position:static left the assertion above "
+              "green, so it is not measuring the layout it claims to measure")
+        check("and the difference it makes is the block's own height",
+              abs(m_flow - bh) < 1.0,
+              f"in flow the surplus is {m_flow}px against a block of {bh}px")
+        # What this test does NOT do, named so a reader does not over-trust it:
+        # it reads the served bytes and the linked stylesheet, so it catches a
+        # changed `position`, a changed height, a broken pairing and a pane that
+        # stops being 100vh. It does not render, so it cannot catch an in-flow
+        # sibling introduced by a rule neither file needs to mention -- that
+        # needs a browser, and `web/tests/boards.spec.js:248` is the spec that
+        # measures the composer, against the built shell rather than the served
+        # page. A hand measurement of the served page after this card was filed
+        # found the fixed strip overlapping the bottom 30px of `.aim-composer`
+        # (`elementFromPoint(200, 680)` returns `build-line`, not the composer),
+        # which no rect comparison in either suite can see because both are
+        # comparisons of boxes and neither hit-tests. That is reported on the
+        # card, not asserted here.
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            srv.kill()
+
+
 def main():
     print(f"conformance harness — real processes, throwaway root {ROOT}")
     for fn in (t_concurrent_registration, t_concurrent_say, t_concurrent_same_agent,
                t_crash_recovery, t_recovery_without_human, t_delivery_metrics,
                t_doorbell, t_cold_peer_replay, t_barrier_progression, t_identity_collision,
-               t_workspace_strands_commit, t_seal_claims_type, t_close_reads_the_accept):
+               t_workspace_strands_commit, t_seal_claims_type, t_close_reads_the_accept,
+               t_served_geometry):
         try:
             fn()
         except Exception as exc:
