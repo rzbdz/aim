@@ -21,3 +21,7 @@ web/playwright-report/
 # throwaway roots a test makes beside the tree rather than inside it
 .selftest-*/
 .synthtest-*/
+
+# a Playwright run writes its verdict next to the config, under web/;
+# a copy at the repo root is a stale artifact nothing reads (T-0282)
+test-results/
