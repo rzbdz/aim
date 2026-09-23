@@ -28,13 +28,22 @@ fi
 # right, and a harness that fires it spuriously is a harness that will eventually be
 # ignored. An explicit AIM_ROOT still wins, because a caller who names a root is
 # taking responsibility for it.
-export AIM_ROOT="${AIM_ROOT:-/root/tmp/agent-im/.selftest-$$}"
+#
+# T-0278. `$HERE` rather than the absolute checkout, because a suite that names one
+# machine's path is a suite that tests that path. Measured 2026-09-23: run from a
+# `git archive` of this tree at /tmp/selfroot-*, the line below still pointed at
+# /root/tmp/agent-im -- so the fixture, the `rm -rf` on the next line and the EXIT
+# trap all landed in a checkout the run was not standing in, and the assertions
+# exercised a tree the caller had not asked about. `HERE` is the same variable the
+# lockfile two dozen lines up already uses, so this introduces no new concept: the
+# run acts on the checkout it was read from.
+export AIM_ROOT="${AIM_ROOT:-$HERE/.selftest-$$}"
 rm -rf "$AIM_ROOT"; mkdir -p "$AIM_ROOT"
 # Same reasoning one level down: the capture files were shared /tmp paths, so two
 # runs overwrote each other's stderr and the FAIL lines quoted the other run.
 TMPD="$(mktemp -d -t aim-selftest-XXXXXX)"
 trap 'rm -rf "$TMPD"; [ -n "${KEEP_SELFTEST:-}" ] || rm -rf "$AIM_ROOT"' EXIT
-AIM=/root/tmp/agent-im/bin/aim
+AIM="$HERE/bin/aim"
 
 pass=0; fail=0
 expect_ok()   { local d="$1"; shift; if "$@" >"$TMPD/out" 2>"$TMPD/err"; then pass=$((pass+1)); printf '  ok    %s\n' "$d"; else fail=$((fail+1)); printf '  FAIL  %s (expected success)\n' "$d"; sed 's/^/          /' "$TMPD/err"; fi; }
