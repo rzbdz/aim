@@ -17,3 +17,7 @@ outbox/_drafts/
 web/node_modules/
 web/test-results/
 web/playwright-report/
+
+# throwaway roots a test makes beside the tree rather than inside it
+.selftest-*/
+.synthtest-*/
