@@ -115,6 +115,54 @@ record cannot tell that it happened. Tampering with a log, a seal or a private l
 leaves a mark (`aim verify` shows the break, and as of 2026-09-21 it actually
 does — see §4.8); editing `bin/aim` is not detected automatically either.
 
+**An id is a name, not a credential — `--as` is not authentication.** The one
+line that follows from it, stated here because it is the shape of several
+refusals and is otherwise spread across the code: `aim depart --as <id>` is the
+exit verb, it cannot be refused for being *somebody else's* id, and that is the
+design rather than an omission.
+
+`resolve_actor` (`bin/aim:971`) checks exactly two things about `--as`: that it
+is non-empty, and that the id appears in `registry.json`. There is no third
+check available, because nothing in the fabric is a secret. `register --session`
+is a free-text note — this repository's own registry holds `'team leader'`,
+`'primary-review'`, `'headless participant'` — and the derived `session_of()`
+token is built from facts the same caller can produce: measured on a throwaway
+root, `aim depart --as b` called with no tty records `departed_session` as
+`'host:notty:pid2491903@…'`, so a second caller with the same id produces the
+same shape of token. `registry.json` carries no `last_seen`, no heartbeat and no
+credential of any kind: the keys `register` writes are `id`, `kind`, `model`,
+`registered_at` and that free-text `session` (the `codex` record carries one
+more, `registration_events`, because it was re-registered), and none of the six
+registered ids carries `departed_at`.
+
+So the honest statements are narrower than "a departure is refused for an id
+that is not yours":
+
+- **Any caller that can run `aim` can depart, or un-depart, any registered id.**
+  There is nothing to check against, so there is no check. What is not silent is
+  the record: `departed_session` and `departed_reason` (`bin/aim:1326`) name the
+  calling session's own token and whatever reason it gave, so a departure by a
+  session other than the one that registered reads as exactly that to anyone
+  auditing the file — but nothing verifies that token, and a reader who trusts it
+  is trusting the caller.
+- **A departure cannot cover a crash.** `depart` is self-declaration: a session
+  that dies without calling it leaves no `departed_at`, so an id with no
+  `departed_at` is *indeterminate*, not *running*. Nothing in this fabric
+  distinguishes an idle session from a dead one; that needs a witness outside
+  the session (`resolve_actor` writing a `last_seen`, or the outbox read as a
+  heartbeat) and this fabric does not have one.
+- **`departed_at` is a declaration, not a liveness field.** The only exits from
+  a departure are the two the refusal names: `aim depart --as <id> --return`,
+  and `register --force`, which clears it as part of taking the id over. There
+  is deliberately no `--force` on `depart` itself: a `--force` term there would
+  make `aim say --as <someone who left> --force` a call that works, and the
+  guard would read as advisory.
+
+The same limit applies to every verb, which is why this paragraph is here rather
+than in `depart`'s docstring: the barrier is about *what is recorded*, not about
+*who is asking*, and an `--as` value establishes the second only in the sense
+that a byline does.
+
 Two limits on the refusal count, because the difference is the whole point. A
 refusal is written only when a caller goes *through the tool*: a filesystem read
 never reaches `die()`, and `die()` itself writes nothing when it has no channel
