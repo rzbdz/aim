@@ -15,7 +15,7 @@ None of these are caught by reading, because reading is what produced them. The
 document already declares its base in its third line, so the base can be checked
 mechanically, and that is all this file does.
 
-Three failure classes, in the order they bite:
+Four failure classes, in the order they bite:
 
   1. the declared base cannot be read (no declaration, or a commit git does not
      have) -- without it every other check is meaningless, so it fails first;
@@ -23,7 +23,19 @@ Three failure classes, in the order they bite:
      than the drift;
   3. a cited line carries no content at that base (blank, a lone bracket, or a
      bare `else:`/`pass`/`continue`/`return`) -- the number is off by a little,
-     which is the shape a one-sided edit produces.
+     which is the shape a one-sided edit produces;
+  4. a claim about *this document's own* lines, which is a different animal: it
+     cannot be resolved against a base, because the reference dies with the edit
+     that makes it. What is checkable is the sentence's shape -- the spelled
+     number must match the citations listed, they must be in range, and when the
+     sentence names a backticked mark word the list must be exactly the table
+     rows above it whose *last* cell carries that word.
+
+Class 4 was added after the class-1-through-3 machinery had been running green
+for a day while a note in the document listed five `PROSE` cells and got three of
+the five wrong -- one of them the marks glossary's *definition* of the word rather
+than an instance of it. The last-cell rule is what decides that, and it is stated
+in the body below.
 
 The drift to the working tree is *not* a failure: the document names the tree it
 was measured at, and re-pinning 69 citations is a separate act. It is printed, so
@@ -152,13 +164,26 @@ print(f"  ..    {len(stable)} of {len(cited)} cited lines are byte-identical at 
 # pair, where `accept` and `owner` are three lines apart in one dict literal.
 #
 # Reported as a warning, never a failure, and its precision is worth stating
-# because it was measured rather than assumed: at the revision this was written
-# it reports 7 candidates, of which 3 are real (`:2079` at doc line 385, `:1934`
-# at 2253, `:1477` at 1330 -- in each case the cited line is inside the right
-# function and off by 13, 27 and 41 lines) and 4 are artifacts of the prose: one
-# names the object in words rather than backticks, one names it in a parenthetical
-# three clauses later, and one is `exporters.py:174` on a line that also contains
-# a `bin/aim:` citation, which this scanner then counts as a `bin/aim:174`.
+# because it was measured rather than assumed: at this revision it reports 7
+# candidates and **all seven are artifacts**, which is worth saying plainly
+# because an earlier version of this comment claimed three were real. Each of the
+# seven resolves correctly once you read what it is pointing at:
+#
+#   * `:56`, `:116`, `:117` -- a module-level constant (`PHASE_RULES`,
+#     `TASK_STATUSES`, `TASK_FLOW`). There is no enclosing function to be near,
+#     so "is the identifier close by" is the wrong question for these.
+#   * `:1934`, `:2079`, `:1477` -- a `def` line exactly (`:1934` is
+#     `cmd_task_new`), and two body lines that name their function in the prose
+#     *beside* the citation and are in the right function at the base (`:2079` is
+#     6 lines into `_load_task_or_die`, whose `def` is `:2073`; `:1477` is 27
+#     lines into `cmd_advance`, whose `def` is `:1450`).
+#   * `:3357` -- the doorbell cell, whose name reaches 69 lines up to `cmd_push`
+#     because the cell spans the whole verb.
+#
+# So the check's own precision is zero at this revision: it names seven suspects
+# and all seven are innocent. It is kept as a *pointer* rather than a finding --
+# it is the list a human should read when the numbers move -- and the comment
+# says so instead of quoting a hit rate it does not have.
 near_miss = []
 for n, at in sorted(cited.items()):
     if not (1 <= n <= len(base)):
@@ -175,7 +200,8 @@ for n, at in sorted(cited.items()):
 if near_miss:
     warnings.append(
         f"{len(near_miss)} citation(s) whose nearest named identifier does not "
-        f"appear within 3 lines of the cited line: "
+        f"appear within 5 lines of the cited line (below): read these when the "
+        f"numbers move -- at the revision this was written all of them resolve: "
         + "; ".join(f":{n} wants `{i}` (cited at :{at})" for n, at, i in near_miss[:8])
         + (" …" if len(near_miss) > 8 else ""))
 
@@ -199,6 +225,118 @@ for i, line in enumerate(probe.splitlines(), 1):
             hit.append(n)
 check("and it fires on a citation a one-sided edit pushed onto a blank line (self-test)",
       hit == [4506], f"the injected :4506 was not caught (caught: {hit})")
+
+# ------------------------------------------- the half about this document itself
+# Everything above resolves references into `bin/aim`. This document also cites
+# *itself*, and that half is where the numbers actually broke: a note listing the
+# `PROSE` cells named three rows that had slid by one line and one that was the
+# marks glossary's *definition* of the word rather than an instance of it, and no
+# check anywhere could see either. A reference into `SOP.md` is invalidated by any
+# edit above it -- including the edit making the reference -- so a self-citation
+# cannot be validated against a base the way a `bin/aim` one can. What *is*
+# decidable is the sentence's own shape, and it is decidable in two directions.
+#
+# A claim here looks like: "The cells whose mark word is `PROSE` above this
+# paragraph are five -- `:166`, `:173`, `:2409`, `:2412`, `:2413`". So:
+#
+#   1. the spelled number must equal the number of citations listed;
+#   2. every listed line must be inside this file;
+#   3. when the sentence names a backticked mark word, the lines listed must be
+#      exactly the table rows above the sentence whose *last* cell carries that
+#      word -- and the last-cell rule is deliberate rather than incidental: the
+#      glossary puts the word in its *first* cell because it is defining the
+#      word, while a row the word is a verdict on carries it last. That single
+#      rule is what separates the five instances from the definition, and it is
+#      what the broken note got wrong.
+SPELLED = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+           "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+           "thirteen": 13}
+CLAIM = re.compile(r"\b(" + "|".join(SPELLED) + r")\s*—\s*"
+                   r"((?:`:\d+`(?:,\s*|\s+and\s+)*)+)")
+# char offset -> line number, so a claim that wraps across a line break still
+# resolves to the line it starts on.
+line_of = []
+for i, line in enumerate(lines, 1):
+    line_of.extend([i] * (len(line) + 1))
+
+claims = []
+for m in CLAIM.finditer(text):
+    nums = [int(x) for x in re.findall(r"`:(\d+)`", m.group(2))]
+    claims.append((line_of[m.start()], SPELLED[m.group(1)], m.group(1), nums,
+                   text[text.rfind("\n", 0, m.start()) + 1:
+                        text.find("\n", m.end())]))
+
+check("this document makes claims about its own lines that can be checked",
+      len(claims) >= 1, f"no `<spelled number> — <citations>` sentence found")
+
+bad_count = [(ln, word, n, nums) for ln, n, word, nums, _ in claims if n != len(nums)]
+check("and the spelled number in each one equals the number of lines it lists",
+      not bad_count,
+      "; ".join(f":{ln} says {word} and lists {len(nums)}" for ln, word, n, nums in bad_count))
+
+out_of_doc = [n for _, _, _, nums, _ in claims for n in nums if not (1 <= n <= len(lines))]
+check("and every self-citation points inside this file",
+      not out_of_doc, f"line(s) do not exist in a {len(lines)}-line document: {out_of_doc}")
+
+
+def mark_claim_failures(doc_text, doc_lines):
+    """Every mark-word claim in `doc_text` whose list is not the rows that carry it.
+
+    Takes the text and its lines as arguments rather than reading the globals, so
+    the self-test below can run exactly this function on a mutated copy and prove
+    it fires. A check that can only be exercised by breaking the real file is a
+    check nobody will exercise.
+    """
+    offsets = []
+    for i, line in enumerate(doc_lines, 1):
+        offsets.extend([i] * (len(line) + 1))
+
+    def last_cell(i):
+        row = doc_lines[i - 1]
+        if not row.startswith("|") or re.fullmatch(r"[\s|:-]+", row):
+            return None
+        return row.strip().strip("|").split("|")[-1].strip()
+
+    out, checked = [], 0
+    for m in CLAIM.finditer(doc_text):
+        sentence = doc_text[doc_text.rfind("\n", 0, m.start()) + 1:
+                             doc_text.find("\n", m.end())]
+        tok = re.search(r"`([A-Z][A-Z_]{2,})`", sentence)
+        if not tok:
+            continue                  # a claim about something other than a mark
+        word = tok.group(1)
+        ln = offsets[m.start()]
+        nums = sorted(int(x) for x in re.findall(r"`:(\d+)`", m.group(2)))
+        want = [i for i in range(1, ln)
+                if (c := last_cell(i)) and word in c]
+        checked += 1
+        if nums != want:
+            out.append(f":{ln} lists {nums} for `{word}`, the rows carry {want}")
+    return out, checked
+
+
+rule_fail, rule_checked = mark_claim_failures(text, lines)
+check(f"and each mark-word claim names exactly the rows that carry that mark "
+      f"({rule_checked} claim(s) checked)",
+      not rule_fail, "; ".join(rule_fail))
+
+# The same self-test the `bin/aim` half gets, for the same reason: a claim whose
+# list is one line short is the exact edit that produced the broken note, and this
+# runs the real check on that copy rather than asserting that a parse saw four
+# items. Both edits below are the two failures that actually happened -- a line
+# dropped from a list, and a line swapped for the glossary's own row.
+_probe2 = _inject(text, "`:166`, `:173`, `:2409`, `:2412`, `:2413`",
+                  "`:166`, `:173`, `:2409`, `:2412`")
+_f2, _ = mark_claim_failures(_probe2, _probe2.splitlines())
+check("and it fires on a claim whose list dropped a line (self-test)",
+      len(_f2) == 1, f"the injected drop was not caught (got {_f2})")
+
+_probe3 = _inject(text, "`:166`, `:173`, `:2409`, `:2412`, `:2413`",
+                  "`:166`, `:98`, `:2409`, `:2412`, `:2413`")
+_f3, _ = mark_claim_failures(_probe3, _probe3.splitlines())
+check("and on a claim that names the glossary's definition of the word instead of "
+      "an instance of it (self-test)",
+      len(_f3) == 1, f"the injected glossary row was not caught (got {_f3})")
 
 print(f"\n{passed}/{passed + failed} checks passed")
 for w in warnings:

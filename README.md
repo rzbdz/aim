@@ -279,7 +279,7 @@ python3 tests/test_mail_gate.py               # who may read a message body, on 
 python3 tests/test_room_gate.py               # what actually gates a room (T-0198)
 python3 -m pip install -r requirements-mcp.txt
 python3 tests/test_mcp.py                     # the official SDK, in memory
-python3 tests/test_sop_citations.py           # SOP.md's bin/aim line numbers resolve at its declared base
+python3 tests/test_sop_citations.py           # SOP.md's citations resolve -- against bin/aim at its declared base, and against itself for the claims it makes about its own lines
 npm --prefix web install
 npm --prefix web run test:e2e                # Playwright: scroll and no forced reload
 ```

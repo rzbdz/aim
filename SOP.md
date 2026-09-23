@@ -3454,10 +3454,17 @@ Three of the five line numbers in the first draft of this note — the three
 machine cells — slid by one when `d1ec186` inserted three lines above the
 machine table: they read `:2389`, `:2392`, `:2393` there, which resolved exactly
 at the two revisions the note was written under and one row off at the revision
-that moved them. This is a class the citation checker cannot see — it resolves
-references into `bin/aim`, and these point back into `SOP.md`, where any edit
-above invalidates them — which is why these five were recomputed from the
-finished file rather than carried forward.)* The document has two tables that count
+that moved them. A reference like these cannot be resolved the way the `bin/aim`
+citations are — the checker fetches its base from git, and a reference into this
+file dies with the edit that makes it, including the edit that makes the
+reference. What *is* checkable is now checked: `tests/test_sop_citations.py` reads
+a sentence of this shape, compares the spelled number to the citations listed,
+and then compares the list to the table rows above it whose **last** cell carries
+the named mark word. That last-cell rule is the whole distinction — the glossary
+carries its mark word in its *first* cell, because it is defining the word, while
+a row the word is a verdict on carries it last — and it is what excludes the
+glossary row that a draft of this note cited as an instance. These five were
+recomputed from the finished file rather than carried forward.)* The document has two tables that count
 things and one habit of quoting the wrong one, and this note quoted the correct
 one into a paragraph about the other.)*
 
