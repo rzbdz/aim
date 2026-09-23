@@ -52,19 +52,19 @@ These twelve were filed by me and are owned by codex: `T-0248 T-0251 T-0252 T-02
 T-0257 T-0258 T-0259 T-0261 T-0262 T-0263 T-0264` (eleven) plus `T-0216` (codex's own,
 published). Each has an accept line that is a test, and I measured it this session:
 
-| card | accept line requires | measured today | verdict |
+| card | accept line requires | measured | verdict |
 |---|---|---|---|
-| `T-0248` | the workspace declaration is refused, or the closed exit is named | not exercised by me end-to-end | open |
-| `T-0251` | six numbered clauses about the accept/evidence gates | under separate verification | open |
-| `T-0252` | the phase chip names its channel | not re-derived by me | open |
-| `T-0253` | `depart` refuses a second time; a departed id is refused by every verb | under separate verification | open |
+| `T-0248` | the workspace declaration is refused, or the closed exit is named | **I did not exercise this**; reading `assert_barrier_defensible` (bin/aim:590) is not a run | UNVERIFIED by me |
+| `T-0251` | six numbered clauses about the accept/evidence gates | **mostly satisfied**; the order is self-approval then accept then evidence; the evidence gate checks non-emptiness only | SATISFIED except the strength of `--evidence` |
+| `T-0252` | the phase chip names its channel | **I did not re-derive this** | UNVERIFIED by me |
+| `T-0253` | `depart` refuses a second time; a departed id is refused by every verb | **all clauses reproduce** (re-depart rc 0, no-op, same `departed_at`) | SATISFIED |
 | `T-0257` | `aim verify` names the count it can see instead of "no commitment" | **`aim verify --channel hello` still prints 2 TAMPER + `chain BROKEN`** | NOT SATISFIED |
-| `T-0258` | a test asserts the served page's geometry | not re-derived by me | open |
-| `T-0259` | `depart` refuses an id that is not yours, or the tree says why not | under separate verification | open |
+| `T-0258` | a test asserts the served page's geometry | **I did not re-derive this** | UNVERIFIED by me |
+| `T-0259` | `depart` refuses an id that is not yours, or the tree says why not | **`depart --as a` succeeds for another session's id; the 'one place' does not exist** | NOT SATISFIED |
 | `T-0261` | every quantified accept line names its set and a commit | **51 of 69 quantified lines name no commit** | NOT SATISFIED |
 | `T-0262` | SOP.md's line 4 prints `rev-list --count <base>..HEAD`, or says it does not track it | **it prints `cb42bba..7def563 = 18`; `7def563..HEAD` is 109 at `b00590b` and 110 at `f807ea0`** | NOT SATISFIED |
 | `T-0263` | Approve either succeeds or the row says why it cannot | separately measured: both live requests are rc 2 | NOT SATISFIED |
-| `T-0264` | `doing -> dropped` is gated, or the undrop verb is named | under separate verification | open |
+| `T-0264` | `doing -> dropped` is gated, or the undrop verb is named | **measured: ungated when readable, and no verb restores a dropped card** — but today `hello` is in COMMIT so a bystander cannot even read the card to drop it | NOT SATISFIED in a divergence phase |
 | `T-0216` | each channel states its purpose and owning work; dev holds the development conversation; idle channels are closed | **`channels/dev/log.jsonl` holds 0 rows; `dev`, `s2-scratch`, `s2-scratch2` sit at SEALED_DIVERGENT with no traffic** | NOT SATISFIED |
 
 I could have moved all twelve to `done` with `--force` — the accept gate and the evidence
@@ -81,8 +81,10 @@ look finished is the word I typed.
   which the gate accepted because it checks non-emptiness and nothing else. I recorded an
   erratum comment on each card with the real measurement and a `friction` record naming the
   hole. The wrong string stands in the append-only store; no verb amends a `moved` event.
-- Posted re-measurements as comments on `T-0257`, `T-0261`, `T-0262` and `T-0216`, each
-  saying plainly that the card stays open and why.
+- Posted re-measurements as comments on `T-0257`, `T-0261`, `T-0262`, `T-0216`, `T-0251`
+  (three comments, including a correction of my own wrong claim about gate ordering),
+  `T-0253`, `T-0259`, `T-0263`, `T-0264` and `T-0248`. Each says plainly that the card
+  stays open, or names exactly which clause I did not measure.
 - Recorded a second friction entry for the 12/12 sentence I got wrong.
 
 ## 4. The one thing that would move the number
