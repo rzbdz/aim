@@ -2357,8 +2357,21 @@ the sentence claimed — a card can be created and closed in `SEALED_DIVERGENT`
 does not stop. And **the seal machine's only membership read is its own
 `:1365`** — `_load_room_or_die`'s participant check at `:2747` is the room
 machine's, not the seal's. *(The membership test is not what makes the seal
-machine singular — `who not in m["participants"]` appears at nineteen sites in
-`bin/aim`. What is singular is that `:1365` is the **only** membership test on
+machine singular — `who not in m["participants"]` appears at **twelve** sites in
+`bin/aim`; **seventeen** `ast.Compare` nodes name `m["participants"]` and **five**
+for-loops and comprehensions iterate it, for **22** read-sites in all. *(This said
+"nineteen sites", and 19 is not a population any of those measurements produces:
+the exact-string count is 12, `not in m["participants"]` is 14, every
+`in m["participants"]` is 20 lines, the Compare nodes are 17, and the iterating
+sites are 5 — while 17 + 2 is 19, which is the Compare count plus only the two
+bare `for p in m["participants"]:` loops at `:1619` and `:3894`, silently
+excluding the three comprehensions at `:542`, `:753` and `:1476`. A number a
+reader cannot arrive at by any stated method is the hard end of this document's
+subject; the sentence above now names the method and the count that comes out of
+it. `who not in m["participants"]` is 12 at every revision in this history —
+`01a1735`, `790af75`, `7def563`, `9de1c29`, `1f4bf96` and HEAD alike — so the 19
+was not a stale reading of a moving store either.)* What is singular is that
+`:1365` is the **only** membership test on
 the path to writing a file into `channels/<ch>/seals/`: the other **six** reads
 of that store — `:1477` `advance`'s quorum, `:1620` `synthesis-input`, `:3270`
 **`reveal`**, `:3777` `tension`, `:3895` `status`, `:4275` `verify` — are reads
