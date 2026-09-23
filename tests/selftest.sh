@@ -736,12 +736,71 @@ expect_ok   "and the refusal names the manifest, not an agent's word" \
              --workspace alpha='$WORK' --workspace beta='$WORK' 2>&1 | grep -q \"channel 'dev2' declares a shared workspace\""
 # The declaration can arrive after the channel exists, which is why the check
 # cannot live only in `new-channel`: the second command would walk past it.
-expect_ok   "the declaration can be added to a channel that already exists" \
+#
+# T-0248, first branch. This block used to declare the shared workspace in
+# `SEALED_DIVERGENT` and get rc 0, and then prove the *phase gate* refused the
+# next advance. The declaration is now refused at the declaration site, because
+# the channel it would strand is standing in the phase it would strand it in —
+# `SEALED_DIVERGENT`'s only edge is `COMMIT`, which is in DIVERGENCE_PHASES, so
+# the declaration would leave the channel no legal move at all. That is the
+# accept line's first branch, and the checks below hold it: nothing written, the
+# edge named, the move out named.
+expect_fail "the declaration is refused where it would strand the channel" \
   $AIM channel workspace --as human --channel dev --set alpha="$WORK" --set beta="$WORK"
-expect_fail "and the divergence phase is then refused on advance" \
+expect_ok   "and it names the edge it would close, and the phase it is standing in" \
+  bash -c "$AIM channel workspace --as human --channel dev --set alpha='$WORK' --set beta='$WORK' 2>&1 |
+             grep -q 'SEALED_DIVERGENT -> COMMIT'"
+expect_ok   "and nothing was written: the manifest still names only the two /srv paths" \
+  bash -c "python3 -c \"
+import json,sys
+m=json.load(open('$AIM_ROOT/channels/dev/manifest.json'))
+sys.exit(0 if m.get('workspace')=={'alpha':'/srv/alpha','beta':'/srv/beta'} else 1)\""
+# The boundary of that rule, because a guard that refuses everywhere is not a
+# fix: one participant naming a path is a declaration and not a conflict, so the
+# declaration is accepted and the walk to COMMIT stays open. The shared path is
+# still not what the channel declares -- it is a third path named by one agent --
+# so the phase gate has nothing to refuse.
+expect_ok   "a path one participant names is not a conflict and is recorded" \
+  bash -c "$AIM channel workspace --as human --channel dev --set alpha='$WORK' 2>&1 |
+             grep -q 'no two of them share'"
+expect_ok   "so the channel still reaches COMMIT by the ordinary edge" \
   $AIM advance --as human --channel dev --to COMMIT
-expect_ok   "the refusal says which directory, and who shares it" \
-  bash -c "$AIM advance --as human --channel dev --to COMMIT 2>&1 | grep -q 'named by alpha, beta'"
+# COMMIT is stranded too, and for the same derived reason: its only edge is
+# SYNTHESIS, which is a divergence phase. The refusal is not special-cased per
+# phase -- it is `every edge out of the current phase leads into divergence`,
+# read off `TRANSITIONS`.
+expect_fail "COMMIT is stranded the same way, and refused the same way" \
+  $AIM channel workspace --as human --channel dev --set beta="$WORK"
+# Past the barrier floor is where a shared directory becomes legitimate, and that
+# is CROSS_EXAMINE, not COMMIT: the floor is the first phase whose positions were
+# formed before exposure. Reached by the ordinary route, since the declaration on
+# record is still the conflict-free one.
+expect_ok   "seal, synthesize and cross-examine, all by the ordinary edges" bash -c "
+  $AIM seal --as alpha --channel dev --summary 'alpha' >/dev/null &&
+  $AIM seal --as beta --channel dev --summary 'beta' >/dev/null &&
+  $AIM advance --as human --channel dev --to SYNTHESIS --synthesizer human >/dev/null &&
+  $AIM advance --as human --channel dev --to CROSS_EXAMINE >/dev/null"
+expect_ok   "past the floor, the same declaration is accepted" \
+  bash -c "$AIM channel workspace --as human --channel dev --set beta='$WORK' 2>&1 |
+             grep -q 'can no longer enter or remain in a divergence phase'"
+expect_ok   "status reports the declaration beside the phase it constrains" \
+  bash -c "$AIM status --channel dev | grep -q \"^workspace alpha=$WORK\""
+# The gate a shared workspace actually closes, stated where it is checkable: a
+# channel that has declared a shared path faces it on the transition back toward
+# the barrier. It is put there by walking down to CLOSED and coming back in
+# through a forced edge, which is the route the guard's own docstring describes
+# and the one an operator actually takes. Both the refusal and the release are
+# asserted, because a gate that always says yes would pass the release too.
+expect_ok   "the channel walks out to CLOSED and back to CROSS_EXAMINE" bash -c "
+  $AIM advance --as human --channel dev --to RESOLVE >/dev/null &&
+  $AIM advance --as human --channel dev --to CLOSED >/dev/null &&
+  $AIM advance --as human --channel dev --to CROSS_EXAMINE --force >/dev/null"
+expect_fail "the transition into a divergence phase is now refused, bare" \
+  $AIM advance --as human --channel dev --to SYNTHESIS
+expect_fail "and under --force as well" \
+  $AIM advance --as human --channel dev --to SYNTHESIS --force
+expect_ok   "the refusal names the directory and who shares it" \
+  bash -c "$AIM advance --as human --channel dev --to SYNTHESIS --force 2>&1 | grep -q 'named by alpha, beta'"
 expect_ok   "the shared-workspace refusal is recorded as a barrier event" \
   bash -c "python3 -c \"
 import json,sys
@@ -759,25 +818,18 @@ c=[e for e in rs if e.get('event')=='workspace_cleared']
 sys.exit(0 if c and c[-1]['agent']=='human' and c[-1]['class']=='barrier'
          and c[-1]['cleared']=={'alpha':'$WORK','beta':'$WORK'} else 1)\""
 expect_ok   "the phase gate opens again once the claim matches the filesystem" \
-  $AIM advance --as human --channel dev --to COMMIT
-# One participant naming a directory is a declaration, not a conflict: only a
-# path two of them write to falsifies the barrier. The channel is in COMMIT by
-# now, so the way to ask is a transition back into divergence — which is also
-# the case that would be missed by checking only `new-channel`.
-expect_ok   "a workspace named by one participant is not a conflict" \
-  bash -c "$AIM channel workspace --as human --channel dev --set alpha='$WORK' 2>&1 | grep -q 'no two of them share'"
+  $AIM advance --as human --channel dev --to SYNTHESIS
 # Both halves of this row are the assertion, so neither may be the one that
 # decides the exit status. [measured: the first version was `advance …; status |
 # grep -q …`, whose rc is grep's — a red advance would have left the row green]
 expect_fail "a divergence phase is only reachable through a legal transition" \
-  $AIM advance --as human --channel dev --to SEALED_DIVERGENT
-expect_ok   "and the forced transition back into divergence is allowed here" \
-  $AIM advance --as human --channel dev --to SYNTHESIS --force
-expect_ok   "status reports the declaration beside the phase it constrains" \
-  bash -c "$AIM status --channel dev | grep -q \"^workspace alpha=$WORK\""
+  $AIM advance --as human --channel dev --to CLOSED
+expect_ok   "and the forced transition to another phase is allowed here" \
+  $AIM advance --as human --channel dev --to RESOLVE --force
 expect_fail "a shared path declared after the fact still refuses the next transition" \
-  bash -c "$AIM channel workspace --as human --channel dev --set beta='$WORK' >/dev/null &&
-           $AIM advance --as human --channel dev --to COMMIT --force"
+  bash -c "$AIM advance --as human --channel dev --to CROSS_EXAMINE --force >/dev/null 2>&1;
+           $AIM channel workspace --as human --channel dev --set alpha='$WORK' --set beta='$WORK' >/dev/null 2>&1;
+           $AIM advance --as human --channel dev --to SYNTHESIS --force"
 
 echo "== context_id: one channel, two spellings, and the fold accepts both =="
 # T-0105, and the accept line names the failure it is guarding against: "the fold

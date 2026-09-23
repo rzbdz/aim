@@ -292,6 +292,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ledger_before = len(ledger_rows())
     forced = run("task", "move", "--as", "alpha", "--channel", "c",
                  "--id", A, "--to", "done", "--force",
+                 "--evidence", "walked the cycle by hand; the pair is each other's blocker",
                  "--reason", "the pair is deadlocked by hand")
     check("FIX: --force closes the card against an open blocker",
           forced.returncode == 0 and f"{A}: review -> done" in forced.stdout,
@@ -326,7 +327,8 @@ with tempfile.TemporaryDirectory() as tmp:
           f"{len(ledger_rows()) - ledger_before} ledger row(s) written by the override")
 
     unused = run("task", "move", "--as", "alpha", "--channel", "c",
-                 "--id", W, "--to", "done", "--force")
+                 "--id", W, "--to", "done", "--force",
+                 "--evidence", "nothing to measure here; this card closes cleanly")
     w_move = moved(W)[0] if moved(W) else {}
     check("FIX: a --force that overrode no rule is marked force_unused, not forced "
           "-- the flag means 'the caller was stopped', not 'the caller was nervous'",

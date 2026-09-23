@@ -456,6 +456,17 @@ def t_workspace_strands_commit():
     `channel workspace --none`, then the same bare advance, rc 0. That is the
     card's own measured release and it is why the refusal is a foot-gun with a
     label rather than a trap.
+
+    Rewritten when the card's other branch landed. The accept line is an
+    either/or -- "refuses the workspace declaration at the moment it would
+    strand the channel, **or** names that the ordinary exit just closed" -- and
+    these checks were written against the second branch alone, asserting
+    `the declaration is accepted while the channel is in COMMIT`. The first
+    branch is now built: the declaration that would strand a channel in COMMIT
+    is refused at the declaration site and writes nothing. The second branch is
+    unchanged and still checked, on a phase where the declaration IS accepted
+    (a channel past the barrier floor, which has earned a shared directory), so
+    both halves of the disjunction are held by this suite rather than one.
     """
     section("a shared workspace declared while a channel is in COMMIT (T-0248)")
     fresh()
@@ -467,25 +478,93 @@ def t_workspace_strands_commit():
 
     shared = pathlib.Path(ROOT) / "shared-checkout"
     shared.mkdir()
-    dec = run(["channel", "workspace", "--as", "h", "--channel", "c",
-               "--set", f"a={shared}", "--set", f"b={shared}"])
-    check("the declaration is accepted while the channel is in COMMIT", dec.returncode == 0,
-          f"rc={dec.returncode} out={(dec.stdout + dec.stderr).strip()[:200]}")
-
     manifest = pathlib.Path(ROOT) / "channels" / "c" / "manifest.json"
-    ledger = pathlib.Path(ROOT) / "channels" / "c" / "ledger.jsonl"
-
-    def events():
-        return [r.get("event") for r in jsonl(str(ledger))]
 
     def phase():
         return json.loads(manifest.read_text())["barrier"]["phase"]
 
+    # ---- clause 1, first branch: the stranding declaration is refused
+    #
+    # This is the half that was missing, and the assertion is the inverse of the
+    # one that used to stand here. The manifest must be untouched as well: a
+    # refusal that wrote the declaration first would leave the file saying one
+    # thing and the exit code another.
+    dec = run(["channel", "workspace", "--as", "h", "--channel", "c",
+               "--set", f"a={shared}", "--set", f"b={shared}"])
+    dec_text = dec.stdout + dec.stderr
+    check("the stranding declaration is refused while the channel is in COMMIT",
+          dec.returncode != 0, f"rc={dec.returncode} out={dec_text.strip()[:200]}")
+    check("and the refusal names the edge the declaration just closed",
+          "COMMIT -> SYNTHESIS" in dec_text and "no way out" in dec_text,
+          f"out={dec_text.strip()[:300]}")
+    check("and it names the move that fits a shared directory",
+          "--force" in dec_text and "--none" in dec_text,
+          f"out={dec_text.strip()[:300]}")
+    check("and nothing was written: the manifest declares no workspace",
+          "workspace" not in json.loads(manifest.read_text()),
+          json.dumps(json.loads(manifest.read_text()).get("workspace")))
+
+    # The incremental shape, which is the one the card's own measurement used:
+    # one participant is harmless on its own, and the channel is stranded by the
+    # *second* `--set`, several commands later.
+    one = run(["channel", "workspace", "--as", "h", "--channel", "c", "--set", f"a={shared}"])
+    check("one participant naming a path strands nothing and is recorded",
+          one.returncode == 0 and json.loads(manifest.read_text())["workspace"]["a"] == str(shared),
+          f"rc={one.returncode} {(one.stdout + one.stderr).strip()[:200]}")
+    two = run(["channel", "workspace", "--as", "h", "--channel", "c", "--set", f"b={shared}"])
+    check("the second participant is the stranding moment and is refused there",
+          two.returncode != 0, f"rc={two.returncode} {(two.stdout + two.stderr).strip()[:200]}")
+    check("and the manifest still names only the first",
+          json.loads(manifest.read_text())["workspace"] == {"a": str(shared)},
+          json.dumps(json.loads(manifest.read_text())["workspace"]))
+    # The boundary of clause 1, because a guard that refuses everywhere is not a
+    # fix: a channel that has been *past* the barrier floor has earned the right
+    # to share a directory, and there the declaration is accepted. Reached by the
+    # ordinary route -- one participant's path is not a conflict, so the walk to
+    # CROSS_EXAMINE is unobstructed.
+    run(["seal", "--as", "a", "--channel", "c", "--summary", "a"])
+    run(["seal", "--as", "b", "--channel", "c", "--summary", "b"])
+    run(["advance", "--as", "h", "--channel", "c", "--to", "SYNTHESIS", "--synthesizer", "h"])
+    run(["advance", "--as", "h", "--channel", "c", "--to", "CROSS_EXAMINE"])
+    check("the channel is past the floor, where a shared workspace is legitimate",
+          phase() == "CROSS_EXAMINE", phase())
+    accepted = run(["channel", "workspace", "--as", "h", "--channel", "c",
+                    "--set", f"b={shared}"])
+    check("and there the declaration is accepted, naming the phase it forecloses",
+          accepted.returncode == 0 and "divergence phase" in (accepted.stdout + accepted.stderr),
+          f"rc={accepted.returncode} {(accepted.stdout + accepted.stderr).strip()[:200]}")
+    run(["channel", "workspace", "--as", "h", "--channel", "c", "--none"])
+    run(["advance", "--as", "h", "--channel", "c", "--to", "RESOLVE"])
+    run(["advance", "--as", "h", "--channel", "c", "--to", "CLOSED"])
+
+    # Clause 2, 3 and 4 need a channel standing in COMMIT *with* a shared
+    # workspace, and nothing in the tool can put it there any more -- which is
+    # the first branch working. So the fixture writes the manifest, and says so:
+    # the state is reachable by a hand-edited file or by a tree that predates
+    # this guard, and that is exactly why the advance guard still exists rather
+    # than being deleted as unreachable. A second channel, so the walk above
+    # stays a record of the ordinary route.
+    run(["new-channel", "--id", "cw", "--topic", "workspace", "--participants", "a,b", "--leader", "h"])
+    run(["advance", "--as", "h", "--channel", "cw", "--to", "COMMIT"])
+    cw_manifest = pathlib.Path(ROOT) / "channels" / "cw" / "manifest.json"
+    cw_ledger = pathlib.Path(ROOT) / "channels" / "cw" / "ledger.jsonl"
+    doc = json.loads(cw_manifest.read_text())
+    doc["workspace"] = {"a": str(shared), "b": str(shared)}
+    cw_manifest.write_text(json.dumps(doc, indent=2) + "\n")
+
+    def events():
+        return [r.get("event") for r in jsonl(str(cw_ledger))]
+
+    def phase():
+        return json.loads(cw_manifest.read_text())["barrier"]["phase"]
+
     # Clause 2 and 3: the same edge, once bare and once forced, and the two
     # messages must be *different* -- a guard that prints the forced sentence for
     # a bare call would be describing a command nobody ran.
-    before_events, before_phase = events(), phase()
-    bare = run(["advance", "--as", "h", "--channel", "c"])
+    before_phase = phase()
+    check("the hand-written manifest stands in COMMIT", before_phase == "COMMIT", before_phase)
+    before_events = events()
+    bare = run(["advance", "--as", "h", "--channel", "cw"])
     bare_text = bare.stdout + bare.stderr
     check("the bare advance out of COMMIT is refused", bare.returncode == 2,
           f"rc={bare.returncode} out={bare_text.strip()[:200]}")
@@ -493,7 +572,7 @@ def t_workspace_strands_commit():
           "COMMIT -> SYNTHESIS" in bare_text and "only legal forward edge" in bare_text,
           f"out={bare_text.strip()[:300]}")
     check("and it offers the exit the caller can actually run",
-          "channel workspace --channel c --none" in bare_text,
+          "channel workspace --channel cw --none" in bare_text,
           f"out={bare_text.strip()[:300]}")
     # The bare refusal must NOT claim `--force` was tried: that is a sentence
     # about a flag the caller did not pass, and it is the cheap way to make the
@@ -501,7 +580,7 @@ def t_workspace_strands_commit():
     check("a bare refusal does not claim --force was tried",
           "under --force as well" not in bare_text, bare_text.strip()[:200])
 
-    forced = run(["advance", "--as", "h", "--channel", "c", "--to", "SYNTHESIS", "--force"])
+    forced = run(["advance", "--as", "h", "--channel", "cw", "--to", "SYNTHESIS", "--force"])
     forced_text = forced.stdout + forced.stderr
     check("--force is also refused", forced.returncode == 2,
           f"rc={forced.returncode} out={forced_text.strip()[:200]}")
@@ -514,26 +593,25 @@ def t_workspace_strands_commit():
     # ledger.
     check("nothing moved: the phase is still COMMIT", phase() == "COMMIT", phase())
     check("nothing moved: no history entry for a transition that did not happen",
-          [h["phase"] for h in json.loads(manifest.read_text())["barrier"]["history"]] ==
-          ["SEALED_DIVERGENT", "COMMIT"],
-          json.dumps([h["phase"] for h in json.loads(manifest.read_text())["barrier"]["history"]]))
+          [h["phase"] for h in json.loads(cw_manifest.read_text())["barrier"]["history"]][-1] == "COMMIT",
+          json.dumps([h["phase"] for h in json.loads(cw_manifest.read_text())["barrier"]["history"]]))
     after_events = events()
     check("nothing moved: no ledger row claims a phase change",
           not any(e == "phase" for e in after_events[len(before_events):]),
           f"new events: {after_events[len(before_events):]}")
     check("both refusals are on the ledger as barrier refusals, so the attempt is visible",
-          sum(1 for r in jsonl(str(ledger))
+          sum(1 for r in jsonl(str(cw_ledger))
               if r.get("event") == "refusal" and r.get("action") == "advance"
               and r.get("class") == "barrier") >= 2,
-          json.dumps([{k: r.get(k) for k in ("event", "class", "action")} for r in jsonl(str(ledger))]))
+          json.dumps([{k: r.get(k) for k in ("event", "class", "action")} for r in jsonl(str(cw_ledger))]))
     check("and the ledger still verifies, so the refused halves did not corrupt the chain",
-          run(["verify", "--channel", "c"]).returncode == 0)
+          run(["verify", "--channel", "cw"]).returncode == 0)
 
     # The exit: the refusal is a wall only if nothing clears it.
-    run(["channel", "workspace", "--as", "h", "--channel", "c", "--none"])
-    run(["seal", "--as", "a", "--channel", "c", "--summary", "a"])
-    run(["seal", "--as", "b", "--channel", "c", "--summary", "b"])
-    opened = run(["advance", "--as", "h", "--channel", "c", "--to", "SYNTHESIS", "--synthesizer", "h"])
+    run(["channel", "workspace", "--as", "h", "--channel", "cw", "--none"])
+    run(["seal", "--as", "a", "--channel", "cw", "--summary", "a"])
+    run(["seal", "--as", "b", "--channel", "cw", "--summary", "b"])
+    opened = run(["advance", "--as", "h", "--channel", "cw", "--to", "SYNTHESIS", "--synthesizer", "h"])
     check("clearing the declaration reopens the ordinary edge the refusal named",
           opened.returncode == 0, f"rc={opened.returncode} out={(opened.stdout + opened.stderr).strip()[:200]}")
 

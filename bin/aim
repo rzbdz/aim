@@ -748,13 +748,80 @@ def cmd_channel_workspace(args):
             declared.pop(member, None)
     m["workspace"] = declared
     conflicts = _workspace_conflicts(m)
-    save_manifest(args.channel, m)
+    # T-0248, first branch. The declaration that strands the channel is *this*
+    # call, and until now it was the one act in the exchange that left no mark:
+    # the manifest was written, nothing was printed about the consequence, and no
+    # ledger row was appended -- while the *clearing* of the same declaration is
+    # recorded (`workspace_cleared`). The record was asymmetric in the direction
+    # that hides the act which closed the exit.
+    #
+    # Measured before this change, on a throwaway root: a channel in COMMIT,
+    # `channel workspace --set a=<p> --set b=<p>` -> rc 0, manifest written,
+    # phase still COMMIT, and then `advance --to SYNTHESIS` -> rc 2 `'COMMIT ->
+    # SYNTHESIS' is refused`, on both the bare and the `--force` form, with
+    # `TRANSITIONS["COMMIT"] == ["SYNTHESIS"]` as the whole of the exit. The
+    # second call in the incremental case -- adding the second participant to a
+    # path one already names -- is the stranding moment, and it printed only
+    # "workspace recorded".
+    #
+    # This is narrower than `new-channel`'s refusal and it has to be, because the
+    # two commands answer different questions. `new-channel` refuses *any* shared
+    # workspace, since a channel that has never run has no history that could
+    # justify one. A channel already past the barrier floor has earned the right
+    # to share a directory -- that is what `assert_barrier_defensible`'s
+    # "keep the declaration" branch says, and the reason a channel carried back
+    # to SYNTHESIS is refused there rather than here. What is refused here is
+    # only the case where the declaration would leave the channel with no legal
+    # edge into a phase that can hold it: the edge that just closed is derived
+    # from `TRANSITIONS` rather than asserted, so a phase with a surviving
+    # forward edge keeps its declaration and only prints the warning.
+    #
+    # Like `new-channel`, nothing is written when it refuses. The alternative --
+    # record the declaration and then refuse -- would leave the manifest naming a
+    # shared path while telling the caller the command failed, which is the
+    # disagreement between the file and the tool that the rest of this verb
+    # exists to avoid. The caller who wants the declaration and not the barrier
+    # has the forced edge, which is the honest way to say that.
     if conflicts:
+        cur = m["barrier"]["phase"]
+        closed_edges = [t for t in TRANSITIONS.get(cur, []) if t in DIVERGENCE_PHASES]
+        if closed_edges and not [t for t in TRANSITIONS.get(cur, [])
+                                 if t not in DIVERGENCE_PHASES]:
+            die(
+                f"REFUSED: {args.channel} is in {cur}, and this declaration would "
+                f"leave it no way out of a divergence phase.\n"
+                + "\n".join(f"  {path}  shared by {', '.join(members)}"
+                            for path, members in conflicts) + "\n"
+                f"A shared workspace makes the barrier indefensible, so every edge "
+                f"out of {cur} into a divergence phase is refused on arrival "
+                f"({', '.join(f'{cur} -> {t}' for t in closed_edges)}) -- and this "
+                f"phase has no other edge. Nothing has been recorded: the "
+                f"declaration is a fact about the directory and the manifest still "
+                f"says what it said.\n"
+                f"Two ways forward. Declare it in a phase that can hold it -- the "
+                f"channel has to be past {cur}, and getting there is `aim advance "
+                f"--channel {args.channel} --to <phase> --force`, the statement "
+                f"that this channel is not running a barrier, which is also the "
+                f"move that fits a shared directory; or, if the shared path was a "
+                f"mis-typing, clear it (aim channel workspace --channel "
+                f"{args.channel} --none).",
+                cls="barrier",
+            )
+        # The save is here and not at the end of the function because this branch
+        # prints "workspace recorded" and used to return without saving anything:
+        # the manifest kept the old declaration while the command reported
+        # success, which is the disagreement between the file and the tool that
+        # the whole verb exists to avoid. Measured: `channel workspace --set
+        # a=<p> --set b=<p>` on a channel in CROSS_EXAMINE printed "recorded" and
+        # left `manifest["workspace"]` unchanged. The die above is the one path
+        # that must not write, and it does not reach this line.
+        save_manifest(args.channel, m)
         print(f"{args.channel}: workspace recorded. This channel can no longer "
               f"enter or remain in a divergence phase:")
         for path, members in conflicts:
             print(f"  {path}  shared by {', '.join(members)}")
         return
+    save_manifest(args.channel, m)
     print(f"{args.channel}: workspace recorded for {len(declared)} participant(s); "
           f"no two of them share a writable path, so the barrier claim still holds")
 
