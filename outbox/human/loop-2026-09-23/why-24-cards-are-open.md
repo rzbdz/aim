@@ -143,3 +143,57 @@ geometry). `T-0251` I did test and it is satisfied except for the strength of
 `T-0261`, `T-0262`, `T-0263`, `T-0264`, `T-0216` and `T-0248` all fail a clause of
 their accept line as written, and the store now carries a comment saying which
 clause and what I ran.
+
+## 7. A live leak I found while checking my own claims, and it is the worst thing in this report
+
+`aimbboard/a2a.py`'s `task_visible` treats a **non-participant** as allowed:
+`aimboard/a2a.py:794-795` — `if viewer not in channel.get("participants", []): return True  # a stranger is not a participant; T-0041's case`.
+`aimboard/gate.py`'s `walled_off` reads the *identical condition* as "shut out"
+(`gate.py:19` calls that case "the failure the project exists to catch"). One of
+the two is inverted, and it is the A2A one.
+
+**Measured on the live wire, just now.** T-0193 is a draft, owner `codex`, in
+`hello` (COMMIT). `POST /rpc` with `Method: GetTask`:
+
+| viewer the request gets | result |
+|---|---|
+| `codex-orangement` (a `hello` participant, not owner) | `-32001 Task not found` |
+| `claude-session1` (a `hello` participant, the seat the CLI refuses) | `-32001 Task not found` |
+| `synthesizer-v0` (registered, participant of **nothing**) | **SERVED**, full card |
+| `nobody-at-all` (not registered at all) | **SERVED**, full card |
+
+The gate is not a no-op — two seats are refused, which is exactly what makes the
+hole easy to miss. It is inverted: **participation is what gets you refused, and
+non-participation is what gets you in.**
+
+And `?as=` is honoured on that endpoint, so the caller names its own viewer:
+`POST /rpc` (served as the server's `human`) → **SERVED**; `POST /rpc?as=codex-orangement` → refused.
+That is the same `?as=` that `_viewer()` (`aimboard/cli.py:567`) resolves from the
+query string, and it directly contradicts the comment eight lines above the route:
+"**The viewer is the server's own identity, never a field in the request, which is
+the same rule `/api/command` and mcp.py keep: a caller that could name its own
+author could forge one.**"
+
+**Why this belongs in a report about the front end.** The dashboard's 24 is a
+gated number, and the gate is the thing this project is. If the gate leaks at
+`/rpc`, then the 24 is not a privacy boundary that happens to be large — it is a
+privacy boundary with a door in it. I have not touched `aimboard/` (codex's lane);
+this is the report, not the fix.
+
+## 8. The verdict on "zero unfinished"
+
+The number cannot honestly be made zero while the work is unfinished. The three
+routes to a displayed zero, and what each actually is:
+
+1. **Drop the 24.** `TASK_FLOW` allows `backlog|ready|doing -> dropped` with no
+   `--force`, `actor_exempt` exempts the leader, and `dropped` is excluded from
+   `scored` — so the headline would read `0 undone of 111 work items`. It would
+   also destroy 24 of another session's cards, one-way (`T-0264`: no verb undrops).
+2. **Publish the 24.** Then they leave codex's own board too, because
+   `_load_task_or_die`'s first clause has no owner exemption — the only seat that
+   can work them would stop being able to.
+3. **Delete rows from the store.** The store is the truth; `tests/` asserts against it.
+
+I have done none of these. What would move the number without a lie is the leader
+advancing `hello` to CROSS_EXAMINE: the barrier opens, `read_others` goes true, and
+all 24 become readable and closable by me.
