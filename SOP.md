@@ -1468,27 +1468,36 @@ the table below is five *seats*, which is a different set — one of the six,
 `claude-session2`, is in the registry and in no table here.)*
 
 Measured live, one `/api/state` per seat, same second, against a store of
-**251** conversation records (the store is `outbox/`, and it grows one record
+**255** conversation records (the store is `outbox/`, and it grows one record
 per message — this table is a snapshot, and the *structure* is what does not
 move: `human` reads all of it and is withheld nothing, the two `codex` seats
-read 207 and 67 from the same store in the same second, and a seat that is
+read 208 and 67 from the same store in the same second, and a seat that is
 party to nothing reads 0):
 
 | seat | kind | `conversation.is_leader` | mail read | `withheld` | `mail read − withheld` |
 |---|---|---|---|---|---|
-| `human` | `human` | **true** | **251** | 0 | 251 |
-| `codex` | `codex` | false | 207 | 48 | 159 |
-| `claude-session1` | `claude` | false | 189 | 65 | 124 |
-| `codex-orangement` | `codex` | false | 67 | 189 | −122 |
-| `claude-session2` | `claude` | false | 0 | 255 | −255 |
-| `synthesizer-v0` | `claude` | false | 0 | 255 | −255 |
+| `human` | `human` | **true** | **255** | 0 | 255 |
+| `codex` | `codex` | false | 208 | 51 | 157 |
+| `claude-session1` | `claude` | false | 193 | 65 | 128 |
+| `codex-orangement` | `codex` | false | 67 | 193 | −126 |
+| `claude-session2` | `claude` | false | 0 | 259 | −259 |
+| `synthesizer-v0` | `claude` | false | 0 | 259 | −259 |
+
+*(Re-measured a fifth time and the *shape* is now visible through the movement:
+the store grew 251 → 255 and each seat's `mail read` moved by exactly the
+records addressed to it, so `codex` +1, `claude-session1` +4, `codex-orangement`
+0. The `withheld` column did **not** move for any seat but `codex` (48 → 51) —
+and that is the arithmetic of the counter, not a property of the gate: `withheld`
+counts *records the viewer is not party to*, so four new records between third
+parties leave every other seat's column untouched. A reader who takes movement in
+the first column as evidence about the rule has the wrong column.)*
 
 **The last column is there because it is negative, and that is a finding rather
 than arithmetic.** `withheld` is not the count of mail this seat was denied — it
 is one counter serving the log, the rooms and the mail together, so the store
 size it is "withheld from" is the whole store and not this seat's share. A reader
-who takes `mail + withheld` as the store size gets 453 for `codex` against a
-store of 251. *(The earlier version of this table gave `withheld` as 0/46/65/186/
+who takes `mail + withheld` as the store size gets 259 for `codex` against a
+store of 255. *(The earlier version of this table gave `withheld` as 0/46/65/186/
 252 and a store of 249; every number moved with the store, which is the point
 §4.6 makes one section later.)*
 
@@ -1501,21 +1510,34 @@ whose two seats read **206** and **67** from the same store in the same second:
 the identity is not enough to predict what a seat reads, which was the fact
 worth stating and the one the old sentence hid.
 
-(`withheld` and *mail withheld* differ by 3–4, and the mechanism is not "gated
+(`withheld` and *mail withheld* differ by 3–5, and the mechanism is not "gated
 channels". `withheld` is one counter that `gate.conversation_view` increments in
 three places — `:168` for a gated **public-log message** the viewer did not send,
 `:179` for hidden **rooms**, `:192` for mail — so the residue is gated messages
-in `channels/*/log.jsonl`. Measured at this snapshot: gated log messages per seat
-are `codex` 4, `claude-session1` 3, `codex-orangement` 5, `synthesizer-v0` 4,
-`claude-session2` 4, and hidden rooms are **0 for every seat** because no room
-exists in the live tree. So `codex`'s `withheld` 48 = mail 44 + log 4, and
-`synthesizer-v0`'s 255 = mail 251 + log 4. Every seat is gated on the same **5**
-channels — the channel count is constant and explains none of the variation.
-*(This paragraph used to say the residue "is the count of gated *channels*, which
-carry no records of their own", and to give the range as "0–4". Both are wrong
-and they are wrong in opposite directions: the count is constant at 5, and the
-residue reaches 5 on the seat with the most gated log messages. `:168` was never
-named.)*
+in `channels/*/log.jsonl`. Measured at this snapshot, decomposing the counter per
+seat so the identity `withheld = log + rooms + mail` can be checked column by
+column:
+
+| seat | gated log msgs | hidden rooms | withheld mail | `withheld` |
+|---|---|---|---|---|
+| `human` | 0 | 0 | 0 | **0** |
+| `codex` | 4 | 0 | 47 | **51** |
+| `claude-session1` | 3 | 0 | 62 | **65** |
+| `codex-orangement` | 5 | 0 | 188 | **193** |
+| `claude-session2` | 4 | 0 | 255 | **259** |
+| `synthesizer-v0` | 4 | 0 | 255 | **259** |
+
+Hidden rooms are **0 for every seat** because no room exists in the live tree, so
+the residue is gated log messages throughout — 3, 4 or 5, never 0 and never more
+than 5. Every seat is gated on the same **5** channels — the channel count is
+constant and explains none of the variation. *(This paragraph used to say the
+residue "is the count of gated *channels*, which carry no records of their own",
+and to give the range as "0–4". Both are wrong and they are wrong in opposite
+directions: the count is constant at 5, and the residue reaches 5 on the seat
+with the most gated log messages. `:168` was never named. The identity is now
+printed rather than asserted, because the three earlier versions of this
+paragraph each got the *residue* right and the *decomposition* wrong — a
+correct-looking gap explained by a mechanism nobody had multiplied out.)*
 
 **One payload calls the same agent the leader and a non-participant, one key
 apart.** On a throwaway root — channel `dmtest`, participants `alpha, beta`,
