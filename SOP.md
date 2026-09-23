@@ -109,9 +109,15 @@ and the reader cannot tell which from the form:
   test inside a 24-line function) — the citation names *the line where the thing
   happens*, which may be anywhere inside the definition.
 
-Measured over the document: **34 distinct `symbol:line` citations resolve to a
-function defined in the tree — 16 on its `def` line, 17 on a line inside its body,
-and one that resolves to no function at all.** So both readings are in use, roughly evenly, and neither dominates. The
+Measured over the document: **30 distinct `symbol:line` citations resolve to a
+function defined in the tree — 15 on its `def` line, 13 on a line inside its body,
+and two that resolve to no function at all.** *(Three of the four numbers this
+sentence carried — `34`, `16`, `17` — did not survive being recomputed at the base
+the document declares, by a third reader applying the rule the sentence states: a
+distinct backticked `name:line` token counts as a `def` or a body line only when
+the name is a top-level `def` in `bin/aim` at `7def563`, and otherwise resolves to
+no function at all. The fourth was right about the class and one short on the
+count; both members are named in the paragraph below.)* So both readings are in use, roughly evenly, and neither dominates. The
 convention that resolves the ambiguity without renumbering anything is the form
 the falsifier and I settled on: **when the number is a `def`, the citation is the
 object; when it is a body line, the citation is the event** — and the sentence
@@ -121,14 +127,24 @@ the `:2758` conjunctor; `_load_task_or_die:2073` where `:3122` was the call site
 inside the doorbell verb; `_push_configs_path:3041` and `_friction_path:3996`
 where `:3055` and `:4008` were the `return` statements inside those helpers).
 
-**One citation resolves to nothing, and it is worth naming rather than
-deleting.** `fold_tasks:77` appears in a sentence about the *board's* fold, and
-`:77` is inside `aimboard/fold.py`'s `fold_tasks` (`:61-148`) — a real line. But
-`bin/aim` also defines a function named `fold_tasks` (`:1666-1756`), and `:77` is
-not in it. A resolver that looks the name up in the wrong file reports the
+**Two citations resolve to no function at all, and both are worth naming rather
+than deleting.** `fold_tasks:77` appears in a sentence about the *board's* fold,
+and `:77` is inside `aimboard/fold.py`'s `fold_tasks` (`:61-148`) — a real line.
+But `bin/aim` also defines a function named `fold_tasks` (`:1666-1756`), and `:77`
+is not in it. A resolver that looks the name up in the wrong file reports the
 citation as out of range, which is a false alarm about a correct citation — *and
-the same ambiguity, one file over*. The fix is the same as above: name the module
-when the name is not unique.
+the same ambiguity, one file over*.
+
+`cmd_task_publish:2528` is the second, and it is the opposite case: a correct
+citation to a base the document does not declare. `:2528` **is** the `def` line of
+`cmd_task_publish` on the working tree; at `7def563` that number is a body line of
+`cmd_task_retract`, and the `def` the sentence means is `:2361` there. Everything
+else in that cell is at the declared base, so the publication row is internally
+consistent and externally off by 167 lines — which is the base difference the
+header names, not a drift, and exactly why the header names it.
+
+The fix for both is the same as above: name the module when the name is not
+unique, and name the base when the number belongs to another one.
 
 **And the marks reach the document, not just the system.** Every figure below was
 re-derived by a verifier, and the ones that had moved are corrected in place
@@ -2284,7 +2300,7 @@ a reader should see that it was assembled, but it is one object, not two.)*
 is only written down.** *(The two exceptions are `barrier phase` and `task` — the
 table's rows 1 and 2. "One shape" was the sentence's word for thirteen. Cited from the
 `mark` column the exceptions would be rows 1 and 3: of its thirteen cells only three
-are exactly `**ENFORCED**` — rows 4, 7 and 13 — so "thirteen of the fifteen" is a count
+begin with that bold span — rows 4, 7 and 13 — so "thirteen of the fifteen" is a count
 from the table's *substance* and not from its marks, and the two must not be written as
 though they came from the same column.)* That is the same failure the barrier was built to catch, one level up —
 and it is the reason the SOP has to carry the three marks rather than a list of
@@ -2323,8 +2339,11 @@ for it directly — *状态机，范畴的关系* — and because the defects ar
 explained by the shape of the set than one at a time. There are **thirteen**
 machines in this table, and the thirteenth is the one the first twelve were
 short of: the push-notification config, found by a falsifier reading the event
-enumeration in IV-c.1 rather than the table (it is a four-edge, ENFORCED machine
-in `channels/<ch>/push.jsonl` that no row named — see row 13 below). Counted over
+enumeration in IV-c.1 rather than the table (it is the three-edge ENFORCED machine
+in `channels/<ch>/push.jsonl` that no row named — see row 13 below; *this
+sentence said "four-edge", and row 13's own cell is where the correction lives:
+three edges in the store, plus a fourth request that writes nothing and is
+therefore not an edge*). Counted over
 the table's own `mark` column, and read off each cell's **bold span** rather than
 off the sentence's English: **three carry `ENFORCED` and nothing else** (rows 4, 7,
 13), **four carry it with a qualifier inside the same span** (rows 1, 2, 5, 6),
@@ -3420,14 +3439,22 @@ the `accept` line, rendered and never evaluated).
 
 *(This sentence has said "seventeen", then "three", and neither is the count of
 the cells it is about. Seventeen **is** a real number in this document — it is the
-ranked Part IV table's row count (`:1327`, rows 1–17, re-counted here), which is
+ranked Part IV table's row count (header `:1343`, rows numbered `1`–`17`,
+re-counted here — the note that first made this comparison said "seventeen" of
+the wrong table and "sixteen" of the right one, in two different edits), which is
 what makes the mistake look like a measurement: the number was correct and the
 object was wrong. Three was right only if step 8's hybrid is excluded *and*
 machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
-`PROSE` above this paragraph are five — `:150`, `:157`, `:2389`, `:2392`,
-`:2393` — while this note's earlier text listed four uses of the token, one of
+`PROSE` above this paragraph are five — `:98`, `:166`, `:2409`, `:2412`, `:2413` —
+while this note's earlier text listed four uses of the token, one of
 which it then excluded and one of which it called a machine row: the sentence and
-its note were counting different sets. The document has two tables that count
+its note were counting different sets. *(Three of those line numbers were wrong
+when this note was written, and not because the text moved: two pointed into
+cells whose mark word is not `PROSE` and one pointed at a `PROSE` cell on the
+wrong row. This is a class the citation checker cannot see — it resolves
+references into `bin/aim` and these point back into `SOP.md` — and it is the
+reason the numbers here were recomputed from the finished file rather than
+carried forward.)* The document has two tables that count
 things and one habit of quoting the wrong one, and this note quoted the correct
 one into a paragraph about the other.)*
 
