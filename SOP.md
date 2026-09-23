@@ -97,6 +97,39 @@ system where that is checkable at a glance*.)*
 | **RECORDED** | the tool accepts and writes what happened | an audit after the fact |
 | **PROSE** | a document says so and nothing reads the document | nothing |
 
+**A citation convention, stated here because the document has been using two and
+never said so.** `symbol:NNNN` means one of two different things in these pages
+and the reader cannot tell which from the form:
+
+- **a definition line** — `resolve_actor:806`, `_friction_path:3996`,
+  `_load_task_or_die:2073` — the citation names *the function itself*, and the
+  number is its `def`.
+- **a call site or a specific statement** — `_load_task_or_die:2079` (the
+  refusal clause), `cmd_task_move:2114` (the edge check), `walled_off:24` (the
+  test inside a 24-line function) — the citation names *the line where the thing
+  happens*, which may be anywhere inside the definition.
+
+Measured over the document: **34 distinct `symbol:line` citations resolve to a
+function defined in the tree — 16 on its `def` line and 17 on a line inside its
+body.** So both readings are in use, roughly evenly, and neither dominates. The
+convention that resolves the ambiguity without renumbering anything is the form
+the falsifier and I settled on: **when the number is a `def`, the citation is the
+object; when it is a body line, the citation is the event** — and the sentence
+should say which it needs. Four citations in this document were wrong for exactly
+this reason and are fixed in place (`_load_room_or_die:2759` for the gate inside
+the `:2758` conjunctor; `_load_task_or_die:2073` where `:3122` was the call site
+inside the doorbell verb; `_push_configs_path:3041` and `_friction_path:3996`
+where `:3055` and `:4008` were the `return` statements inside those helpers).
+
+**One citation resolves to nothing, and it is worth naming rather than
+deleting.** `fold_tasks:77` appears in a sentence about the *board's* fold, and
+`:77` is inside `aimboard/fold.py`'s `fold_tasks` (`:61-148`) — a real line. But
+`bin/aim` also defines a function named `fold_tasks` (`:1666-1756`), and `:77` is
+not in it. A resolver that looks the name up in the wrong file reports the
+citation as out of range, which is a false alarm about a correct citation — *and
+the same ambiguity, one file over*. The fix is the same as above: name the module
+when the name is not unique.
+
 **And the marks reach the document, not just the system.** Every figure below was
 re-derived by a verifier, and the ones that had moved are corrected in place
 rather than quietly re-printed: the header's own count (below), §1.1's step 4
@@ -2135,22 +2168,28 @@ be the class of exactly one kind of event, which is what §4.4's rule — one ru
 one owner — asks of every other object here. Either the divergent publication
 gets its own class token, or `refusal_classes()` grows a fourth entry and the
 pane's loader stops being `event == "refusal"`. Until one of those lands, the
-sharper statement of README's sentence is: **`ledger.jsonl` is an event ledger;
-`class` is a field 370 of the 379 rows under `channels/*` carry on the working
-tree (349 of 358 at `7def563`) — and 349 is *also* the `channels/*` class-bearing
-total at `7def563`, which is a coincidence of two different denominators rather
-than a corroboration. The sentence that stood here used it as one: it read
-*"363 and 349 if the `.dbg` root is counted"*, pairing a row count from the
-all-tracked denominator with a class-bearing count from `channels/*`. Measured,
-both pairs are the same in both denominators — rows 358/379 and class-bearing
-349/370 whether `.dbg` is in or out — because `.dbg`'s five rows carry no class
-and its channel holds no ledger. So the `.dbg` clause was arithmetic that does
-nothing, and the sentence it decorated was one number away from the wrong
-mechanism §4.6 exists to name — and the word
+sharper statement of README's sentence is this, and **it is two sentences
+because it is two denominators**. The row count includes `.dbg`: **`class` is a
+field 370 of the 384 rows this repo tracks carry on the working tree — 379 under
+`channels/*` and 5 under `.dbg` — and 349 of 363 at `7def563`.** The
+class-bearing count does not: it is **370 either way live and 349 either way at
+`7def563`**, because `.dbg`'s five rows carry no `class` at all, so the same
+number is reached through both denominators and only the row count moves. *(The
+two halves must be printed on their own denominators, and this clause has now
+been wrong in both directions on that point. It first read "363 and 349 if the
+`.dbg` root is counted" — **right**, and pairing a `.dbg`-inclusive row count with
+a class-bearing count that is `.dbg`-blind. It was then "corrected" here to
+"both pairs are the same in both denominators — rows 358/379 and class-bearing
+349/370", which is **wrong by exactly the five `.dbg` rows**: 358 and 379 are the
+`channels/*`-only counts, and the all-tracked counts are 363 and 384. A
+correction that flattens two denominators into one is the same error as the
+sentence it corrects, one step over — the second time in this section that a fix
+has arrived with a defect of the same family as its subject.)* **And the word
 for a row whose class is `barrier` is not "refusal".** *(`hello` alone, which the
 sentence above used to quote at 353/349: at the working tree it is 368 rows and
-364 class-bearing, so the two are not the same there either — and at `7def563`
-it is 348 and 337, where the same gap holds.)*
+364 class-bearing — and at `7def563`, 348 and 337 — so there the two are not the
+same in either denominator, which is why `hello` is quoted separately rather than
+folded in.)*
 
 ---
 
