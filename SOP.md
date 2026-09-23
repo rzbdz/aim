@@ -2879,12 +2879,17 @@ by another route.)*
 *(This table carries **three bases** inside one subsection, and a falsifier
 caught it by reading all three at once: the sentence says *twenty-one* (the live
 store), the table under it sums to that same reading, and the
-pid block **eighty-three lines down** enumerates fifteen rows of that set one
-by one. *(This anchor is re-derived every pass rather than pinned, and it is the
-one number in this section that the section's own edits move: it read seventy-one
-two passes ago and the re-pins above and below inserted twelve lines between the
-phrase and its referent. An anchor is a claim about the file you are editing, not
-about the file you wrote.)* At HEAD the delta is `task list` +2,
+pid block below — the indented one opening `since 7def563, by pid:` — enumerates
+fifteen rows of that set one by one. *(This was a **distance** and no longer is,
+and the reason is measured: it read "forty lines down", then sixty-six, then
+seventy-one, then eighty-three, then eighty-seven, then ninety-one — each reading
+correct when taken and wrong by the time it was saved, because the note explaining
+the distance is itself between the phrase and its referent. A self-referential
+distance in a document under edit cannot converge; the writer recomputes it and
+the recomputation moves it. So the anchor is now the block's **own first line**,
+which nothing above it can shift. The failure is worth keeping: it is the same
+one the paragraph is about, one level up — a number that was true when it was
+measured and is read at a different tree.)* At HEAD the delta is `task list` +2,
 `search` +1 and the `push` record +1 = **4** at that pin and **9** now; on the live store the set is
 **21** — `task list` +8, `say` +2, `search` +4, `friction` +5, `push` +2 — of
 which **15 are named in the pid block below and 6 are not** — every one of the
