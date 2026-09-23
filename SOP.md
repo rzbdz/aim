@@ -3418,17 +3418,18 @@ and 12 in Part IV-c (the channel lifecycle, computed and dropped by the payload
 projection; the event vocabulary, declared in `TASK_EVENTS` and read by nobody;
 the `accept` line, rendered and never evaluated).
 
-*(This sentence has said "seventeen", then "three": seventeen is the size of the
-**ranked Part IV table** and was a number attached to the wrong object, and three
-was right only if step 8's hybrid is excluded *and* machine 12's `PROSE` cell is
-not counted at all. The cells whose mark word is `PROSE` above this paragraph are
-five — `:150`, `:157`, `:2389`, `:2392`, `:2393` — while this note's own text lists
-four uses of the token, one of which it then excludes and one of which it calls a
-machine row: the sentence and its note were counting different sets. "Seventeen" was the count of the **ranked Part IV
-table**, carried into a sentence about a different table — the same
-table-drift that produced "Seventeen rows" over the 15-row objects table in
-Part IV-b. The document has two tables that count things and one habit of
-quoting the wrong one.)*
+*(This sentence has said "seventeen", then "three", and neither is the count of
+the cells it is about. Seventeen **is** a real number in this document — it is the
+ranked Part IV table's row count (`:1327`, rows 1–17, re-counted here), which is
+what makes the mistake look like a measurement: the number was correct and the
+object was wrong. Three was right only if step 8's hybrid is excluded *and*
+machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
+`PROSE` above this paragraph are five — `:150`, `:157`, `:2389`, `:2392`,
+`:2393` — while this note's earlier text listed four uses of the token, one of
+which it then excluded and one of which it called a machine row: the sentence and
+its note were counting different sets. The document has two tables that count
+things and one habit of quoting the wrong one, and this note quoted the correct
+one into a paragraph about the other.)*
 
 **What has to be decided before an end-of-life SOP can be written:** who, or what
 recorded evidence, declares a channel finished rather than merely quiet. `CLOSED`
