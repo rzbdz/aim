@@ -2014,8 +2014,11 @@ below names.
 `barrier` 109 → 152 is 43 rows, and a message an agent sends is not a refusal —
 a refusal is a verb refusing. The structural counts are the ones that have not
 moved: 36 non-refusal rows carrying a refusal class, 33 `push` rows carrying
-`record` (34 at the working tree — the `push` family grows with mail, which is
-the point), 9 no-class rows in `channels/*`.
+`record` (35 at the working tree, 33 at `7def563` and at `9de1c29` — the
+`push` family grows with mail, which is the point, and the two rows that landed
+while this pass was running are both this session's own records to `codex`, at
+`22:44:34Z` and `02:47:54Z`; this read "34" for two passes, a value that was
+momentarily right and wrong on both sides of that minute), 9 no-class rows in `channels/*`.
 
 **The first two of those three triples are not re-derivable, and that is a
 distinct defect from being stale.** `git show 9fc4d7d:channels/hello/ledger.jsonl`
@@ -2765,51 +2768,51 @@ board teaches the rule it does not run.
     agent  n ──n  channel     (participation; a channel may hold zero participants)
     channel 1 ──1  project    (there is no project object; §2.1 is what that costs)
     channel 1 ──n  task       (ids are per-channel; the *board* keys them per-root — the collision)
-    task   1 ──1  owner       (a **field**, `str`, on the card — nullable: an unowned card
-                               short-circuits two actor rules. Measured on the working tree over **505**
-                               task rows: the key is **present on 254 and absent on 251**, and of the 254
-                               present, **247 carry a name, 7 carry `""` and none carries `null`** —
-                               an earlier version of this block said "253 owner-bearing … and **none**
+    task   1 ──1  owner       (a field, `str`, on the card — nullable: an unowned card
+                               short-circuits two actor rules. Measured on the working tree over 505
+                               task rows: the key is present on 254 and absent on 251, and of the 254
+                               present, 247 carry a name, 7 carry `""` and none carries `null` —
+                               an earlier version of this block said "253 owner-bearing … and none
                                carries `null`", and all three parts of that were one step off: the
                                bearing count is 254 (253 is 254 minus the empty string, which *is* a
                                string), the null claim is right and holds on all 254, and the 253
                                contradicted the `251/251/247`-bearing figures printed three clauses
-                               below it in the same parenthesis. The absence is **not** "rows that have
+                               below it in the same parenthesis. The absence is not "rows that have
                                not moved": `cmd_task_move` emits `"owner": owner` on every move from
                                `1ad2aee` onward (`:2186`, under the comment at `:2182`), so of the 249
-                               moves **116 have no key, 4 carry `""` and 129 carry a name** — and the
+                               moves 116 have no key, 4 carry `""` and 129 carry a name — and the
                                116 are not a random fifth: they are every move with a timestamp
                                before `09:26:30Z`, all 116 of them in `hello`, which is the shape of
                                a writer that did not carry the field yet rather than of a rule. The
                                rest of the absence is `commented` 97 / `published` 35 / `linked` 1 /
                                `retracted` 1 / `dropped` 1, which is a different fact: those four
                                verbs never write the key at all.
-                               (**250/250/246** *absent*-counts at `9de1c29`, `9de1c29`'s parent and
-                               `7def563` — i.e. 251/251/247 owner-**bearing**, and the live pair is
+                               (250/250/246 *absent*-counts at `9de1c29`, `9de1c29`'s parent and
+                               `7def563` — i.e. 251/251/247 owner-bearing, and the live pair is
                                254/251.) The fold never
                                sees the absence at all: `cmd_task_new` writes `"owner": args.owner or ""` on
-                               every `created` row, so **all 105 `created` rows carry the key** —
-                               98 at `7def563`, 102 at `9de1c29`, 105 live — and exactly **3** carry
+                               every `created` row, so all 105 `created` rows carry the key —
+                               98 at `7def563`, 102 at `9de1c29`, 105 live — and exactly 3 carry
                                `""` (1 / 3 / 3 across the same three bases), which is the value
                                `t.get("owner")` returns when the unowned clause fires. *(This said
-                               "all **103** folded cards carry the key — 97 at `7def563`, 101 at
+                               "all 103 folded cards carry the key — 97 at `7def563`, 101 at
                                `9de1c29`, 103 live". None of those three matches any fold in the tree:
-                               the fold is `created` **ids minus `retracted` ids** — `aim task retract`
+                               the fold is `created` ids minus `retracted` ids — `aim task retract`
                                writes a `retracted` event and `fold.py:61-64` pops the card — so it is
-                               **91 / 95 / 98** at those bases, while the `created` **row** counts are
+                               91 / 95 / 98 at those bases, while the `created` row counts are
                                98 / 102 / 105 and the distinct-`task`-id counts are 92 / 96 / 99. 97, 101
                                and 103 are close to all three and equal to none, which is the
                                failure this document names in §1.4: a number that is right about
                                something else. The claim being made — that the fold never sees the
                                absence — is true, and the `created` row count is what shows it.)*)
     task   1 ──n  event       (tasks.jsonl is an event log, folded on read)
-    agent  1 ──1  seal        (a seal is per **participant per channel**, not per task:
+    agent  1 ──1  seal        (a seal is per participant per channel, not per task:
                                channels/hello/seals/{claude-session1,codex,codex-orangement}.json)
     message n ──n  channel    (three stores, and the copy is worse than the word: `say`
                                writes `log.jsonl` + `private/{agent}.jsonl`, `push` writes
                                `outbox/{peer}/*.json`, and only the outbox third carries its
                                own `channel` — the other two are filed by directory)
-    refusal n ──1  action     (every die() **with a channel set**; a channel-less verb writes
+    refusal n ──1  action     (every die() with a channel set; a channel-less verb writes
                                none — `_record_refusal:280` returns early when `_CTX["channel"]`
                                is falsy. A refusal is logged with `agent` already set and
                                `action` spellable — measured: `say` before the channel is
@@ -2817,9 +2820,9 @@ board teaches the rule it does not run.
                                `agent=ghost` — so the dropped fault is naming, not context)
                                (the class on a *refusal* row is `barrier|form|unrecorded`;
                                `class` is not a refusal field — 36 non-refusal rows carry
-                               `class: "barrier"` on purpose and **34** `push` rows carry
+                               `class: "barrier"` on purpose and 35 `push` rows carry
                                `class: "record"` on the working tree (33 at `7def563` and at
-                               `9de1c29`), which is in no vocabulary)
+                               `9de1c29`), which is in no vocabulary *(the line above used to read 34; 33 was right when this block was written and 35 is right now — the 34th was the `22:44:34Z` push record landing inside this very window of codex's review pass, and 34 measured a momentary state that was wrong both before and after it)*)
 
 **Two of these are lossy in the direction a reader would not guess.** `channel
 n─n task` loses work silently (§2.1: an id space per channel, merged per root, so
