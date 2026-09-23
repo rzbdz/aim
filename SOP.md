@@ -2336,12 +2336,15 @@ of the column gives five bare: read as "nothing after the word" the count is two
 "the bold span is `**ENFORCED**` alone" it is three. The five is the row count of
 the last term, moved up one place.)* The string `ENFORCED` appears in **seven**
 cells: rows 1, 4, 5, 6, 7, 13 and row 2, whose full mark is "ENFORCED at move,
-absent at birth". `enforced` case-insensitively appears in **eight** — those seven
+absent at birth". `enforced` case-insensitively appears in **eight** mark cells — those seven
 plus row 3's "not enforced". *(This read "ten, the seven plus rows 1 and 2 again
-and row 3's 'not enforced'": the aside's own arithmetic is 7 + 2 + 1, and its two
-addends are members of the seven it is adding to, so the union is 7 + 1. Ten is
-reachable only as a count of occurrences anywhere in the table's thirteen rows,
-which this sentence is not counting.)*
+and row 3's 'not enforced'", and the aside describes no measurement at any unit:
+"the seven plus rows 1 and 2 again" names five rows where it claims ten, and those
+two are members of the seven it is adding to. Ten is the count of the thirteen
+rows that contain the string *anywhere*, and the two rows that reading adds are
+**11 and 12**, whose cells say `unenforced` — not the two rows the aside names. At
+the mark-cell unit the count is eight; at the whole-row unit it is ten rows and
+eleven occurrences. The sentence now says which one it means.)*
 **This is the document's own recurring defect, one paragraph up from its own
 census**, so it is stated rather than smoothed: a count taken from a string is
 not a count taken from the thing. (An earlier pass counted eight, then eleven,
@@ -2510,7 +2513,7 @@ those reads are the load-bearing ones in the whole system:
     push delivery ──named by──▶ session     (an ack *records* which session read it — T-0242;
                                              nothing reads the recorded session back, and the
                                              state `cmd_outbox` prints is computed from the two
-                                             timestamps alone: `bin/aim:3724` and `:3829` write
+                                             timestamps alone: `bin/aim:3557` and `:3662` write
                                              `acked_by_session`/`claimed_by_session`, and this is
                                              where the halves diverge: `acked_by_session` occurs
                                              exactly once in the tree — the line that writes it — so
@@ -2518,7 +2521,14 @@ those reads are the load-bearing ones in the whole system:
                                              also appears in six tracked `outbox/claude-session1/`
                                              receipts, because a claimed field travels in the
                                              message. *("the only occurrences in the tree" was true
-                                             of one of the two names and false of the other.)*)
+                                             of one of the two names and false of the other. This
+                                             clause first cited `:3724`/`:3829`, which are those two
+                                             lines on the *working tree* and two unrelated lines —
+                                             `vec = {w: c * math.log(...)` and a `claim_analysis`
+                                             append — at the `7def563` this document declares: a
+                                             citation pair correct at HEAD and wrong at the base it
+                                             is read in, which is the same fault as a stale line
+                                             number with the two revisions swapped.)*)
 
 Two reads I expected and did **not** find, measured rather than assumed, because
 a relation that is absent is as load-bearing as one that is present. **The second
@@ -2526,11 +2536,21 @@ of the two is named here for the first time**, which is the correction this pass
 makes — and a falsifier reading the same revision independently flagged it as
 still unnamed, which is the useful part: the sentence had been *"two"* with one
 referent since it was written, and a second reader noticing the gap is what a
-count with one member is for. It is the **doorbell** — `validate_push_config` (`aimboard/a2a.py:1065-1135`)
+count with one member is for. It is the **doorbell** — `validate_push_config` (`aimboard/a2a.py:1065-1129`)
 is a pure shape check over the config object; it reads no manifest, no
-`participants` and no `phase`. So the one machine in the set whose own edges carry
-a `channel` and a `context_id` is the one machine that reads nothing about the
-channel it is bound to. §IV-c.2 records the *consequence* as a cardinality
+`participants` and no `phase`. *(The function is pure. The **verb that calls it is
+not**: `cmd_task_doorbell` loads the manifest at `:3104` — reproduced, a throwaway
+root answers `--channel nosuchchannel` with `aim: no such channel: nosuchchannel`,
+rc 2, and that refusal exists only because the manifest is read — and `create` goes
+on to `_load_task_or_die` at `:3122`, whose `:2079` refusal reads
+`m["barrier"]["phase"]`. This sentence used to say the doorbell "reads nothing
+about the channel it is bound to", which was true of the shape check and false of
+the verb; a falsifier re-derived it and named the three lines.)* The near-uniqueness this paragraph was reaching for is real but smaller than
+"one machine": an AST walk finds **14 dict literals across 11 functions** carrying
+`event`+`channel`+`context_id` — the ten task verbs, `cmd_task_doorbell` three times
+and `cmd_friction` once — so the doorbell is the machine whose *bound* channel is
+read least, not the only one that binds a channel at all. §IV-c.2 records the
+*consequence* as a cardinality
 (*"every `die()` **with a channel set**; a channel-less verb writes none"*),
 which is where an absent read shows up as a count. The first is **the task
 status machine's own edge table does not read the phase machine.**
