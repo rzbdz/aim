@@ -2323,20 +2323,25 @@ explained by the shape of the set than one at a time. There are **thirteen**
 machines in this table, and the thirteenth is the one the first twelve were
 short of: the push-notification config, found by a falsifier reading the event
 enumeration in IV-c.1 rather than the table (it is a four-edge, ENFORCED machine
-in `channels/<ch>/push.jsonl` that no row named — see row 13 below). Counted from
-the table's own `mark` column: **five
-carry `ENFORCED` with no qualifier, two carry it with one, one is `RECORDED` and
-not enforced, and five are prose or absent** — 5 + 2 + 1 + 5 = thirteen, and the
-four terms are disjoint. The string `ENFORCED` appears in **seven** cells: rows
-1, 4, 5, 6, 7, 13 and row 2, whose full mark is "ENFORCED at move, absent at
-birth"; `enforced` case-insensitively appears in **ten**, the seven plus rows 1
-and 2 again and row 3's "not enforced". *(This read "six carry `ENFORCED` as
-their verdict, two are partial, and five are prose or absent" — 6/2/5, which is
-twelve rows, not thirteen. It is reachable only by counting one of the two
-qualified `ENFORCED` cells as both the sixth enforced **and** one of the two
-partials, and it drops row 3 entirely: the one row whose verdict is neither.
-Arithmetic that sums to thirteen can still fail to partition thirteen, and this
-one did.)*
+in `channels/<ch>/push.jsonl` that no row named — see row 13 below). Counted over
+the table's own `mark` column, and read off each cell's **bold span** rather than
+off the sentence's English: **three carry `ENFORCED` and nothing else** (rows 4, 7,
+13), **four carry it with a qualifier inside the same span** (rows 1, 2, 5, 6),
+**one is `RECORDED`** (row 3), and **five are prose or absent** (rows 8-12) —
+3 + 4 + 1 + 5 = thirteen, and the four terms are disjoint. *(This read "five carry
+`ENFORCED` with no qualifier, two carry it with one, one is `RECORDED` and not
+enforced, and five are prose or absent" — 5 + 2 + 1 + 5, also thirteen. No reading
+of the column gives five bare: read as "nothing after the word" the count is two
+(rows 4 and 13, and row 7 carries a trailing clause outside its bold), and read as
+"the bold span is `**ENFORCED**` alone" it is three. The five is the row count of
+the last term, moved up one place.)* The string `ENFORCED` appears in **seven**
+cells: rows 1, 4, 5, 6, 7, 13 and row 2, whose full mark is "ENFORCED at move,
+absent at birth". `enforced` case-insensitively appears in **eight** — those seven
+plus row 3's "not enforced". *(This read "ten, the seven plus rows 1 and 2 again
+and row 3's 'not enforced'": the aside's own arithmetic is 7 + 2 + 1, and its two
+addends are members of the seven it is adding to, so the union is 7 + 1. Ten is
+reachable only as a count of occurrences anywhere in the table's thirteen rows,
+which this sentence is not counting.)*
 **This is the document's own recurring defect, one paragraph up from its own
 census**, so it is stated rather than smoothed: a count taken from a string is
 not a count taken from the thing. (An earlier pass counted eight, then eleven,
