@@ -1724,6 +1724,21 @@ Reproduced on a throwaway root, channel `ch`, one participant `alpha`, phase
     a2a.list_tasks(viewer="alpha")       -> []
     a2a.list_tasks(viewer="lead")        -> ["T-0001"]
 
+*(A falsifier objected that this block cannot run as written — that with `alpha`
+the only participant, `gate.gate_channel`'s first arm resolves `alpha` to its own
+channel, `walled_off` is consequently False, and `visible_tasks` must therefore
+return `visible 1, hidden 0`; the objection concludes that the 0/1 row is
+reachable only for a viewer in *no* channel's participants. **Re-run on a
+throwaway root built to the block's own description, the block is right and the
+objection is wrong**, and the reason is the arm the objection skipped: `walled_off`
+(`gate.py:24-28`) has **two** ways to be shut out — `viewer not in
+participants` *or* `phase in DIVERGENCE` — and it returns on the second. `alpha`
+is a participant, the phase is `SEALED_DIVERGENT`, so `walled_off(alpha)` is
+**True** and the reply is `visible 0, hidden 1`, exactly as printed. The
+objection is correct about a channel outside `DIVERGENCE`, which is why it is
+worth recording rather than deleting: it is a true statement about a different
+phase.)*
+
 Two mechanisms, and both are in the tree as written. **First, the two folds
 disagree about `created_by`.** `bin/aim`'s own fold sets it from the event's
 actor (`:1699`, `"created_by": e.get("actor", "")`); `aimboard/fold.fold_tasks`
