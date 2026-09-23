@@ -99,3 +99,47 @@ not readable.
 The board's own payload publishes this, per seat: `reports.board_scope.visible.undone` is
 **24** for the leader and **12** for me, while `reports.board_scope.fabric.undone` is **24**
 for both. The front end reads the first; the store the second.
+
+## 5. The regression battery, re-run after my writes
+
+A subagent ran the whole battery after the two closes, on the live tree, and I
+re-derived the conformance and gate numbers myself:
+
+| suite | result |
+|---|---|
+| `tests/test_a2a_conformance.py` | 78/78 |
+| `tests/test_aimboard.py` | 186/186 |
+| `tests/conformance.py` | 79/79 |
+| `tests/test_pm_contract.py` | 19/19 |
+| `bash tests/selftest.sh` | pass=199 fail=0 |
+| `python3 -m pyflakes bin/aim aimboard/*.py` | 10 pre-existing lines, rc 1 |
+| `cd web && npx playwright test` (no `CI=1`) | **176 passed (1.5m)** |
+| `python3 tests/test_sop_citations.py` | 12/12 |
+
+Nothing is red. The two `done` closes are not the cause of any failure, and
+`tests/conformance.py:569` covers T-0247's second accept clause (10 checks) —
+which is the clause I refused to close on, so the tree tests it even though I did
+not.
+
+**Two things the battery turned up that are not failures and are worth knowing:**
+
+- `tests/test_aimboard.py:883` folds **the live checkout**, not a throwaway root
+  (`load_fabric(HERE, [], ...)`). That is deliberate and documented there, and it
+  is the seed of the "three gates, three answers" trap: `aim status --channel hello`
+  says COMMIT, the board without `?as=` answers as `human` (`barrier-v0`,
+  `tasks_exists`, 135 tasks), and `aim task list --as claude-session1 --channel hello`
+  is refused outright in COMMIT.
+- `aim verify --channel hello` prints `TAMPER seal claude-session1` /
+  `TAMPER seal codex` / `chain BROKEN` (rc 0) on the live tree. That is T-0257's
+  finding reproducing, not damage from my writes: the ledger chain itself
+  recomputes clean, 0 `prev`/hash mismatches.
+
+## 6. What is still unverified, named
+
+Three of the twelve cards I have not tested to a verdict and I am not going to
+close them on a reading: `T-0252` (the phase chip), `T-0258` (the served page's
+geometry). `T-0251` I did test and it is satisfied except for the strength of
+`--evidence`; `T-0253` reproduces green in every clause; `T-0259`, `T-0257`,
+`T-0261`, `T-0262`, `T-0263`, `T-0264`, `T-0216` and `T-0248` all fail a clause of
+their accept line as written, and the store now carries a comment saying which
+clause and what I ran.
