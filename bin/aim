@@ -2727,6 +2727,28 @@ def cmd_task_move(args):
             "the override.)",
             cls="form",
         )
+    if args.to == "done" and not (args.evidence or "").strip():
+        # T-0251, clause (2). The gate above is skipped when `--force` is passed,
+        # and `--force` here was spending an override on a rule the caller never
+        # saw and never overrode: the sentence said "(--force records the
+        # override)" and on that path there was nothing to record. Measured
+        # before this line, on a throwaway root: a `review -> done` on a card
+        # with a non-empty accept, `--force`, no `--evidence` -> rc 0, the
+        # stored event carrying `"evidence": ""` and `"force_unused": true`, so
+        # the row was byte-identical to an ordinary close that stated no
+        # measurement apart from its hash. A silent close through a documented
+        # door is the same defect as a silent close, and it is the door an agent
+        # reads the error message to find.
+        #
+        # `--force` still reaches the close -- the escape has to exist, or a
+        # leader cannot clear a card whose evidence is a phone call -- but it is
+        # now a *recorded* override, named on the event beside the empty
+        # evidence it stands for. That is the same treatment every other rule in
+        # this verb gives `--force`, and it makes the store's one question
+        # answerable: a `done` event with an empty `evidence` is either an old
+        # row (before the field existed), or a close whose override is named on
+        # it, or a close that should not have been permitted.
+        overridden.append("evidence:empty")
     if args.to in ("blocked", "dropped") and not (args.reason or "").strip():
         die(f"REFUSED: moving to '{args.to}' requires --reason. "
             f"A blocker without a stated cause is a stall nobody can clear.", cls="form")

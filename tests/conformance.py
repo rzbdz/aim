@@ -848,12 +848,32 @@ def t_close_reads_the_accept():
           "; ".join(f"{to}: rc={p.returncode} {(p.stdout + p.stderr).strip()[:80]}"
                     for to, p in walked if p.returncode != 0))
     override = run(["task", "move", "--as", "b", "--channel", "c", "--id", forced_id, "--to", "done",
-                    "--force", "--reason", "closing with no acceptance condition, deliberately"])
+                    "--force", "--evidence", "closed deliberately with no acceptance condition",
+                    "--reason", "closing with no acceptance condition, deliberately"])
     forced_row = (moved_to(forced_id, "done") or [{}])[0]
     check("(a2) --force closes the empty-accept card and the override is on the event",
           override.returncode == 0 and forced_row.get("forced") is True
           and forced_row.get("overrode") == ["accept:empty"],
           f"rc={override.returncode} {json.dumps(forced_row)[:300]}")
+    # The second rule `--force` can spend on this edge, and the reason the check
+    # above passes `--evidence`: the evidence gate is skipped by `--force` too,
+    # so a forced close that states no measurement carries BOTH overrides. That
+    # is the point of the next check -- the flag has to say which rules it stood
+    # in for, and `--force` used to be able to close a card with an empty
+    # `evidence` field and `force_unused: true`, a row byte-identical to an
+    # ordinary close apart from its hash.
+    quiet_id = new_card("--title", "closed with --force and no measurement",
+                        "--owner", "a", "--status", "review",
+                        "--accept", "a condition nobody measured")
+    quiet = run(["task", "move", "--as", "b", "--channel", "c", "--id", quiet_id, "--to", "done",
+                 "--force", "--reason", "no measurement stated, deliberately"])
+    quiet_row = (moved_to(quiet_id, "done") or [{}])[0]
+    check("(a2) --force with no --evidence closes the card and names that override, "
+          "instead of passing silently on the door the refusal itself points at",
+          quiet.returncode == 0 and quiet_row.get("forced") is True
+          and quiet_row.get("overrode") == ["evidence:empty"]
+          and quiet_row.get("evidence") == "",
+          f"rc={quiet.returncode} {json.dumps(quiet_row)[:300]}")
     check("(a2) and a forced close of a card whose accept IS set does not claim this "
           "override: the flag is only spent where a rule actually stopped the caller",
           "accept:empty" not in (row.get("overrode") or []) and not row.get("forced"),

@@ -6,6 +6,24 @@ this document's own rule that is the number that matters, because every figure i
 it that has moved, moved inside those 18 commits. Written because the leader
 asked for it: *"这整一套要有流程有方法论有SOP，才能验证判断到底是否合理."*
 
+**This header does not track the distance from `7def563` to the tree you are
+reading on, and it deliberately prints no number for it.** Every count this
+document ever printed for that distance was stale within the hour, and four
+brackets below record the four failures; a literal cannot be the answer to a
+question whose answer changes with every commit, including the commit that
+writes the literal. So the durable content of this line is the *command*:
+
+    git rev-list --count 7def563..HEAD
+
+Run it. That is the number of commits between the tree this document describes
+and the tree you have, and it is the number that says how far to trust the 66
+citations below — `tests/test_sop_citations.py` prints the same distance in its
+own terms (how many of the cited `bin/aim` lines have moved), and the rule is
+that the citations name the code the argument is about, not where to look. This
+is a correction to T-0262: the fourth line used to print 18, which is
+`cb42bba..7def563` — the distance from the first draft, a different question
+from the one a reader has.
+
 *(The sentence above said "21 commits" and was wrong. `git rev-list --count
 cb42bba..7def563` is 18. It is the smallest error in this document and it is in
 the fourth line, which is where a reader decides how much to trust the rest — so
@@ -34,6 +52,19 @@ document's citations are to be read as "the code this argument is about", not as
 moved: the path was wrong outright (`web/src/components/`, which has never held
 it; it is `web/src/panes/OverviewPane.vue`) and the line numbers were the
 pre-move file's. Corrected in place.)*
+
+*(Fourth correction, and it retires the form rather than the number. The bracket
+above says "it is printed now" — 77 — and 77 is already stale, exactly like the
+25/33/30/35 series it replaced: four corrections to one line, and each one
+substituted a fresh literal for a decayed one, which is the same defect one level
+in. The line now above all four brackets prints the command and no number, and
+says plainly that the header does not track the distance. A reader who wants the
+number runs `git rev-list --count 7def563..HEAD`; a reader who finds no number
+here is being told the truth rather than handed a figure measured at a tree they
+are not on. Filed as T-0262, whose accept line allows either the number measured
+in the same turn or a header that states it does not track it — this is the
+second branch, taken deliberately, because the first branch has now failed four
+times in four attempts.)*
 
 Twelve read-only subagents measured one segment each, and then four more were
 pointed at the finished text and told to *falsify* it. Every claim is marked with
