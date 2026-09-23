@@ -2151,7 +2151,7 @@ not a reader, so that cell is a category slip rather than a miscitation.
 | **message** | `log.jsonl`, `private/`, `outbox/` | `say` `:1121`, `push` `:3288` | `inbox` `:1398`, `conversation_view` `gate.py:145` | first-class, three stores under one word |
 | **receipt** | the push record's own fields | `confirm` `:3497` | `outbox` — gated on the caller's own inbox | first-class, narrow |
 | **seal** | `seals/<a>.json` | `seal` `:1354` | `synthesis-input` `bin/aim:1610` (leader + synthesizer); `status`/`verify` show digests to anyone | first-class **with one real gate and two ungated readers** |
-| **barrier phase** | `manifest.barrier` | `advance` `:1450` | the write side (`require_leader` `:830`, `advance`'s edge check `:1450`); the read side is `PHASE_RULES`, a **table**, not a reader — the same sentence the intro above makes about `:56`, so the two agree and a reader who saw them as contradicting twelve lines apart was reading a row that had already been corrected | first-class |
+| **barrier phase** | `manifest.barrier` | `advance` `:1450` | the write side (`require_leader` `:830`, `advance`'s edge check `:1463`); the read side is `PHASE_RULES`, a **table**, not a reader — the same sentence the intro above makes about `:56`, so the two agree and a reader who saw them as contradicting twelve lines apart was reading a row that had already been corrected | first-class |
 | **refusal** | `ledger.jsonl` | every `die` `:309` | **none** — `verify` is ungated and the payload's `refusals` key is unscoped (measured on the working tree: **295** rows for every viewer, including a stranger — `289` of them in `hello` alone; this cell read `285` when it was written and has been re-derived four times since, which is the cost of a live store rather than a defect in the cell) | first-class, **append-only and fully public** |
 | **room** | `rooms/<id>.jsonl` | `room new` `:2822` | `visible_rooms` `gate.py:133` — **a real gate**, reached from the payload at `conversation.rooms` (`views/chat.py:44`) | first-class |
 | **friction** | `friction.jsonl` | `friction --add` `:4011` | `friction` `:4042` — gated on membership, and the payload also carries it unscoped (`channels[].friction`) | first-class, narrow, **and published anyway** |
@@ -2240,7 +2240,7 @@ from an edge that is not enforced, and merging the two would hide the second.)
 
 | # | machine | store | edges | who may move it | where enforced | mark |
 |---|---|---|---|---|---|---|
-| 1 | **phase** | `manifest.barrier.phase` | `TRANSITIONS` `bin/aim:46` — **7 edges over 6 phases**, `CLOSED` terminal | leader only (`require_leader:830`) | `advance` checks the edge (`:1450`), and the **phase-boundary guard** is `assert_barrier_defensible` (`bin/aim:556`, called `:1075`, `:1473`) — there is no `_check_rules`/`_check_keys` in the tree | **ENFORCED** |
+| 1 | **phase** | `manifest.barrier.phase` | `TRANSITIONS` `bin/aim:46` — **7 edges over 6 phases**, `CLOSED` terminal | leader only (`require_leader:830`) | `advance` checks the edge (`:1463`, `if to not in TRANSITIONS[cur] and not args.force`) — and **`--force` is an escape from this check**, unlike row 2's; the **phase-boundary guard** is `assert_barrier_defensible` (`bin/aim:556`, called `:1075`, `:1473`) — there is no `_check_rules`/`_check_keys` in the tree | **ENFORCED — but the leader may override the edge** |
 | 2 | **task status** | `channels/<ch>/tasks.jsonl` | `TASK_FLOW` `:117` — **16 edges over 7 statuses**, `done`/`dropped` terminal | owner, or the `kind=="human"` exemption | `task move:2114` | **ENFORCED at move, absent at birth** |
 | 3 | **seal** | `seals/<a>.json` | **not one-way** — measured: a second `seal` by the same agent in the same phase succeeds, overwrites the file, and writes a *second* `seal` ledger row with a different digest. Last-write-wins on disk, both writes on the ledger | any participant | quorum is **file existence** (`:1477`); nothing checks that a seal was written once | **RECORDED, not enforced — and not even one-way** |
 | 4 | **membership** | `manifest.participants` | add / remove, both leader-only; both write a ledger row | leader only | `channel add/remove` (`:688`,`:735`) — real barriers, measured | **ENFORCED** |
@@ -2427,9 +2427,16 @@ others read. Measured: `PHASE_RULES` is read at **sixteen** sites in
 (`:1527`, `:1528`, `:1529` and `:1531` are four reads on four adjacent lines, and
 `:3883`/`:3890` are two more) — `:142`, `:152`, `:859`, `:1267`, `:1402`,
 `:1527`, `:1528`, `:1529`, `:1531`, `:1548`, `:1553`, `:1566`, `:1575`, `:3883`,
-`:3890`, `:4134`. They sit in **eight** functions (`_next_opener`, `gate`,
-`cmd_say`, `cmd_inbox`, `cmd_advance` — eight of the sixteen — `cmd_status`,
-`cmd_search`, and module scope at `:152`). The definition at `:56` is excluded;
+`:3890`, `:4134`. They sit in **seven functions plus module scope** —
+`_next_opener` (1 line), `gate` (1), `cmd_say` (1), `cmd_inbox` (1),
+`cmd_advance` (**8 of the sixteen**), `cmd_status` (2), `cmd_search` (1), and
+`PHASE_OPENERS` at module scope `:152`. *(This sentence said "**eight**
+functions" and then listed module scope as its eighth member, which makes the
+list and the word disagree. Eight is the number of *scopes*; seven is the number
+of functions. The same numeral was doing both jobs because `cmd_advance` holds
+eight of the sixteen lines and the aside "eight of the sixteen" reads, in situ,
+as a count of functions. Seven scopes hold one line each, one holds eight, one is
+not a function at all: 7 + 1 + 8 = 16.)* The definition at `:56` is excluded;
 a count that does not subtract it reports **seventeen lines**, and one that
 counts nodes rather than lines reports **twenty**.
 *(A falsifier corrected this line three ways and the correction is worth keeping
@@ -2735,7 +2742,7 @@ by another route.)*
 *(This table carries **three bases** inside one subsection, and a falsifier
 caught it by reading all three at once: the sentence says *sixteen* (working
 tree), the table under it sums to **295 / 130 / 2 / 163** (working tree), and the
-pid block **sixty-six lines down** enumerates fifteen of the same sixteen rows one
+pid block **seventy-one lines down** enumerates fifteen of the same sixteen rows one
 by one. At HEAD the delta is `task list` +2,
 `search` +1 and the `push` record +1 = **4**; on the working tree it is
 `task list` +4, `say` +2, `search` +4, `friction` +5, `push` +1 = **16**,
