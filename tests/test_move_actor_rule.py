@@ -128,8 +128,15 @@ class MoveActorRuleTest(unittest.TestCase):
         shutil.rmtree(cls.root, ignore_errors=True)
 
     def new_card(self, title, status="doing", owner=OWNER):
+        # `--accept` is set on every card here, and it is a *fixture* line rather
+        # than a claim about actor rules: T-0251's `review -> done` refuses a card
+        # with no acceptance condition, and a suite about *who may move* would
+        # otherwise be refused by a rule it is not measuring. The cards are still
+        # created with no `--evidence`: that flag belongs to the close, and the
+        # closes below pass it on the one edge that requires it.
         p = aim(self.root, "task", "new", "--as", owner, "--channel", "mv",
-                "--title", title, "--owner", owner, "--status", status)
+                "--title", title, "--owner", owner, "--status", status,
+                "--accept", f"the actor rule holds for: {title}")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         tid = re.match(r"(T-\d+)", p.stdout)
         self.assertIsNotNone(tid, f"no id in output: {p.stdout!r}")
@@ -159,7 +166,10 @@ class MoveActorRuleTest(unittest.TestCase):
         tid = self.new_card("somebody else approves this one")
         p = self.move(tid, OWNER, "review", "--reason", "submitted")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        p = self.move(tid, OTHER, "done")
+        # The close carries the measurement T-0251 requires on this edge; what
+        # this method is about is *who* may make it, so the evidence is a
+        # constant and the assertion is on the actor.
+        p = self.move(tid, OTHER, "done", "--evidence", "the actor rule, not the work")
         self.assertEqual(p.returncode, 0,
                          f"a non-owner cannot approve the card: {p.stdout}{p.stderr}")
         rows = moved_events(self.root, tid)

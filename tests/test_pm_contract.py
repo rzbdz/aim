@@ -138,10 +138,19 @@ def main():
               ok, f"rc={p.returncode}: {p.stderr.strip()[:90]}")
 
         print("== the blocker rule ==")
-        blocker = new_task(f, "codex", "--title", "the blocker")
+        # `--accept` on both cards is a fixture line, not a claim about the
+        # blocker rule: T-0251's `review -> done` refuses a card with no
+        # acceptance condition, and the two closes below are here to measure the
+        # *blocker*, so they carry the condition and the close carries the
+        # measurement. Without this the suite reported a product defect where it
+        # was measuring its own fixture (measured: 18/19 with `accept (none)` on
+        # `the blocker`).
+        blocker = new_task(f, "codex", "--title", "the blocker",
+                           "--accept", "the blocker rule: a card waits on its edge")
         created = [r for r in f.store()
                    if r.get("event") == "created" and r.get("title") == "the blocked one"]
-        blocked = new_task(f, "codex", "--title", "the blocked one", "--blocked-by", blocker)
+        blocked = new_task(f, "codex", "--title", "the blocked one", "--blocked-by", blocker,
+                           "--accept", "the blocker rule: this card closes only after its blocker")
         created = [r for r in f.store()
                    if r.get("event") == "created" and r.get("title") == "the blocked one"]
         check("--blocked-by on `task new` records the dependency, or says it will not",
@@ -154,12 +163,19 @@ def main():
         for status in ("ready", "doing", "review"):
             f.aim("task", "move", "--as", "codex", "--channel", CH, "--id", blocked, "--to", status)
         ok, p = f.refused("task", "move", "--as", "codex", "--channel", CH,
-                          "--id", blocked, "--to", "done")
+                          "--id", blocked, "--to", "done",
+                          "--evidence", "T-0251 fixture: the close that must not be reached")
         check("an item cannot be done while its blocker is open", ok,
               (p.stdout + p.stderr).strip()[:100])
-        for status in ("ready", "doing", "review", "done"):
+        for status in ("ready", "doing", "review"):
             f.aim("task", "move", "--as", "codex", "--channel", CH, "--id", blocker, "--to", status)
-        p = f.aim("task", "move", "--as", "codex", "--channel", CH, "--id", blocked, "--to", "done")
+        # The blocker's close carries its own measurement, because T-0251 requires
+        # one on `review -> done` and a fixture that bottomed out at a refusal
+        # would report the accept gate as a failure of the *blocker* rule.
+        f.aim("task", "move", "--as", "codex", "--channel", CH, "--id", blocker, "--to", "done",
+              "--evidence", "T-0251 fixture: the blocker itself is done")
+        p = f.aim("task", "move", "--as", "codex", "--channel", CH, "--id", blocked, "--to", "done",
+                  "--evidence", "the blocker is done; the edge is clear (T-0251 fixture)")
         check("it can be done once the blocker is done", p.returncode == 0,
               (p.stdout + p.stderr).strip()[:110])
 

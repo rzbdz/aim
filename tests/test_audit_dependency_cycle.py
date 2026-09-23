@@ -134,11 +134,19 @@ with tempfile.TemporaryDirectory() as tmp:
     # `review` (not `doing`) so `done` is a legal transition and the only thing
     # between a card and `done` is the dependency. Otherwise the transition
     # refusal fires first and the row would not be about the cycle at all.
+    #
+    # `--accept` on every card is a fixture line for the same reason and it is
+    # T-0251's clause: `review -> done` now refuses a card with no acceptance
+    # condition, so a suite about *cycles* would be refused by a rule it is not
+    # measuring. The closes below carry `--evidence` for the same reason -- the
+    # unforced close of `B` in section 6 and of `Q` in section 7 are here to show
+    # the blocker rule and the cycle rule, not the accept gate.
     cards = ["card A", "card B", "card C", "card D",
              "card P", "card Q", "card V", "card W"]
     for title in cards:
         made = run("task", "new", "--as", "alpha", "--channel", "c",
-                   "--title", title, "--status", "review")
+                   "--title", title, "--status", "review",
+                   "--accept", f"the cycle audit holds for {title}")
         check(f"fixture: {title} created in review", made.returncode == 0,
               out_of(made))
     A, B, C, D, P, Q, V, W = (f"T-{i:04d}" for i in range(1, 9))
@@ -329,7 +337,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # ----------------------------------- 6. what the override cost the pair
     print("\n== 6. the other half of the cycle ==")
     second = run("task", "move", "--as", "alpha", "--channel", "c",
-                 "--id", B, "--to", "done")
+                 "--id", B, "--to", "done",
+                 "--evidence", "T-0251 fixture: A is closed, so the cycle is broken")
     check("FIX: with A forced through, B closes with no override at all",
           second.returncode == 0,
           f"rc={second.returncode} {out_of(second).strip()[:200]}")
@@ -355,11 +364,14 @@ with tempfile.TemporaryDirectory() as tmp:
     p_on_q = run("task", "link", "--as", "alpha", "--channel", "c",
                  "--id", P, "--blocked-by", Q)
     p_blocked = run("task", "move", "--as", "alpha", "--channel", "c",
-                    "--id", P, "--to", "done")
+                    "--id", P, "--to", "done",
+                    "--evidence", "T-0251 fixture: refused before the accept gate is reached")
     q_done = run("task", "move", "--as", "alpha", "--channel", "c",
-                 "--id", Q, "--to", "done")
+                 "--id", Q, "--to", "done",
+                 "--evidence", "T-0251 fixture: Q closes on its own")
     p_done = run("task", "move", "--as", "alpha", "--channel", "c",
-                 "--id", P, "--to", "done")
+                 "--id", P, "--to", "done",
+                 "--evidence", "T-0251 fixture: the blocker is done, the edge is clear")
     check("FIX: a real dependency still refuses `done` while its blocker is open",
           p_on_q.returncode == 0 and p_blocked.returncode == 2
           and f"{P} is blocked by {Q}" in out_of(p_blocked),

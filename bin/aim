@@ -124,8 +124,28 @@ TASK_FLOW = {                       # the state machine, not free text
     "dropped": [],
 }
 TASK_PRIORITIES = ["low", "normal", "high"]
+# Every event name a **card** may carry. Until T-0251 this list was declared and
+# **read by nothing** (`grep TASK_EVENTS` found the declaration and no reader),
+# so a writer outside it dropped silently: `cmd_task_edit` emitted `edited` into
+# `tasks.jsonl` for a whole day while the board's fold had no branch for it, and
+# the store's own stray-name counter could not fire because `edited` arrives
+# after a `created` the fold did read. A vocabulary nothing reads is prose. It is
+# read now: `_refuse_stray_task_event` is called from `_append_task_event` and
+# `_append_task_event_guarded`, the only two functions any card event is
+# appended through, and it refuses a name outside this list -- so the list is
+# the gate rather than a description of one. The call sites are named and not
+# numbered on purpose: this comment lives inside the file its numbers would
+# point into, and the first draft of it did cite them, which pushed them down
+# by two the moment it was written. `grep -n _refuse_stray_task_event bin/aim`
+# is the number, and it cannot go stale.
+#
+# The scope is a *card*, and the doorbell is the boundary case that decides it:
+# `aim task doorbell` writes `doorbell_created`/`doorbell_rotated` to
+# `push.jsonl` and carries a task id, so a check keyed on "is it a task event"
+# would refuse a real event of another store. A card is a row in
+# `channels/<ch>/tasks.jsonl`, which is what this list names.
 TASK_EVENTS = ["created", "moved", "assigned", "published", "linked", "commented",
-               "dropped", "retracted"]
+               "dropped", "retracted", "edited"]
 # Phases in which a participant may only see their own drafts.
 DIVERGENCE_PHASES = ("SEALED_DIVERGENT", "COMMIT", "SYNTHESIS")
 
@@ -567,7 +587,7 @@ def _workspace_conflicts(manifest):
                   if len(members) > 1)
 
 
-def assert_barrier_defensible(manifest, to_phase=None):
+def assert_barrier_defensible(manifest, to_phase=None, refused_edge="", forced=False):
     """Refuse a transition into a divergence phase that the manifest falsifies.
 
     The precondition is a fact about the channel rather than a step in the state
@@ -587,6 +607,24 @@ def assert_barrier_defensible(manifest, to_phase=None):
     workspace before reaching the floor has no such history, and its current
     divergence phase is refused on the next transition — whatever that
     transition is, which is why `advance` checks this for every `to`.
+
+    `refused_edge` and `forced` exist for `advance` alone, and they are here for
+    the one measurement that made the generic sentence false. T-0248: a channel
+    in COMMIT that declares a shared workspace finds its **only legal forward
+    edge** — `COMMIT -> SYNTHESIS`, the single entry in `TRANSITIONS["COMMIT"]` —
+    refused, bare *and* under `--force`, and the refusal was the same four
+    sentences used everywhere. Those sentences name the bad state correctly and
+    then offer the wrong remedy for this state: their first suggestion is a
+    manifest edit, and the reader of this refusal is the leader *asking to leave
+    COMMIT*, whose next move is to repeat the command rather than to go and edit
+    a manifest they were never told was load-bearing. Nothing said what had
+    actually happened, which is that the ordinary exit had just closed.
+
+    So when the caller knows the edge it is standing on, the message names it,
+    says what it closed (with the forced case named separately, because the two
+    are different facts: `--force` does not reach the guard, and the comment at
+    the `advance` call site says why), and gives the exit in the order the caller
+    can use it — the way out first, then the next edge once they are out.
     """
     if to_phase not in DIVERGENCE_PHASES:
         return
@@ -595,6 +633,52 @@ def assert_barrier_defensible(manifest, to_phase=None):
         return
     where = "; ".join(f"'{path}' is named by {', '.join(members)}"
                       for path, members in conflicts)
+    if refused_edge:
+        # The specific half: which edge, which exit. `sole` is derived from the
+        # same table `advance` read rather than asserted, because whether the
+        # refusal strands the channel is a fact about that row of TRANSITIONS and
+        # not about the guard: COMMIT has one forward edge and loses it, while
+        # CROSS_EXAMINE -> SYNTHESIS is refused with RESOLVE still open, and a
+        # message that called both of those "the ordinary exit just closed" would
+        # be false in the second case. "under --force as well" is printed only
+        # when the caller really forced, because a bare refusal that claimed
+        # `--force` had failed too would be a sentence about a command nobody ran.
+        cur = manifest["barrier"]["phase"]
+        sole = TRANSITIONS.get(cur) == [to_phase]
+        closed = (f"'{refused_edge}' is refused under --force as well"
+                  if forced else f"'{refused_edge}' is refused")
+        if sole:
+            stranded = (f"It is the only legal forward edge out of {cur}, so this "
+                        f"channel can no longer close by the ordinary route.")
+        else:
+            # The other half, derived the same way and for the same reason. The
+            # edge being refused is not automatically the only one that phase
+            # has, and this branch is what keeps the sentence true for
+            # CROSS_EXAMINE -> SYNTHESIS, where RESOLVE stays open: the refusal
+            # costs the channel an edge, not the channel's exit.
+            fwd = [t for t in TRANSITIONS[cur] if t != to_phase]
+            back = sorted(p for p, edges in TRANSITIONS.items() if cur in edges)
+            keeps = f"{cur} keeps its other edges: {', '.join(fwd)}" if fwd else ""
+            if back:
+                reach = f"{cur} is reachable again from {', '.join(back)}"
+                stranded = f"{keeps}; {reach}." if keeps else f"{reach}."
+            else:
+                stranded = f"{keeps}."
+        die(
+            f"REFUSED: {closed}: channel '{manifest['id']}' declares a shared "
+            f"workspace, so its participants can read each other's work, and a "
+            f"barrier here is a claim the tool cannot keep.\n"
+            f"{where}\n"
+            f"{stranded} --force does not reach this guard: --force answers the "
+            f"state machine, and no amount of meaning it changes what is on disk.\n"
+            f"Two ways out: clear the declaration (aim channel workspace --channel "
+            f"{manifest['id']} --none), after which the ordinary advance works "
+            f"again; or keep the declaration — it is a fact about the directory, "
+            f"not about the manifest — and move by a forced edge that skips this "
+            f"one (aim advance --channel {manifest['id']} --to <phase> --force), "
+            f"which is a statement that this channel is not running a barrier.",
+            cls="barrier",
+        )
     die(
         f"REFUSED: channel '{manifest['id']}' declares a shared workspace, so its "
         f"participants can read each other's work, and a barrier here is a claim "
@@ -1518,6 +1602,113 @@ def cmd_say(args):
     print(f"[{args.channel}] {rec['id']} {who} -> {kind_of}")
 
 
+def check_claims_file(path):
+    """The claims a `--claims` file holds, or a refusal naming the rule.
+
+    T-0247. `cmd_seal` used to hand the parsed payload straight into the seal,
+    whatever the JSON happened to be, and a file holding the bare string
+    `"not-a-list"` sealed successfully:
+
+        $ printf '"not-a-list"' > /tmp/n.json
+        $ aim seal --as alpha --channel c --summary s --claims /tmp/n.json
+        sealed alpha: fa87be50ae2df370…  (10 claims)      # rc=0, a seal written
+
+    Ten is the length of the string. Every later reader that treats `claims` as
+    a list of objects then indexes a character -- `aim tension` dies with
+    `TypeError: string indices must be integers`, and `/api/state` answers 500
+    with `'str' object has no attribute 'get'` -- so the record itself is the
+    defect and the readers are only where it surfaces.
+
+    Refusing here is the whole fix for anything sealed from now on, and it is a
+    `form` refusal: the request was well-formed and the payload it named was
+    not, which is the same shape as an unknown phase name or an unregistered
+    owner (`tests/test_refusal_class.py` pins that a bad *value* in a correct
+    argv reads `form`).
+
+    Called *after* the phase and membership gates, not before them, and that
+    order is deliberate -- it is the split `cmd_reveal` records at its own
+    `free_text_body`/phase pair. A bad claims value does not make the channel
+    open, so a stranger who also passed a bad file must still be refused for
+    identity and recorded `barrier`; evaluating the payload first would file
+    that as a malformed request, which is the T-0222 defect one verb over.
+
+    What is checked, and why each clause is here rather than left to a reader:
+    a list, because `len()` and iteration are what every reader does; an object
+    per element, because they all read element keys; a non-empty `id`, because
+    `aim tension` prints claims keyed by it (`bin/aim`, `cmd_tension`) and the
+    board's expandable row is keyed by `c.id` (`BarrierPane.vue`); a non-empty
+    `claim`, because a position with no claim is not a position; and `kill_if`,
+    because the design makes it load-bearing -- `README.md` calls it "the
+    observation that would make them drop it" and `_kill_overlap` compares the
+    other side's claims against it. The sentence for a missing `kill_if` names
+    a way *out* ("write the observation, or record `--empty-kill-if`"), which is
+    the rule `cmd_task_move` states for its own `REFUSED` -- "finish the
+    blocker, drop the edge, or state the reason with --force" -- rather than a
+    way to comply more slowly.
+
+    `confidence` is deliberately *not* required. Every writer the fabric ships
+    emits a number, but the design describes a claim's confidence as a statement
+    the claimant makes and never as something a reader indexes, so a missing one
+    costs a heuristic field rather than breaking a reader.
+
+    Five refusals come out of this function, in the order the checks run: an
+    unreadable path, unparseable JSON, a payload that is not a list -- the one
+    T-0247 names -- an element that is not an object, and an element missing
+    `id`/`claim`/`kill_if`. Each names the value it found and the rule it broke.
+    """
+    try:
+        raw = Path(path).read_text()
+    except OSError as exc:
+        # A path that cannot be read is the same class of defect one step
+        # earlier, and it used to be a traceback too (`FileNotFoundError`, rc=1,
+        # no message a script could act on). Named with the flag, because the
+        # caller wrote the path and probably means to check it.
+        die(f"--claims {path} could not be read: {exc.strerror or exc}", cls="form")
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        die(f"--claims {path} is not valid JSON: {exc}", cls="form")
+    if not isinstance(payload, list):
+        die(
+            f"--claims {path} holds a {type(payload).__name__}, and a claims file "
+            f"is a JSON list of objects.\n"
+            f"That type is not cosmetic. Sealing used to store whatever the file "
+            f"parsed to, so a string sealed as its character count -- the bare "
+            f"string \"not-a-list\" published ten claims that were not there -- "
+            f"and every reader that treats claims as a list of objects then died "
+            f"on the record: `aim tension` with TypeError, `/api/state` with "
+            f"AttributeError, a 500 for the leader and for anyone who may see the "
+            f"seal (T-0247). Refusing here is what keeps the record readable.\n"
+            f"Expected: [{{\"id\": \"c1\", \"claim\": \"...\", \"confidence\": 0.7, "
+            f"\"kill_if\": \"...\"}}, ...]",
+            cls="form",
+        )
+    for i, c in enumerate(payload):
+        if not isinstance(c, dict):
+            die(
+                f"--claims {path}: element {i} is a {type(c).__name__}, not an "
+                f"object; claims are objects with an id, a claim and a kill_if",
+                cls="form",
+            )
+        missing = [k for k in ("claim", "kill_if") if not str(c.get(k) or "").strip()]
+        if not str(c.get("id") or "").strip():
+            missing.insert(0, "id")
+        if missing:
+            die(
+                f"--claims {path}: element {i} has no non-empty "
+                f"{', '.join(missing)}"
+                + (". Rules this refusal stands on: a claim is stated in `claim`; "
+                   "`id` is what `aim tension` and the board's seal row key it by; "
+                   "and a claim with no `kill_if` is not a claim -- README section "
+                   "2 calls it \"the observation that would make them drop it\", "
+                   "and `aim tension` scores each claim against the other side's. "
+                   "So write the observation, or record the emptiness with "
+                   "`--empty-kill-if`." if "kill_if" in missing else ""),
+                cls="form",
+            )
+    return payload
+
+
 def cmd_seal(args):
     who, kind = resolve_actor(args)
     text = free_text_body(args, body_attr="summary", literal_attr=None)
@@ -1531,6 +1722,12 @@ def cmd_seal(args):
         die(f"sealing is closed in {m['barrier']['phase']}", cls="barrier")
     if who not in m["participants"]:
         die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
+    # The payload is read and checked here -- after the gates, before anything is
+    # written. A seal is a commitment device, so the one thing it may never do is
+    # commit a shape that the tools built to read commitments cannot read
+    # (T-0247); and the gates run first so that a stranger who also passed a bad
+    # file is refused for identity rather than for the file.
+    claims = check_claims_file(args.claims) if args.claims else []
     private = channel_dir(args.channel) / "private" / f"{who}.jsonl"
     recs = read_jsonl(private)
     seal = {
@@ -1539,7 +1736,7 @@ def cmd_seal(args):
         "kind": kind,
         "model": load_registry()["agents"][who].get("model", ""),
         "summary": text,
-        "claims": json.loads(Path(args.claims).read_text()) if args.claims else [],
+        "claims": claims,
         # Hash of the frozen PREFIX, record by record. Appending after sealing is
         # allowed and visible; editing what was sealed is not.
         "private_log_hashes": [r.get("hash", "") for r in recs],
@@ -1637,7 +1834,20 @@ def cmd_advance(args):
     # state machine says no but I mean it", and no amount of meaning it changes
     # what is on disk. A forced divergence on a shared workspace is exactly the
     # claim this refuses.
-    assert_barrier_defensible(m, to_phase=to)
+    #
+    # The edge and the flag are passed, so the refusal can say which edge closed
+    # and whether the caller had already spent `--force` on it (T-0248).
+    # Measured on the pre-fix file, from COMMIT with a shared workspace declared:
+    # `COMMIT -> SYNTHESIS` bare rc 2 and `COMMIT -> SYNTHESIS --force` rc 2,
+    # both printing the *generic* four sentences, whose first remedy is a
+    # manifest edit — so the leader who asked to leave COMMIT was told to go and
+    # edit a file, for a request in which nothing was wrong with the file. The
+    # silence about `--force` was the worse half: `--force` reached the guard and
+    # was absorbed without a word, which is a flag that reports success by being
+    # ignored. The guard still refuses either way; what changes is that it now
+    # says so.
+    assert_barrier_defensible(m, to_phase=to, refused_edge=f"{cur} -> {to}",
+                              forced=bool(args.force))
 
     if to == "SYNTHESIS":
         missing = [p for p in m["participants"]
@@ -1912,6 +2122,28 @@ def fold_tasks(ch):
                     t["blocked_by"].append(dep)
         elif ev == "dropped":
             t["status"] = "dropped"
+        elif ev == "edited" and e.get("changes"):
+            # T-0246 added the verb and T-0246 added the branch *in the board's*
+            # fold (`aimboard/fold.py`), not in this one -- and that gap was
+            # measured on 2026-09-23 while T-0251's gate was being written:
+            # `aim task edit --accept "<line>"` prints `T-0001: accept (unset) ->
+            # <line>` and `aim task list --json` still folds `accept` as `""`,
+            # because the `created` branch above is the only thing that ever
+            # assigns it on this side. Two folds that disagree about a card is
+            # the failure the note at the end of this function names, and it is
+            # not academic: T-0251's own refusal tells the caller to add the
+            # acceptance line with `task edit`, so a reader who followed that
+            # remedy hit a card the tool could not see and could never close.
+            # Read the same payload the board reads, field by field, and only the
+            # fields a card may carry -- a change naming anything else would let
+            # an event from another generation invent board state.
+            for change in e["changes"]:
+                if not isinstance(change, dict):
+                    continue
+                field = change.get("field")
+                if field not in TASK_EDIT_FIELDS:
+                    continue
+                t[field] = change.get("to")
     # There is a second fold — `aimboard/fold.py`, codex's — and `context_id` is
     # deliberately not added to it here. Not because it does not belong there: it
     # does, and it is the fold the board actually renders from. Because that file
@@ -2037,6 +2269,39 @@ def _next_task_id(ch):
     return f"T-{n + 1:04d}"
 
 
+def _refuse_stray_task_event(ev):
+    """A card event whose name is outside the vocabulary is refused, not written.
+
+    T-0251. `TASK_EVENTS` declared the vocabulary and **nothing read it**, and the
+    cost was measured: `cmd_task_edit` emitted `edited` into `tasks.jsonl` for a
+    whole day while the board's fold had no branch for it, so `task edit
+    --priority high` printed its own success and the board did not move. The
+    store's stray-name counter could not catch that either -- the fold's
+    `unknown` fires on an event whose `created` was never seen, and a stray event
+    of a card the fold *did* read takes the ordinary branch and is dropped in
+    silence. A vocabulary with no reader is prose; this makes it a gate.
+
+    The check lives here, in the pair of functions every card event is appended
+    through, for the reason T-0242 stamped `session` in the same spot: a new verb
+    cannot forget it. It is a `form` refusal -- "the event names something that is
+    not a card event" is a fact about the request, not about the phase or the
+    caller -- and it is refused *before* the write lock, since nothing about the
+    store decides it.
+    """
+    name = ev.get("event")
+    if name not in TASK_EVENTS:
+        die(
+            f"REFUSED: '{name}' is not a card event; a card may carry "
+            f"{', '.join(TASK_EVENTS)}.\n"
+            "This is the vocabulary `TASK_EVENTS` declares, and it is now read: an "
+            "event outside it is one no fold has a branch for, so a store that "
+            "accepted it would report the write as a success the board never "
+            "shows. If the event is real, add it to `TASK_EVENTS` and give "
+            "`aimboard/fold.py` a branch for it in the same change.",
+            cls="form",
+        )
+
+
 def _append_task_event(ch, ev, seed=None):
     """Append one task event, allocating `ev['task']` under the write lock.
 
@@ -2053,6 +2318,7 @@ def _append_task_event(ch, ev, seed=None):
     writers take.
     """
     p = tasks_path(ch)
+    _refuse_stray_task_event(ev)   # T-0251: the one gate every card event passes
     # Stamped here rather than in each verb (T-0242): this is the one function
     # every task event is appended through, so a new verb cannot forget it, and
     # `setdefault` leaves a caller that already knows its session in charge.
@@ -2085,6 +2351,7 @@ def _append_task_event_guarded(ch, ev, guard):
     second claimant is refused by the state the first one left behind.
     """
     p = tasks_path(ch)
+    _refuse_stray_task_event(ev)   # T-0251: same gate, second path into the store
     # Same stamp as `_append_task_event`: `claim` is the event where two live
     # sessions of one agent are most likely to be mistaken for each other --
     # both read "nobody owns this yet" -- so the row that records the winner has
@@ -2337,6 +2604,67 @@ def cmd_task_move(args):
                 cls="form",
             )
         overridden += [f"blocker:{b}" for b in open_blockers]
+    # ---- the acceptance gate (T-0251) ------------------------------------
+    # The three rules above this line are about *identity* (`:owner` keeps the
+    # author out of `done`, `:bystander` keeps the bystander out of `review`) or
+    # about *what the card depends on* (an open blocker). None of them reads
+    # `accept`, so on every card in this store a close was an identity and never
+    # a check -- and `web/src/concepts.js` told the reader the opposite: "The
+    # acceptance condition is the part that matters: without one, 'done' is an
+    # opinion." This is the clause that makes that sentence true.
+    #
+    # It is the smallest honest rule: the card's own first branch, first clause.
+    # A card with no acceptance condition has nothing a closer could have
+    # measured, so the close is refused for the same reason `--to blocked`
+    # requires a reason -- an assertion with no content behind it is a stall or
+    # an opinion, and both are what the store exists to distinguish. The second
+    # clause the card offers (re-state the accept line at the close) is *not*
+    # implemented: asking the closer to retype a sentence is an identity check
+    # wearing a check's clothes, which is the defect the card is named for.
+    #
+    # Measured when this was written: 65 recorded closes, 64 of them on a card
+    # whose `accept` was non-empty, 1 (`T-0245`) whose card never had one. So the
+    # gate refuses exactly the close nobody could have verified, and leaves the
+    # other 64 exactly as they were.
+    if args.to == "done":
+        accept = (t.get("accept") or "").strip()
+        if not accept and not args.force:
+            die(
+                f"REFUSED: {args.id} has no --accept line, so 'done' would be an "
+                f"opinion rather than a check.\n"
+                "`accept` is the sentence that makes this card verifiable "
+                "(`aim task new --accept`), and `review -> done` is the edge that "
+                "is supposed to read it. A card with no acceptance condition "
+                "leaves the reviewer nothing to check, which is what makes a "
+                "close an identity instead of a decision.\n"
+                f"Add the line (`aim task edit --id {args.id} --accept '...'`) and "
+                "close it with the measurement that satisfies it, or state the "
+                "reason with --force, and the override is recorded.",
+                cls="form",
+            )
+        if not accept:
+            overridden.append("accept:empty")
+    # The measurement itself, on the event rather than only in the transcript.
+    # `--evidence` is required on this edge for the same reason `--reason` is
+    # required on `--to blocked`: the tool cannot evaluate a sentence like
+    # "Playwright proves q, owner and priority", and a tool that pretended to
+    # would be the same lie one level up. What it *can* do is require that the
+    # closer states, at the moment of the close, what they measured -- so the
+    # store holds the claim beside the acceptance condition it answers, and a
+    # reader can tell "somebody checked this against the line" from "somebody
+    # was entitled to move it".
+    if args.to == "done" and not (args.evidence or "").strip() and not args.force:
+        die(
+            f"REFUSED: closing {args.id} requires --evidence: what was measured "
+            f"against its acceptance condition.\n"
+            f"The card's accept line is:\n    {accept}\n"
+            "A close with no stated measurement is indistinguishable from a close "
+            "that checked nothing, which is the whole defect this gate exists for. "
+            "State what you ran or read and what it showed; it is recorded on the "
+            "`moved` event, beside the accept line it answers. (--force records "
+            "the override.)",
+            cls="form",
+        )
     if args.to in ("blocked", "dropped") and not (args.reason or "").strip():
         die(f"REFUSED: moving to '{args.to}' requires --reason. "
             f"A blocker without a stated cause is a stall nobody can clear.", cls="form")
@@ -2353,6 +2681,18 @@ def cmd_task_move(args):
         "owner": owner,
         "actor_kind": kind,
     }
+    # T-0251. The measurement travels with the close, not only in the terminal it
+    # was typed into. Present only on the edge it governs: a `doing -> review`
+    # move has no acceptance decision in it, and a key that appears on every move
+    # is a key no reader can use to find the closes.
+    if args.to == "done":
+        ev["evidence"] = args.evidence or ""
+        # The accept the closer was looking at, frozen onto the event. The card's
+        # line can be edited afterwards (`aim task edit --accept`), and "which
+        # sentence was this close measured against" then has no answer anywhere in
+        # the record -- the same before/after problem `edited` events carry
+        # `from`/`to` for (T-0246).
+        ev["accept"] = accept
     # T-0221's second clause: the one flag that overrides a rule is the one act
     # the store did not record, so a forced move and an ordinary move were
     # byte-identical rows apart from their hashes. `forced` is present only when
@@ -2852,7 +3192,7 @@ def room_events(ch, rid):
 
 
 def _room_author(meta, msgs):
-    """The room's single author, or `""` when it has none or more than one.
+    """A room's author: the agent who *opened* it. The rule is imported, not copied.
 
     Hoisted out of `_load_room_or_die` for T-0024's `search`, and the hoist is
     the point rather than tidiness: a searcher that re-derived "which rooms may
@@ -2861,17 +3201,62 @@ def _room_author(meta, msgs):
     already had two copies of these four lines; the search asks the same
     question a third time, so the rule now has one home and three callers.
 
-    One author is the room's author, for the same fail-closed reason
-    `aimboard/gate.py:94` gives: the gate is room-level while authorship is per
-    message, and a room with two attributed voices exempts neither rather than
-    opening one author's text to the other. Derived from the messages first and
-    the metadata second, because `aimboard/fabric.py:146` builds a room out of
-    the log alone -- a metadata `author` never reaches the renderer's gate.
+    T-0249 moved that one home *out of this file* entirely. The rule here used to
+    be "the author is whoever wrote the messages, and a room with two attributed
+    voices has no author at all" -- fail-closed in appearance and, in effect, the
+    opposite: `aim room publish` and the draft gate are both author-exempted by
+    comparison with this value, so a room whose opener spoke and then heard a
+    second voice (a human, who is exempt from the draft gate -- `_load_room_or_die`
+    below) had no author, its opener could not read or publish it, and the
+    *later* voice inherited the room by default. The room's own creation message
+    promised "readable by you and the leader"; neither could read it.
+
+    `aimboard.gate.room_author_from_metadata` decides now, and this function only
+    supplies the evidence: the first attributed voice in the log, plus the
+    `author`/`created_by` this tool wrote at creation (`cmd_room_new`). One rule,
+    one home, two readers -- the board calls the same function, so "the CLI and
+    the board disagree about who owns a room" is no longer expressible.
     """
-    authors = {x.get("agent") for x in msgs if x.get("agent")}
-    if not authors:
-        authors = {meta.get(k) for k in ("author", "created_by", "owner")} - {None}
-    return next(iter(authors)) if len(authors) == 1 else ""
+    op = next((x.get("agent") for x in msgs if x.get("agent")), "")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from aimboard.gate import room_author_from_metadata  # noqa: E402
+    except Exception as exc:  # pragma: no cover - only on a broken checkout
+        die(f"REFUSED: cannot decide who a room's author is: aimboard.gate did "
+            f"not import ({exc}).\nThe room gate's author rule lives beside the "
+            f"renderer that asks the same question, so a checkout missing that "
+            f"module has two answers to 'who may read this room' and no way to "
+            f"pick one.", cls="form")
+    return room_author_from_metadata(meta, op)
+
+
+def _room_or_channel_stranger(ch, who, kind, action):
+    """Is this caller outside the room's channel without standing? A stranger.
+
+    Two exemptions, and only two: a **participant** of the channel, and the
+    channel's **leader**. `kind == "human"` alone is not standing -- the registry
+    has more than one human in it, and `walled_off` (`aimboard/gate.py:24`) exempts
+    *any* of them from the barrier because the leader is the audience. On the
+    write side that exemption is a skeleton key: T-0249 measured a registered
+    human who was neither a participant nor the leader reading a draft room's
+    messages and publishing it, with the publish recorded in the ledger as a
+    barrier event by an actor the channel had never admitted.
+
+    Refused, and recorded -- the refusal is the ledger's evidence that the gate
+    was tested, which is the point of recording it rather than printing a warning.
+    """
+    m = load_manifest(ch)
+    if who in m.get("participants", []) or who == m.get("leader"):
+        return False
+    die(
+        f"REFUSED: '{who}' is not a participant in '{ch}' and is not its leader "
+        f"({m.get('leader') or '(unset)'}), so `{action}` is not an act '{who}' may "
+        f"take in it.\n"
+        f"A room inherits its channel's participants (design/06 §5.1), and being "
+        f"registered -- or declaring yourself human -- is not the same as being in "
+        f"the room. Ask the leader to `aim channel add --as {who}` first.",
+        cls="barrier",
+    )
 
 
 def _room_withheld(ch, rid, who, kind, phase=None):
@@ -2887,11 +3272,14 @@ def _room_withheld(ch, rid, who, kind, phase=None):
     m = load_manifest(ch)
     if phase is None:
         phase = m["barrier"]["phase"]
-    if who not in m["participants"] and kind != "human":
+    if who not in m["participants"] and who != m.get("leader"):
         return True
     if _room_published(ch, rid) or phase not in DIVERGENCE_PHASES:
         return False
-    if kind == "human":
+    # The leader's exemption, and only the leader's: T-0249 measured a registered
+    # human who was neither a participant nor the leader reading a draft room
+    # through `room meta`, which is the label this predicate has to match.
+    if who == m.get("leader"):
         return False
     msgs = room_events(ch, rid)
     return who != _room_author(read_json(rooms_dir(ch) / f"{rid}.json") or {"id": rid},
@@ -2901,18 +3289,18 @@ def _room_withheld(ch, rid, who, kind, phase=None):
 def _load_room_or_die(ch, rid, who, kind):
     """The room and its metadata, with the barrier applied to the *record*.
 
-    Reads the message log first and the metadata second, and derives authorship
-    from the messages rather than from a declared field. That is not a
-    preference: `aimboard/fabric.py:146` builds a room out of the log alone, so a
-    metadata `author` never reaches the gate, and a draft room the author cannot
-    read is the defect T-0219 measured (`visible_rooms` has no author
-    exemption while `visible_tasks` does). Deriving it from `agent` on the
-    messages is the same evidence the renderer has, so the two agree by
-    construction instead of by a second implementation of one rule.
+    `author` is `_room_author`'s verdict -- the agent who opened the room -- and
+    not "everyone who ever spoke in it" (T-0249). That is a correction, not a
+    relaxation: the gate below is `who != author`, so a value of `""` refuses
+    *every* non-human caller, including the agent the room belongs to. Reading
+    the opener off the metadata (`cmd_room_new` writes `author`/`created_by`) and
+    checking it against the log's first voice is what `aimboard.gate` does, and
+    this file now imports that decision rather than restating it. A second voice
+    therefore cannot evict the author, and the draft gate still refuses everyone
+    else for as long as the phase is a divergence phase.
     """
     m = load_manifest(ch)
-    if who not in m["participants"] and kind != "human":
-        die(f"'{who}' is not a participant in {ch}", cls="barrier")
+    _room_or_channel_stranger(ch, who, kind, "room")
     msgs = room_events(ch, rid)
     meta_path = rooms_dir(ch) / f"{rid}.json"
     meta = read_json(meta_path, None)
@@ -2922,11 +3310,16 @@ def _load_room_or_die(ch, rid, who, kind):
     author = _room_author(meta, msgs)
     published = _room_published(ch, rid)
     draft = not published
-    if draft and m["barrier"]["phase"] in DIVERGENCE_PHASES and kind != "human":
+    # `kind != "human"` used to stand alone here, which read as "the leader is
+    # exempt" and behaved as "anyone the registry calls human is exempt". The
+    # exemption is the *leader's* -- they are the audience, not a participant --
+    # and `_room_or_channel_stranger` above has already refused every other human.
+    if draft and m["barrier"]["phase"] in DIVERGENCE_PHASES and who != m.get("leader"):
         if who != author:
             die(
                 f"REFUSED: room '{rid}' in {ch} is a draft, the channel is in "
-                f"{m['barrier']['phase']}, and you are not its author.\n"
+                f"{m['barrier']['phase']}, and you are not its author"
+                f"{f' ({author})' if author else ' (the room records no author)'}.\n"
                 f"A room is where two participants in a divergence phase would go to "
                 f"agree on what they think, which is the leak design/06 §2 exists to "
                 f"close. Read your own rooms, or ask the author to open it with "
@@ -3094,23 +3487,30 @@ def cmd_room_publish(args):
     rather than a new policy -- and it records in the same ledger, next to the
     phase rows a barrier audit already reads.
 
-    Author-only, plus the leader. A room opened by a bystander would mean any
-    participant could expose another participant's half-formed thinking, which is
-    the accident design/06 §2 says the default exists to prevent.
+    Opening a draft is an act in the room's own channel, so the caller must be a
+    participant of that channel or the leader: a self-declared human who is
+    neither is a stranger, and `_room_or_channel_stranger` refuses them. That
+    check used to be missing here and in `_load_room_or_die`, which made kind
+    `human` a skeleton key -- a stranger could read a draft room's messages and
+    then publish it, and the publish was recorded as a *barrier event* with an
+    actor who was never in the room's channel. T-0249's second half. The read
+    gate's human exemption now applies only to `m["leader"]`.
     """
     who, kind = resolve_actor(args)
+    _room_or_channel_stranger(args.channel, who, kind, "room publish")
     m, meta, msgs, published, author = _load_room_or_die(
         args.channel, args.id, who, kind)
     if published:
         print(f"room '{args.id}' is already published "
               f"(by {published.get('agent')} at {published.get('ts')})")
         return
-    if kind != "human" and author and who != author:
+    if who != m.get("leader") and author and who != author:
         die(
-            f"REFUSED: room '{args.id}' was written by '{author}'; '{who}' may not "
+            f"REFUSED: room '{args.id}' was opened by '{author}'; '{who}' may not "
             f"open it.\n"
-            f"Publishing a room exposes its messages to every participant. The author "
-            f"of the messages is the one whose decision that is.",
+            f"Publishing a room exposes its messages to every participant. Opening the "
+            f"room is the decision of the agent who created it -- a second voice in the "
+            f"room does not inherit it (T-0249).",
             cls="barrier",
         )
     phase = m["barrier"]["phase"]
@@ -3145,8 +3545,11 @@ def cmd_room_list(args):
     """Which rooms exist, what the gate would show this viewer, and why."""
     who, kind = resolve_actor(args)
     m = load_manifest(args.channel)
-    if who not in m["participants"] and kind != "human":
-        die(f"'{who}' is not a participant in {args.channel}", cls="barrier")
+    # A stranger used to be refused on the `kind != "human"` arm, so a registered
+    # human who was neither a participant nor the leader listed every room in a
+    # channel they were not in (T-0249). The standing is the leader's, not
+    # everyone's whose registry row says human.
+    _room_or_channel_stranger(args.channel, who, kind, "room list")
     phase = m["barrier"]["phase"]
     rows = []
     for path in sorted(rooms_dir(args.channel).glob("*.jsonl")):
@@ -3158,8 +3561,12 @@ def cmd_room_list(args):
         draft = not pub
         # Named, not implied: a reader who cannot see a room must be able to tell
         # "it does not exist" from "it exists and the gate is holding it", which
-        # is the same distinction `task list --count-hidden` exists for.
-        withheld = draft and phase in DIVERGENCE_PHASES and kind != "human" and who != author
+        # is the same distinction `task list --count-hidden` exists for. The
+        # label has to be the read gate's own answer, so this asks
+        # `_room_withheld` rather than restating the condition -- a `list` that
+        # announced a room the caller then could not open would be the two
+        # readers disagreeing about one rule (T-0249).
+        withheld = _room_withheld(args.channel, rid, who, kind, phase)
         rows.append((rid, meta.get("topic", ""), len(msgs), draft, pub, author, withheld))
     if args.json:
         print(json.dumps([{"id": r[0], "topic": r[1], "messages": r[2],
@@ -3906,6 +4313,30 @@ def _containment(a, b, n=8):
     return len(sa & _shingles(b, n)) / len(sa)
 
 
+def _readable_claims(seal):
+    """The claims `aim tension` can score: a list of objects, or [].
+
+    The same rule `aimboard.primitives.read_seal_claims` states for the board,
+    spelled here because this is a standalone script and imports nothing from
+    `aimboard/`. It is the reader half of T-0247: `aim seal` refuses a payload
+    that is not a list of objects now, but a seal written before that check can
+    still be on disk, and this verb used to die on one --
+    `TypeError: string indices must be integers` on the first element of a
+    `"claims": ["x"]` seal -- when the report it exists to produce was exactly
+    what was wanted.
+
+    An element that is not an object is dropped rather than coerced: `str(c)`
+    would print a string as a claim nobody wrote, and this verb's whole output
+    is a comparison between two positions, so an invented claim is worse than a
+    missing one. A dropped element makes the mean overlap a statement about
+    fewer claims, which the printed `N claim(s)` rows let a reader see.
+    """
+    claims = seal.get("claims") if isinstance(seal, dict) else None
+    if not isinstance(claims, list):
+        return []
+    return [c for c in claims if isinstance(c, dict)]
+
+
 def _kill_overlap(kill_if, claim_text):
     """Heuristic: how much of a kill_if condition is addressed by a claim.
 
@@ -3974,7 +4405,7 @@ def cmd_tension(args):
         ),
     }
 
-    ca, cb = seals[a].get("claims", []), seals[b].get("claims", [])
+    ca, cb = _readable_claims(seals[a]), _readable_claims(seals[b])
 
     def score_against(claim, others):
         """Score one claim against another set, symmetrically.
@@ -3994,7 +4425,7 @@ def cmd_tension(args):
         for c in (ca if side == a else cb):
             best_dup, best_kill = score_against(c, others)
             rep["claim_analysis"].append({
-                "agent": side, "id": c["id"], "claim": c["claim"][:80],
+                "agent": side, "id": c.get("id") or "", "claim": str(c.get("claim") or "")[:80],
                 "closest_counterpart": best_dup[1], "counterpart_overlap": round(best_dup[0], 2),
                 "kill_if_addressed_by": best_kill[1], "kill_if_addressed": round(best_kill[0], 2),
                 "confidence": c.get("confidence"),
@@ -4319,7 +4750,7 @@ def cmd_search(args):
             t = board.get(tid)
             if t is None or tid in seen:
                 continue
-            if not _visible_to(t, who, phase) and kind != "human":
+            if not _visible_to(t, who, phase) and who != m.get("leader"):
                 continue
             if query in (t.get("title") or "").lower() or \
                     query in (t.get("accept") or "").lower():
@@ -4328,7 +4759,8 @@ def cmd_search(args):
                             f"{(t.get('owner') or '(unclaimed)'):<16} "
                             f"{_snippet((t.get('title') or '') + ' | ' + (t.get('accept') or ''))}")
         withheld["tasks"] = sum(1 for t in board.values()
-                                if not _visible_to(t, who, phase) and kind != "human")
+                                if not _visible_to(t, who, phase)
+                                and who != m.get("leader"))
 
     if "rooms" in scopes:
         for path in sorted(rooms_dir(args.channel).glob("*.jsonl")):
@@ -4760,6 +5192,10 @@ def main():
     q.add_argument("--id", required=True)
     q.add_argument("--to", required=True)
     q.add_argument("--reason", default="")
+    q.add_argument("--evidence", default="",
+                   help="required on review -> done (T-0251): what was measured "
+                        "against the card's --accept line. Recorded on the `moved` "
+                        "event beside the accept it answers")
     q.add_argument("--force", action="store_true")
 
     q = tadd("claim", cmd_task_claim)

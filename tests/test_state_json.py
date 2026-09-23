@@ -105,8 +105,16 @@ def build_completed_task(root):
         return None, f"aim task new -> rc {p.returncode}: {p.stdout}{p.stderr}"
     tid = ids[0]
     for to in ("ready", "doing", "review", "done"):
+        # T-0251: `review -> done` requires the measurement the closer made, so
+        # the fixture states one on the closing edge. It is a fixture line, not a
+        # claim about the payload path this file is about -- without it the walk
+        # stops at `done` and every check below reads a fabric with no completed
+        # task, which is how this file failed (3 passed, 5 failed) when the gate
+        # landed.
+        extra = (["--evidence", "T-0251 fixture: the card is walked to done for the payload"]
+                 if to == "done" else [])
         p = aim(env, "task", "move", "--as", "boss", "--channel", "statejson",
-                "--id", tid, "--to", to)
+                "--id", tid, "--to", to, *extra)
         if p.returncode != 0:
             return tid, f"moved -> {to}: rc {p.returncode}: {p.stderr.strip()}"
     return tid, ""
