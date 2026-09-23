@@ -38,6 +38,34 @@ fi
 # lockfile two dozen lines up already uses, so this introduces no new concept: the
 # run acts on the checkout it was read from.
 export AIM_ROOT="${AIM_ROOT:-$HERE/.selftest-$$}"
+# `rm -rf` on a path that came from the environment is a foot-gun with a live
+# round: `AIM_ROOT=$HERE bin/aim …` is how every verb is invoked below, so the
+# obvious way to "run the suite against this checkout" is one word that deletes
+# it. Measured 2026-09-23: `export AIM_ROOT=$HERE; rm -rf "$AIM_ROOT"` removes
+# the whole fabric -- code, store, ledger -- with the suite's own blessing. The
+# refusal below names the caller's mistake instead of performing it. It runs
+# before the trap is installed, so nothing has been removed yet when it fires.
+_selftest_root_re=$(cd -- "$AIM_ROOT" 2>/dev/null && pwd -P) || _selftest_root_re=""
+if [ -z "$_selftest_root_re" ]; then
+  # The default root does not exist yet -- `mkdir -p` is two lines down -- so
+  # resolve its deepest existing ancestor and re-attach the rest. Without this
+  # the guard refuses the very path it just built, which is the first thing the
+  # probe here did.
+  _selftest_walk="$AIM_ROOT"; _selftest_rest=""
+  while [ ! -d "$_selftest_walk" ] && [ "$_selftest_walk" != "/" ]; do
+    _selftest_rest="/$(basename -- "$_selftest_walk")$_selftest_rest"
+    _selftest_walk="$(dirname -- "$_selftest_walk")"
+  done
+  _selftest_root_re="$(cd -- "$_selftest_walk" 2>/dev/null && pwd -P)$_selftest_rest"
+fi
+_selftest_here_re=$(cd -- "$HERE" && pwd -P)
+case "$_selftest_root_re/" in
+  "$_selftest_here_re/"|"/")
+    printf 'selftest: FATAL: AIM_ROOT resolves to %s, which is the checkout itself (or /).\n  This suite does `rm -rf "$AIM_ROOT"` on the next line, so that setting would\n  delete the fabric it is testing. Point AIM_ROOT at a throwaway directory, or\n  unset it and let the line above make one under %s.\n' \
+      "$_selftest_root_re" "$_selftest_here_re" >&2
+    exit 2
+    ;;
+esac
 rm -rf "$AIM_ROOT"; mkdir -p "$AIM_ROOT"
 # Same reasoning one level down: the capture files were shared /tmp paths, so two
 # runs overwrote each other's stderr and the FAIL lines quoted the other run.
