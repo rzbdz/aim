@@ -1193,9 +1193,10 @@ enforcement.
 **2. A marker that passes on any failure measures nothing.**
 `test.fail()` and `@unittest.expectedFailure` are satisfied by *any* failure, so
 they do not record *which* failure they absorbed. Measured at HEAD: **14 live
-markers** — **0** `test.fail(...)` *calls* in `web/tests` (a text grep returns 21
+markers** — **0** `test.fail(...)` *calls* in `web/tests` (a text grep returns **23**
 hits, and every one of them is a comment explaining a marker that came *off*; the
-count of live calls is zero) plus **14** `@unittest.expectedFailure` decorators
+count of live calls is zero — *this read 21, which is what the same grep returns
+when the dot is left unescaped and `testXfail(` is allowed to match*) plus **14** `@unittest.expectedFailure` decorators
 in `tests/`. Of those, most had drifted — stale (the defect was fixed),
 unfalsifiable (the apparatus cannot pass whatever the product does), or honest.
 **Two of the drifted ones were hiding a live product defect.**
@@ -3745,9 +3746,19 @@ this one.)*
    `gate.walled_off` (`gate.py:6-22`) makes a registered non-participant a
    **stranger**; `task_visible` (`a2a.py:794-795`) returns `True` on the
    identical condition, and the branch is **commented with the ticket number** —
-   `# a stranger is not a participant; T-0041's case`. Measured on this root,
-   `codex`'s own copy hides `T-0156` (a `hello` draft) while `a2a.task_visible`
-   returns `True` for the same card and viewer. **So the divergences are two, not
+   `# a stranger is not a participant; T-0041's case`. Measured on this root, `gate.visible_tasks` hides `T-0156` — a
+   `hello` draft — from the **unregistered** id `a`, while `a2a.task_visible`
+   returns `True` for `a` on the same card; and it hides it from `codex` too
+   (a `hello` participant who is neither the card's owner nor its creator),
+   where `a2a` also answers `False`. The four measured pairs are `a`
+   (gate `False`, `a2a` `True`), `codex` (`False`, `False`),
+   `claude-session1` (`True`, `True`) and `codex-orangement` (`False`,
+   `False`). *(This read "`codex`'s own copy hides `T-0156` while
+   `a2a.task_visible` returns `True` for the same card and viewer", which is
+   false in both directions: `codex` is a participant, so the stranger branch
+   this paragraph is about cannot fire for them, and `a2a` answers `False`.
+   The pair the section needs is the unregistered viewer's — the branch the
+   ticket is named after.)* **So the divergences are two, not
    one, and the second is the one the ticket is named after.** §6.4's verdict
    below follows from that and is corrected with it.)
 
