@@ -5046,6 +5046,73 @@ def check_sealed_prefix(seal, pl):
                   f"{when} no longer hash to the sealed value")
             return False
         return _note_append(seal, len(lines), n_len)
+    if n_sha or n_len or ("private_log_sha256" in seal) or ("private_log_len" in seal):
+        # T-0257. The three branches above decide on the *truthiness of the
+        # value*; this one decides on the *presence of the key*, and that is the
+        # whole difference. A seal written over a private log that did not exist
+        # yet is still a seal that froze something: it froze the empty prefix.
+        # `cmd_seal` writes `private_log_sha256: ""` and `private_log_len: 0` for
+        # that case (`bin/aim:1749`), and the old guard here read the empty
+        # string as "no commitment at all", so the fabric's own verifier called
+        # the fabric's own seal unverifiable.
+        #
+        # Measured on the live channel `hello` before this change: `aim verify
+        # --channel hello` printed exactly two TAMPER lines — `seal
+        # claude-session1` and `seal codex`, both `carries no private-log
+        # commitment` — and `chain BROKEN`, rc 1, while every `prev`/`hash` link
+        # in the channel's four chained files verified. The two seals it
+        # condemned are the two whose logs were empty at sealing time and hold 5
+        # and 2 records now, and `private_log_len: 0` is on both records: the
+        # commitment is present and says "zero records".
+        #
+        # What the empty frozen prefix buys is asymmetric and worth stating,
+        # because it is a limit and not a victory: a seal over zero records can
+        # detect nothing appended later. Every record in the log arrived after
+        # the seal, and none of them was frozen, so there is no prefix to
+        # compare and no reordering to catch. What it *does* attest is that the
+        # log was empty at `when` — and that is a claim about the file this
+        # check can still verify, by looking at whether the seal's own record
+        # count is zero while the file is not. So the count is named, and the
+        # line says what the seal can and cannot answer, rather than the
+        # sentence the accept line forbids ("carries no commitment") for a seal
+        # that carries one.
+        #
+        # The genuinely field-less seal — the shape `tests/selftest.sh`'s
+        # fixture builds by popping all four keys, and the shape the pre-15:55Z
+        # writer could have produced — keeps its old TAMPER line below, because
+        # for it the old sentence is exactly true and the accept line's first
+        # clause records it as the correct behaviour.
+        n_len = n_len or 0
+        if not n_len:
+            # Zero records frozen. Three shapes reach here, and they are not the
+            # same claim: a digest over nothing (`sha256_hex(b"")`, which is what
+            # a seal written while the private file existed-but-empty carries), a
+            # digest that is absent (the file did not exist at sealing time, the
+            # shape both live `hello` seals have), and — the one that is damage
+            # rather than emptiness — a count of zero beside a digest that is not
+            # the digest of nothing.
+            if n_sha and n_sha != sha256_hex(b""):
+                print(f"TAMPER private log {seal['agent']}: it names 0 sealed "
+                      f"record(s) at {when} and carries a digest that is not the "
+                      f"digest of an empty prefix, so the count and the bytes "
+                      f"disagree")
+                return False
+            if lines:
+                print(f"TAMPER private log {seal['agent']}: the seal froze 0 "
+                      f"record(s) at {when}, and the log now holds {len(lines)} — "
+                      f"the seal attests that this agent's log was empty then and "
+                      f"can say nothing about any record in it, because none of "
+                      f"them was frozen")
+                return False
+            return _note_append(seal, 0, 0)
+        # A count with nothing to check it against: the seal names N records and
+        # carries no bytes, no hashes and no digest. The three branches above
+        # cannot see it, and reporting it as "no commitment" would be the false
+        # half of the same sentence this branch exists to fix.
+        print(f"TAMPER private log {seal['agent']}: the seal names {n_len} record(s) "
+              f"at {when} and the log holds {len(lines)}, but it carries no bytes, "
+              f"no record hashes and no digest, so those {n_len} cannot be checked")
+        return False
     print(f"TAMPER seal {seal['agent']}: carries no private-log commitment, so the "
           f"sealed reasoning cannot be verified at all")
     return False
