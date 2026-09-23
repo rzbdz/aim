@@ -1382,9 +1382,8 @@ absent from every gate that checks the barrier's own bookkeeping.** What that
 buys is not "a human can do anything" but "a human can do anything a
 *participant* could do, without being one" — which is exactly the measured
 result in the table at the top of this section, and not the total bypass the
-phrase "master key" suggests.**
-stated as a number: **31 comparisons, 24 functions, 1 of them also compares the
-caller against the manifest's `leader` field.**
+phrase "master key" suggests. Stated as a number: **31 comparisons, 24 functions,
+1 of them also compares the caller against the manifest's `leader` field.**
 
 *(This line read "30 comparisons" — the table eleven lines above it says 31, and
 an AST walk says 31, so the section contradicted itself in one screen. It also
@@ -2467,8 +2466,16 @@ functions" and then listed module scope as its eighth member, which makes the
 list and the word disagree. Eight is the number of *scopes*; seven is the number
 of functions. The same numeral was doing both jobs because `cmd_advance` holds
 eight of the sixteen lines and the aside "eight of the sixteen" reads, in situ,
-as a count of functions. Seven scopes hold one line each, one holds eight, one is
-not a function at all: 7 + 1 + 8 = 16.)* The definition at `:56` is excluded;
+as a count of functions. **Six** scopes hold one line each — `_next_opener`
+`:142`, module scope at `:152`, `gate` `:859`, `cmd_say` `:1267`, `cmd_inbox`
+`:1402`, `cmd_search` `:4134` — `cmd_status` holds two (`:3883`, `:3890`) and
+`cmd_advance` eight: 6 + 2 + 8 = 16. *(This clause said "seven scopes hold one
+line each, one holds eight, one is not a function at all: 7 + 1 + 8 = 16", which
+is wrong twice in the same breath: "seven" is **six**, and module scope is
+counted a *second* time in the third term after already being one of the six.
+The part that was missing is `cmd_status`, which holds two. The same error as the
+one this note is about — a numeral attached to the wrong noun — arriving inside
+the correction for it.)* The definition at `:56` is excluded;
 a count that does not subtract it reports **seventeen lines**, and one that
 counts nodes rather than lines reports **twenty**.
 *(A falsifier corrected this line three ways and the correction is worth keeping
@@ -2856,7 +2863,14 @@ its fifteen pids is a row that exists in the store and is absent from `7def563`.
 then a sixteenth `task list` refusal landed during the verification pass, so the
 working tree now
 reads sixteen new rows, 374 ledger rows and 163 `barrier` refusals — and the last
-of those three is the one that must not be read as the set's size. The pid trace
+of those three is the one that must not be read as the set's size, which is worth
+an equation rather than a warning: **163 is 152 at `7def563` plus the 11 of the
+sixteen new rows that wear `barrier`.** The two wrong additions are each one step
+away and each overcounts — the block's **15** gives 167 (that is *refusals*, not
+barrier-wearers: the sixteen are 11 `barrier` + 4 `form` refusals + 1 `push`
+record) and the set's **16** gives 168. Independent check at the other base:
+161 at HEAD `9de1c29` plus the 2 new `task list` refusals = 163, and both hit the
+store. The pid trace
 above is
 deliberately *pinned* at fifteen, one row behind the set it is drawn from: every
 row in it is named, so a reader can add
@@ -2984,9 +2998,23 @@ class. **199 rows carry the class; 163 are refusals; 136 are the withholding
 family.** `134`, the number the earlier paragraphs re-derived, is the value of that
 family at **HEAD `9de1c29`** — the three readings are **132 at `7def563`, 134 at
 HEAD, 136 at the working tree**, and the composition is invariant across all
-three (76 `task move` + 2 `task publish` + 1 `task claim` + 1 `task comment` = 80
-rows whose `reason` names a card, plus 52/54/56 `task list` gates, which name a
-count instead). So the re-derivation was one revision behind the sentence it was
+three — and the composition is *not* the same at all three, which is the one
+thing this clause got wrong about it. The **80** is stable: **76** `task move`
+draft-gate rows + 2 `task publish` + 1 `task claim` + 1 `task comment` at
+`7def563`, at HEAD `9de1c29` and on the working tree alike. What moves is the
+`task list` gate beneath it — **52 / 54 / 56** — and that alone is why the family
+reads 132/134/136: 80 + 52, 80 + 54, 80 + 56. *(This said "the composition is
+invariant across all three (… = 80 rows whose `reason` names a card, plus
+52/54/56 `task list` gates)". The 80 is right and it is the *draft gate's* count;
+it is not "rows whose `reason` names a card", which is **87** —
+because the class also holds **7** further `task move` refusals from the two
+identity gates (`bin/aim:2133` ×6, *"is owned by '…' and you are not its owner"*,
+and `:2148` ×1, *"cannot approve it"*) and those reasons name the card too.
+**87 − 80 = 7** is exactly the gap between the family and every `task move` in
+the class, which is where the retracted `143` came from: it was not "every other
+action", it was the same action under a second gate. Reproduced: 76 draft-gate +
+6 not-owner + 1 cannot-approve = 83 `task move`, and `T-0216` ×4, `T-0242` ×2,
+`T-0225` ×1.)* So the re-derivation was one revision behind the sentence it was
 correcting, and the note that says so then named the wrong revision — a third
 turn of the same error, which is why all three readings are now printed instead
 of the one being defended.)*
