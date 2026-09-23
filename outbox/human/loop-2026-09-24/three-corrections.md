@@ -49,36 +49,52 @@ The corrected statement: **the board renders six rows as `done` that are open in
 
 ---
 
-## 2. The cost of "clean up" is larger than the first note implied
+## 2. The cost of "clean up", and the one verb the barrier does not stop
 
-The first note's closing line was that cleanup would be destructive. That is
-true and it is worth saying exactly how destructive, because I understated it.
+The first note's closing line was that cleanup would be destructive. True, and I
+understated it. Re-derived on a copy, verb by verb, against codex's cards while
+`hello` is in `COMMIT`:
 
-`hello` holds **19** open cards. Grouped by who created them:
+    18 of the 19 open cards are DRAFT and 1 is PUBLISHED (T-0216).
+    move --to done / claim / publish / edit / retract  -> "REFUSED: '<id>' is a
+      draft owned by someone else and the channel is in COMMIT"   (every draft)
+    move --to done --force                             -> the same refusal
+    move --to dropped --force   on the DRAFT cards     -> the same refusal
+    move --to dropped --force   on T-0216 (published)  -> rc 0, forced, overrode
+                                                          ["owner:codex"]
 
-    owner=codex   created_by=claude-session1    6
-    owner=codex   created_by=codex             13
+Two things fall out, and they are the crux of this whole loop.
 
-**Six of the 19 are mine to retract** — `aim task retract` works for the creator
-at any phase, and I measured it (rc 0, and the ledger says *"the board no longer
-draws it"*). The other thirteen are codex's in both senses: codex created them,
-and codex owns them.
+**a. `--force` does not cross the barrier on a draft.** I had believed it did. On
+eighteen of the nineteen cards a peer cannot make the card change status by any
+route — the refusal fires in `_load_task_or_die`, before the actor checkpoints
+where `--force` is read. The single exception in the sweep is the one published
+card, and it is an exception that proves the rule: publish is what opens the
+load gate, and once it is open the checkpoints are reachable and forceable.
 
-Retraction has **no undo**. There is no `unretract`, no `--return`, and the
-verb's own docstring is the reason: the repair policy for this store is *never
-edit a chain*, so a retracted card stays retracted and its text survives only
-inside the `created` event.
+**b. The one power the fabric grants over a peer's card is erasure.**
+`aim task retract` works for the card's **creator** on a draft — I measured it,
+rc 0, *"the board no longer draws it"* — because it never goes through
+`_load_task_or_die` at all. So of the 19:
 
-So a zero reached without the leader is: six real work items destroyed
-one-way by me, thirteen by codex, none of them replaced. **I will not do that
-without you saying so.** It is the one action in this loop I would rather leave
-undone than do on my own judgement, because it is the only reversible-looking
-button in the system that is not reversible.
+    created by me    6   -> I can destroy them, one-way, and can do nothing else to them
+    created by codex 13  -> codex can destroy them; I can move nothing
+    published        1   -> T-0216, which anyone may force-drop
 
-And the trap on top of it: **the six `barrier-v0` cards the board hides are
-exactly the six live cards in the fabric today** (`T-0156..T-0161`). A "clean up
-the board" pass that goes looking for stray cards would find `barrier-v0`
-holding six of them.
+A participant is given a unilateral, irreversible power over the cards it filed,
+and **no** power to advance, review, evidence or close any card it did not file.
+That is the barrier working as designed and it is also the reason the count
+cannot come down without you: every route from 19 to 0 is a destruction, and the
+one non-destructive route — the phase edge — is a command only the leader can run.
+
+Retraction has **no undo**: no `unretract`, no `--return`, and the verb's own
+docstring gives the reason — the repair policy for this store is *never edit a
+chain*, so a retracted card stays retracted and its text survives only inside the
+`created` event.
+
+**I will not spend it.** Six real work items destroyed one-way by me, thirteen by
+codex, none replaced, to make a number on a page read zero. That is the one
+action in this loop I would rather leave undone than do on my own judgement.
 
 ---
 
