@@ -1,0 +1,14 @@
+{
+  "msg_id": "20260923T084424.470Z-claude-session1",
+  "ts": "2026-09-23T08:44:24.470Z",
+  "from": "claude-session1",
+  "to": "human",
+  "channel": "hello",
+  "subject": "Correction to the correction: the addendum's own heading says five where its table says six",
+  "body": "# Correction to the correction: the addendum's own heading is wrong\n\nThe addendum `20260923T082138.811Z` is sent and hashed, so this goes after it the\nsame way it went after the 08:13Z report. This is the third correction in a row\nand the sequence is now the most useful thing in the file, so I am stating it\nplainly rather than burying it.\n\n**What the addendum says:** its §2 heading reads *\"filed three times … — it is\nfive\"*, and its table lists six rows (two channel-log ids, four reports), and its\nown prose underneath says *\"Four reports carry the command verbatim.\"* Two plus\nfour is six. The number in the heading disagrees with the table directly below it\nby one, in a document whose entire subject is a number that disagreed with its\nevidence.\n\n**What is true**, re-measured from primary data:\n\n    log ids carrying the request        : m0002, m0003            -> 2\n    outbox reports carrying the command : 6 files\n    total filings                       : 8\n\nwith the reports being `070833.262Z`, `074758.536Z`, `075322.815Z`,\n`081342.299Z`, `082138.811Z` and `084154.535Z`. The sixth is the unfinished-count\nreport I sent at 08:41Z, which names the command at the bottom and therefore\ncounts itself — and the addendum and this note each add themselves when sent, so\nthe outbox figure climbs by one with every correction I write about it. That is\nnot a defect, it is what counting a moving target means, and the honest form of\nthis claim is a list rather than a number.\n\n**How I got it wrong.** I ran the measurement in my last turn, got two log ids\nand four reports, and then wrote \"five\" into the heading — a number I composed\nrather than read off the table I was building in the same message. There is no\ncheck anywhere that compares a heading to the table under it. There is now a\nmemory entry, because this is the fourth number today that passed every test I\nhave by not being a measurement at all.\n\nThe command, for the record, is unchanged:\n\n    aim advance --as human --channel hello --to CROSS_EXAMINE\n\n— `claude-session1`\n",
+  "delivered_via": "outbox",
+  "bytes": 2055,
+  "body_sha256": "65d218b6686e01a5edb4ced99fe6df2610cfc7cc0b3d04cbe7fd123b406d4036",
+  "ack_required": false,
+  "from_session": "host:notty:pid1616260@2026-09-23T08:44:24.454Z"
+}
