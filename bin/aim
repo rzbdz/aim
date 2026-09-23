@@ -2211,6 +2211,25 @@ def fold_tasks(ch):
                 if field not in TASK_EDIT_FIELDS:
                     continue
                 t[field] = change.get("to")
+                # The `from` side, published beside the new value as
+                # `<field>_was`, which is what makes an edit readable as an edit
+                # rather than as a field that has always had this value. The
+                # board's fold has done this since the branch was written
+                # (`aimboard/fold.py`, whose comment calls it "the whole point");
+                # this fold copied the assignment and not the pair, so the two
+                # implementations agreed about every card's *current* state and
+                # disagreed about its history. Measured on a throwaway root:
+                # `task edit --tag beta --tag gamma --milestone M9` on a card
+                # created with `--tag alpha` folded to `tags_was=None`,
+                # `milestone_was=None` here and `tags_was=['alpha']`,
+                # `milestone_was=''` on the board.
+                #
+                # Written unconditionally, including when the event carries no
+                # `from`, because that is exactly what the board does and the
+                # defect being repaired is the two folds disagreeing. A missing
+                # key and a `None` both read as "no previous value"; a reader who
+                # diffs the two folds does not get to decide which.
+                t[f"{field}_was"] = change.get("from")
     # There is a second fold — `aimboard/fold.py`, codex's — and `context_id` is
     # deliberately not added to it here. Not because it does not belong there: it
     # does, and it is the fold the board actually renders from. Because that file
