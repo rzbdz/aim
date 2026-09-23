@@ -3827,7 +3827,11 @@ correction missed**: a registered non-participant, whom `gate.walled_off` walls
 off (`gate.py:24`) and `a2a.task_visible` admits (`a2a.py:794`, commented with
 T-0041's number). Measured on this root, the `codex` gap of 13 and the
 `claude-session1` gap of 2 are **entirely** the channel-less case, and the
-unregistered viewer's gap of 75 is **15 channel-less plus 60 stranger** — so the
+unregistered viewer's gap of 75 is **15 channel-less plus 60 admitted by the
+stranger branch** (the 60 are `hello` residents the unregistered viewer is no
+party to; the branch admits them because `a` is not a participant, which is what
+"stranger" means here — measured: `a2a.hidden_count` returns 0 for `a` while
+`gate.visible_tasks` hides 75) — so the
 section's old gloss covered the small rows and 20% of the large one. §4.4's "one
 rule, one owner" verdict therefore needs to be restated as **"one rule, three
 call sites, two gaps"**, not one. The diagram's cost is real and it is not quite
