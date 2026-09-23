@@ -2762,6 +2762,13 @@ that produced it was wrong in a way the prose had already forbid.)*
 
 *(**This block sums to fifteen, which is the whole new-row set**, and every one of
 its fifteen pids is a row that exists in the store and is absent from `7def563`.
+**The number moves and it moved while this note was being written**: a fifteenth
+`task list` refusal landed during the verification pass, so the working tree now
+reads sixteen, 374 ledger rows and 163 `barrier` refusals. The pid trace above is
+deliberately *pinned* at fifteen — every row in it is named, so a reader can add
+it or re-derive it, and none of them is the new one. That is the whole difference
+between this block and the three versions before it: **a named list can be
+re-dated, an assertion about "the delta" cannot.**)
 The three earlier revisions of this block each summed to something else and each
 said so in a note: twelve, then eleven, now fifteen. *(The note immediately above
 this one said "the block sums to eleven, not twelve and not fourteen, and it is
