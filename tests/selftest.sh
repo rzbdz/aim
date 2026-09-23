@@ -605,6 +605,75 @@ expect_ok   "and the refusal names the verb that is the way out" bash -c "
   id=\$(cat '$AIM_ROOT/t5-bystander-id');
   $AIM task move --as alpha --channel t5 --id \"\$id\" --to dropped --reason 'probe' 2>&1 |
     grep -q 'aim task retract'"
+# The same gate on `assign`, which had none. Measured before this block existed,
+# on a throwaway root: `task assign --as a --owner a` on a peer's published card
+# gave `owner b -> a` rc 0, and `--owner ""` gave `owner a -> (unowned)` rc 0, so
+# a bystander could take a peer's card and then return it to the pool with no
+# `--force` and nothing on the `assigned` event saying an override had happened.
+#
+# Its own channel in its own root, for the same reason the racer block below has
+# one: `t5` has exactly two participants, so every non-owner in it is also the
+# card's creator, and a gate that allows the creator is invisible there. Here
+# `alpha` is neither the owner nor the creator of the card it reaches for.
+#
+# Both refusals below are asserted on the gate's own words rather than on a
+# non-zero exit: the first draft of this block read `expect_fail` and passed on
+# `no such task: T-0001`, because the fixture that was meant to create the card
+# had been refused itself. A check that a *different* error satisfies is the
+# defect this file exists to catch, one level in.
+# Recorded on T-0279 as *done* against its own accept line, which names the gate
+# it describes and does not authorise changing it; this is the collision that
+# finding and this fixture have to live with.
+ASSIGNROOT="$AIM_ROOT/assignroot"
+rm -rf "$ASSIGNROOT"; mkdir -p "$ASSIGNROOT"
+( export AIM_ROOT="$ASSIGNROOT"
+  $AIM init >/dev/null
+  $AIM register --as alpha --kind claude >/dev/null
+  $AIM register --as beta --kind claude >/dev/null
+  $AIM register --as leader --kind human >/dev/null
+  $AIM new-channel --id g --topic "who may hand a card over" \
+    --participants alpha,beta --leader leader >/dev/null
+  echo '[]' > "$ASSIGNROOT/claims.json"
+  $AIM seal --as alpha --channel g --summary "mine" --claims "$ASSIGNROOT/claims.json" >/dev/null
+  $AIM seal --as beta --channel g --summary "mine" --claims "$ASSIGNROOT/claims.json" >/dev/null
+  $AIM advance --as leader --channel g --to COMMIT >/dev/null
+  $AIM task new --as beta --channel g --title "beta's card" --owner beta \
+    --accept "the gate is exercised" >/dev/null
+  $AIM task publish --as beta --channel g --id T-0001 --reason "so a peer can reach it" >/dev/null ) >/dev/null 2>&1
+expect_ok   "the assign fixture has a card to reach for" \
+  env AIM_ROOT="$ASSIGNROOT" $AIM task list --as alpha --channel g --json
+expect_ok   "and it is owned by beta" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task list --as alpha --channel g --json |
+    grep -q '\"owner\": \"beta\"'"
+expect_ok   "a bystander reassigning it is refused, in the gate's words" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task assign --as alpha --channel g --id T-0001 --owner alpha 2>&1 |
+    grep -q \"is owned by 'beta' and was created by 'beta'; 'alpha' is neither\""
+expect_ok   "releasing a peer's card is the same move and is refused too" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task assign --as alpha --channel g --id T-0001 --owner '' --reason 'probe' 2>&1 |
+    grep -q \"is owned by 'beta' and was created by 'beta'\""
+expect_ok   "a forced reassignment records the owner it overrode" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task assign --as alpha --channel g --id T-0001 --owner alpha --force >/dev/null &&
+  python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$ASSIGNROOT/channels/g/tasks.jsonl')]
+a=[e for e in ev if e.get('event')=='assigned' and e.get('forced')]
+sys.exit(0 if a and a[-1].get('overrode')==['owner:beta'] else 1)\""
+expect_ok   "the owner may still hand their own card over" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task assign --as alpha --channel g --id T-0001 --owner beta >/dev/null"
+expect_ok   "a --force that stopped nothing is recorded as unused, not as an override" bash -c "
+  env AIM_ROOT='$ASSIGNROOT' $AIM task assign --as beta --channel g --id T-0001 --owner beta --force >/dev/null &&
+  python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$ASSIGNROOT/channels/g/tasks.jsonl')]
+a=[e for e in ev if e.get('event')=='assigned' and e.get('force_unused')]
+sys.exit(0 if a and 'overrode' not in a[-1] else 1)\""
+expect_ok   "and both refusals are barrier rows, not bare exit codes" bash -c "
+  python3 -c \"
+import json,sys
+ev=[json.loads(l) for l in open('$ASSIGNROOT/channels/g/ledger.jsonl')]
+r=[e for e in ev if e.get('event')=='refusal' and e.get('agent')=='alpha'
+   and e.get('action')=='task assign' and e.get('class')=='barrier']
+sys.exit(0 if len(r)>=2 else 1)\""
 expect_ok   "but its owner still drops it, through the same verb" bash -c "
   id=\$(cat '$AIM_ROOT/t5-bystander-id');
   $AIM task move --as beta --channel t5 --id \"\$id\" --to dropped --reason 'superseded by its owner' >/dev/null &&

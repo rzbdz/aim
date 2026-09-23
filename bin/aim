@@ -2896,9 +2896,47 @@ def cmd_task_assign(args):
     unowned card with no recorded cause is indistinguishable from a card nobody
     ever took, and "why is this back in the pool" is the question the next
     claimer needs answered.
+
+    Both directions take the same gate, and it is the one `T-0226` above already
+    names: the card's owner, its creator, or the leader. A reassignment is a
+    change to whose commitment the card is, and a release is stronger -- it ends
+    the commitment outright. Measured on a throwaway root with a published card
+    owned by `b` and created by `b`: `task assign --as a --owner a` gave
+    `owner b -> a`, rc 0, and `--owner ""` gave `owner a -> (unowned)`, rc 0, so
+    a bystander could take a peer's card and then return it to the pool with no
+    `--force` and nothing on the event saying an override happened. Compare the
+    neighbours, which all refuse a non-owner and name `--force` as the recorded
+    way past: `edit` (`cmd_task_edit`), `retract` (`cmd_task_retract`), and the
+    two `task move` actor rules. `claim` is not among them because it is the
+    inverse -- it only acts on an unowned card, and its refusal names *this*
+    verb as the way to take one that is held.
+
+    This is not the leader's exemption being withdrawn: `kind == "human"` skips
+    the gate, as everywhere else the fabric has an acting-owner rule, because
+    the leader is the one seat that has to be able to unstick a card whose owner
+    has gone.
     """
     who, kind = resolve_actor(args)
     m, board, t = _load_task_or_die(args.channel, args.id, who, kind)
+    if kind != "human" and who not in (t.get("owner"), t.get("created_by")):
+        if not args.force:
+            die(
+                f"REFUSED: {args.id} is owned by '{t.get('owner') or '(unowned)'}' and was "
+                f"created by '{t.get('created_by') or '?'}'; '{who}' is neither.\n"
+                f"Taking a card somebody else holds is a reassignment, not a "
+                f"correction: the owner is the agent who owes the work, so moving "
+                f"it silently moves a commitment, and releasing it "
+                f"(`--owner \"\"`) ends that commitment outright. Both are "
+                f"recorded as an `assigned` event whose whole content is a field "
+                f"somebody else set.\n"
+                f"If it is yours to take, its owner can hand it over, or state "
+                f"the reason with --force and the override is recorded with the "
+                f"owner it overrode.",
+                cls="barrier",
+            )
+        overrode_owner = t.get("owner") or ""
+    else:
+        overrode_owner = ""
     owner = (args.owner or "").strip()
     if not owner:
         if not (args.reason or "").strip():
@@ -2916,6 +2954,7 @@ def cmd_task_assign(args):
             "context_id": args.channel,
             "task": args.id, "owner": "", "from": t["owner"], "via": "release",
             "reason": args.reason,
+            **_override_fields(args, overrode_owner),
         })
         print(f"{args.id}: owner {t['owner']} -> (unowned): {args.reason}")
         return
@@ -2925,8 +2964,35 @@ def cmd_task_assign(args):
         "ts": now_iso(), "event": "assigned", "actor": who, "channel": args.channel,
         "context_id": args.channel,
         "task": args.id, "owner": owner, "from": t["owner"],
+        **_override_fields(args, overrode_owner),
     })
     print(f"{args.id}: owner {t['owner'] or '(unowned)'} -> {owner}")
+
+
+def _override_fields(args, overrode_owner):
+    """The three keys a `task` event carries when `--force` was actually spent.
+
+    Spelled once because `assign` has two write paths (hand over, release) and a
+    flag recorded on one of them is a flag a reader cannot use: T-0221's clause,
+    which `cmd_task_move` already implements inline, is that a forced act and an
+    ordinary one must not be byte-identical rows. A `--force` on an act no rule
+    stopped is not an override, so it is recorded as `force_unused` rather than
+    as `forced` with an empty `overrode`.
+    """
+    o = (args.reason or "").strip()
+    if args.force and overrode_owner:
+        return {"forced": True, "overrode": [f"owner:{overrode_owner}"]}
+    if args.force:
+        return {"force_unused": True}
+    if overrode_owner and o:
+        # Unreachable by construction: the gate refuses a non-owner without
+        # `--force`, so `overrode_owner` is non-empty only on a forced path.
+        # Named rather than left silent, in the shape `_refuse_stray_task_event`
+        # uses, because a dead branch that looks live is how the next reader
+        # writes a test that cannot fail.
+        die("INTERNAL: an unforced override was recorded on a task event",
+            cls="form")
+    return {}
 
 
 def cmd_task_edit(args):
@@ -5446,6 +5512,9 @@ def main():
                    help='the new owner, or "" to release the card back to the pool '
                         "(which requires --reason)")
     q.add_argument("--reason", default="", help="required when releasing")
+    q.add_argument("--force", action="store_true",
+                   help="take or release a card you neither own nor created; the "
+                        "overridden owner is recorded on the event (§ task assign)")
 
     q = tadd("publish", cmd_task_publish)
     q.add_argument("--id", required=True)
