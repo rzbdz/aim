@@ -1102,10 +1102,24 @@ def cmd_depart(args):
     the session (a `last_seen` written by `resolve_actor`, or the outbox read as
     a heartbeat) rather than a verb. This does not add that witness.
 
-    The threat model is the one `register` already states: anything that can run
-    `aim` can claim any unused id, and here anything that can run `aim` can
-    depart any id or clear any departure. What is refused is the *silent* switch,
-    not the switch -- the same argument, and the same `--force`-shaped escape.
+    The threat model is the one `register` already states, and it does not get
+    better here. Anything that can run `aim` can claim any unused id; so anything
+    that can run `aim` can depart any registered id, or clear any departure.
+    "Refuse a departure for an id that is not yours" is not a check this fabric
+    can make: `register --session` is a free-text note rather than an identity
+    (T-0242 and `tests/test_channel_project.py` both measure two agent ids
+    carrying one session string), so there is no field a "yours" test could read.
+    What is refused is the *silent* switch, and what makes it non-silent is that
+    the record names the session that called: `departed_session` is the caller's
+    own `session_of()` token, so a departure by a session other than the one that
+    registered reads as exactly that to anyone auditing `registry.json`.
+
+    So the escape from a departure is not `--force` on this verb -- a `--force`
+    term here would make `aim say --as <someone who left> --force` a call that
+    works, and the guard would read as advisory. The escapes are the two named in
+    the refusal: `depart --return`, which is the id's own verb, and `register
+    --force`, which is the takeover and clears the departure as part of replacing
+    the record.
     """
     # `allow_departed=True`: this verb is the one whose whole subject is a
     # session's life, so the gate every other verb takes would make its own
