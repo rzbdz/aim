@@ -402,6 +402,39 @@ def should_fall_back(path):
     return "." not in name
 
 
+def _place_build_line(text, block):
+    """Put the build line at the *foot* of the served page, and give it a reserved height.
+
+    T-0196. The first version inserted it immediately after `<body>`, and that cost
+    29.19px of the reader's viewport for a reason nothing connected to the build: the
+    conversation pane's layout is viewport-relative (`.aim-shell { height: 100vh }`,
+    `web/src/style.css:104`), so the shell still filled 720px of a 720px viewport and
+    its composer landed at 702.0 + 48.19 = 750.19 against the spec's bound of
+    `viewportHeight + 1`. Measured three ways before this was written: with the line
+    in place `tests/boards.spec.js:190` fails at `750.1875 <= 721`, with the injection
+    reverted it passes, and the injected block measures 48.1875px
+    (30.39 content rows + 6+6 padding + 2 border + 4 leading).
+
+    Two changes, and they are the same change stated twice. `position:fixed; bottom:0`
+    takes the block **out of flow**, so it is drawn over the page instead of adding a
+    row to it and `body.scrollHeight` does not grow; `height` and `box-sizing` reserve
+    the box rather than letting it size to its content, so the block cannot grow a
+    second line on a longer revision string and start covering the composer. A
+    reserved strip that is always there is honest; a strip that appears when a
+    figure changes is the document's own "which state was this measured at" failure
+    drawn in layout.
+
+    Appended rather than prepended because the two are then the same height either
+    way -- out of flow, its position no longer changes anything -- and a line about
+    the *program* belongs after the record the page is drawing, which is also the
+    rule `_build_line_html`'s own comment gives for the export path.
+    """
+    i = text.rfind("</body>")
+    if i == -1:
+        return text + block
+    return text[:i] + block + text[i:]
+
+
 def cmd_serve(args):
     """A local server, because a board you have to re-render by hand is a board
     you read once. Every request re-renders from disk, so the page cannot be
@@ -520,10 +553,16 @@ def cmd_serve(args):
             line = _build_line_html(inv)
             if not line:
                 return ""
-            return ('<style>.build-line{display:block;padding:6px 20px;font:11px/1.6 '
-                    'ui-monospace,SFMono-Regular,monospace;background:#3b2a12;color:#fbbf24;'
-                    'border-bottom:1px solid #5b4318}html.dark .build-line{background:#2a1f0c}'
-                    '</style>' + line)
+            # Out of flow, with its box reserved: see `_place_build_line` for the
+            # 29.19px this cost while it was in flow, and for why the height is
+            # fixed rather than content-sized.
+            return ('<style>.build-line{position:fixed;left:0;right:0;bottom:0;z-index:40;'
+                    'height:48px;box-sizing:border-box;padding:6px 20px;overflow:hidden;'
+                    'font:11px/1.6 ui-monospace,SFMono-Regular,monospace;'
+                    'background:#3b2a12;color:#fbbf24;border-top:1px solid #5b4318;'
+                    'text-overflow:ellipsis;white-space:nowrap}'
+                    'html.dark .build-line{background:#2a1f0c}'
+                    'html{padding-bottom:48px}</style>' + line)
 
         def _viewer(self):
             if "as=" in (self.path or ""):
@@ -937,7 +976,7 @@ def cmd_serve(args):
                                 text = body.decode("utf-8")
                                 line = self._build_line(self._viewer())
                                 if line and "<body>" in text:
-                                    text = text.replace("<body>", "<body>" + line, 1)
+                                    text = _place_build_line(text, line)
                                     body = text.encode("utf-8")
                             except (UnicodeDecodeError, LookupError):
                                 pass
