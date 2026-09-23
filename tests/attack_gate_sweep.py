@@ -202,7 +202,10 @@ def main():
     print("  request-advance --reason the reason lands in the PUBLIC log, not the")
     print("                           requester's private one, so the barrier hides it")
     print("                           from the peer and then hands it over")
-    return 0
+    # Measured 2026-09-23: every path of `main` ended in `return 0`, so the leak
+    # listed above reached no exit code and a runner aggregating this suite read
+    # it as a pass. The `if not leaks` branch above still returns 0.
+    return 1
 
 
 if __name__ == "__main__":

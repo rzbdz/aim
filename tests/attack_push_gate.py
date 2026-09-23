@@ -86,8 +86,12 @@ def main():
         print("  phase, and record the refusal with class 'barrier'. Receipts stay")
         print("  ungated -- a receipt is not a position, and the delivery machinery is")
         print("  not the thing being restricted. The content is.")
-    else:
-        print(f"  not reproduced (channel leak={leaked_in_channel}, outbox leak={leaked_in_outbox})")
+        return 1
+    print(f"  not reproduced (channel leak={leaked_in_channel}, outbox leak={leaked_in_outbox})")
+    # A report that always exits 0 cannot be aggregated: measured 2026-09-23,
+    # this file's `main` had `return 0` as its only exit path, so a runner
+    # counting exit codes read the hole as a pass. The verdict above is the
+    # failure it announces; the code now carries it.
     return 0
 
 

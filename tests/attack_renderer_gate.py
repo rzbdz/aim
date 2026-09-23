@@ -185,6 +185,15 @@ def part_one():
 
 
 def main():
+    """This file is a REPORT, not a test, and it says so here because its
+    exit code is not a verdict: `attack` and `part_one` print what they see
+    and return None, so `sys.exit(main())` is always 0. Measured 2026-09-23:
+    a runner that aggregates exit codes counts this suite green whatever it
+    finds. The other two attack suites compute a boolean and now carry it
+    (attack_gate_sweep, attack_push_gate); turning the verdicts below into
+    one is a change to the checks themselves, not to their exit path, and
+    is filed rather than guessed.
+    """
     if "--fixture" in sys.argv:
         part_one()
     else:
