@@ -3548,7 +3548,7 @@ names moved in lockstep exactly once, at `19fa9f4`, which is the bracket that
 wrote "These five were recomputed from the finished file rather than carried
 forward":
 
-| revision | the note's list | the rows that carry `PROSE` |
+| revision | the note's list | the rows that carry the mark |
 |---|---|---|
 | `19fa9f4` | `166 173 2409 2412 2413` | `166 173 2409 2412 2413` ✓ |
 | `0526c3d` | `166 173 2441 2444 2445` | `166 173 2441 2444 2445` ✓ |
