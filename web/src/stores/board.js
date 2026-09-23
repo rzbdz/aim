@@ -294,6 +294,16 @@ export const useBoard = defineStore('board', {
     statuses: (s) => s.doc?.statuses || [],
     terminal: (s) => s.doc?.terminal || [],
     phase: (s) => s.doc?.phase || '-',
+    /**
+     * T-0252: the channel the header's `phase` was read from, and what chose it.
+     *
+     * `gate_channel` picks the default channel from the seat, so the bare phase is
+     * a different channel's phase for nearly every reader and the header said so
+     * to nobody. The server publishes `phase_channel` beside `phase`; the empty
+     * shape here is for a payload from a server that does not, which draws no
+     * label rather than a wrong one.
+     */
+    phaseChannel: (s) => s.doc?.phase_channel || { id: '', arm: '' },
     milestones: (s) => s.doc?.milestones || {},
     register: (s) => s.doc?.register || {},
     agents: (s) => s.doc?.agents || {},

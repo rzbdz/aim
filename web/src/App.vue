@@ -186,8 +186,29 @@ const current = computed(() => views.find((v) => v.key === route.meta.view))
  * The header says the phase in English and in full sentences, because it is the
  * one line that tells the leader what they may do next. The protocol value is in
  * the tooltip and one link away on Help & concepts; it is not the label.
+ *
+ * The channel beside it is not decoration and it is not the reader's choice.
+ * `board.phase` is the *default* channel's phase, chosen by `gate_channel` from
+ * the seat, and on this root three of the four seats read a different channel's
+ * phase from the same payload -- so the sentence above a phase that cannot say
+ * which channel it is about is a sentence about an unnamed subject. `channels`,
+ * not `board.channels`, because this drawer is the same on every route, and the
+ * way to look up the channel there is by id.
  */
 const phase = computed(() => phaseConcept(board.phase))
+const phaseChannel = computed(() => (board.doc?.channels || [])
+  .find((ch) => ch.id === board.phaseChannel.id) || null)
+const phaseFrom = computed(() => (board.phaseChannel.id
+  ? (phaseChannel.value
+      ? `the header's phase is the phase of #${board.phaseChannel.id}, `
+        + `the ${board.phaseChannel.arm === 'tasks_exists'
+            ? 'first channel with a task store, because you are a participant of none'
+            : board.phaseChannel.arm === 'participation'
+              ? 'first channel you participate in'
+              : board.phaseChannel.arm}`
+      : `the header's phase names channel #${board.phaseChannel.id}, which this `
+        + 'payload does not carry')
+  : 'this root holds no channel, so there is no channel for the phase to come from'))
 const phaseType = computed(() => (['SEALED_DIVERGENT', 'COMMIT', 'SYNTHESIS'].includes(board.phase) ? 'warning'
   : board.phase === '-' ? 'info' : 'success'))
 const stamp = computed(() => (board.doc?.generated_at || '').replace('T', ' ').slice(0, 19))
@@ -310,6 +331,23 @@ const deferredByFailure = computed(() => board.deferredReason === 'the server co
              what a phase is called, and one place knows that a tooltip around a
              link must not eat the key that activates it. -->
         <PhaseChip :phase="board.phase" :type="phaseType" effect="dark" round link />
+        <!-- T-0252: the phase beside this comment is a *default* channel's phase,
+             chosen by `gate_channel` from the seat, so two readers of the same root
+             are shown different work. The chip itself is what the reader reads, and
+             an unlabelled value that changes with who reads it is the failure
+             `reports_scope` exists to stop -- so the channel is named here, beside
+             it. The link goes to that channel's tab on the audit page, which is the
+             pane that draws it per channel; the arm is in the title, because it is
+             the answer to "why this channel" and a reader who does not wonder is
+             not made to read it. -->
+        <RouterLink v-if="board.phaseChannel.id" class="aim-dim aim-header-channel"
+                    style="font-size:11.5px"
+                    :to="{ path: '/barrier', query: { channel: board.phaseChannel.id } }"
+                    :title="phaseFrom">
+          from #{{ board.phaseChannel.id }}
+        </RouterLink>
+        <span v-else-if="board.phase !== '-'" class="aim-dim aim-header-channel"
+              style="font-size:11.5px" :title="phaseFrom">unattributed phase</span>
         <span class="aim-dim aim-header-phase" style="font-size:11.5px">{{ phase.summary }}</span>
         <span v-if="board.withheld" class="aim-dim" style="font-size:11.5px">
           {{ board.withheld }} withheld from this view
