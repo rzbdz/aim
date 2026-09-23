@@ -247,10 +247,38 @@ It also carried the aside *"(so `CLOSED` is not far from open)"*, which describe
 == []`.
 
 `advance` prints which of these you just took, which is honest. The table in
-`README.md` §2 says who may *read* and *write* per phase and is right; what it
-does not say is that **three of the seven rows move a label and nothing else**,
-so the ceremony of advancing through `SEALED_DIVERGENT → COMMIT` buys a printed
-sentence and a ledger row and no change in what anyone can do.
+`README.md` §2 says who may *read* and *write* per phase, and on three of its six
+rows it is not what the code does. *(This sentence read "is right", and one of
+its two clauses was already contradicted by §1.5's own paragraph on `RESOLVE`,
+three hundred lines below — the tool and the prose disagreed and the prose said
+they agreed. Measured against `PHASE_RULES` (`bin/aim:56-63`) and reproduced on a
+throwaway root, phase by phase:*
+
+- `RESOLVE`'s write cell says **"the leader"**. `PHASE_RULES["RESOLVE"]` is
+  `channel_say=False, private_say=False`, and the leader is bound by it. The
+  leader's own `say --kind ruling` there is refused — *"channel is in RESOLVE;
+  channel_say is False"* — and so is `say --private` — *"private log is closed
+  in RESOLVE"*. So the phase the table calls the leader's is the one phase where
+  the leader may write **nothing**; the only path through it is `advance`, which
+  is the +1 that should be in that cell.
+- `SYNTHESIS`'s write cell says **"the synthesizer"**. `cmd_synthesis_input`
+  (`:1607-1620`) reads every participant's private log and seal into one bundle
+  and prints it — it writes nothing. The role the table assigns a write to is a
+  **read**, and the write column's real value at that phase is the participants'
+  own private logs, which are still open (`private_say=True`) and which the table
+  does not mention.
+- `CROSS_EXAMINE`'s write cell says **"everyone, bounded"**. The bound is real
+  (`CROSS_EXAMINE_KINDS`), but "everyone" is not: a reader who is not a
+  participant is refused at every phase, and `read_others=True` is the *channel's*
+  bit, not a per-caller permission.
+
+The table is right on `SEALED_DIVERGENT`, `COMMIT` and `CLOSED`, and its read
+column is right on all six rows. What it omits is the axis this document keeps
+returning to: **three of the seven edges move a label and nothing else** — the
+`rules_changed` `[]` rows of the table above — so the
+ceremony of advancing through `SEALED_DIVERGENT → COMMIT` buys a printed
+sentence and a ledger row and no change in what anyone can do — and the phase
+where the table's write column is most wrong is the one the ceremony is *for*.)*
 
 **The seal quorum can be satisfied without sealing [V].** Entering `SYNTHESIS`
 requires that each participant's seal **file exists** — the check is
