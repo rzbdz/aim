@@ -110,8 +110,8 @@ and the reader cannot tell which from the form:
   happens*, which may be anywhere inside the definition.
 
 Measured over the document: **34 distinct `symbol:line` citations resolve to a
-function defined in the tree — 16 on its `def` line and 17 on a line inside its
-body.** So both readings are in use, roughly evenly, and neither dominates. The
+function defined in the tree — 16 on its `def` line, 17 on a line inside its body,
+and one that resolves to no function at all.** So both readings are in use, roughly evenly, and neither dominates. The
 convention that resolves the ambiguity without renumbering anything is the form
 the falsifier and I settled on: **when the number is a `def`, the citation is the
 object; when it is a body line, the citation is the event** — and the sentence
@@ -1341,7 +1341,7 @@ a `file:line`.
 | 14 | a plan seed is deduplicated | **two `plan/*.json` naming one id silently lose the second**, first-wins by glob order | `aimboard/fabric.py:131,135` **[V]** |
 | 15 | a session's advance request is checked before it is recorded | **`request-advance` validates nothing: `--to NOT_A_PHASE` → rc 0, and the ledger gets no refusal row** | `bin/aim:1590-1604` **[V]**, §1.3.2 |
 | 16 | the dashboard writes as the identity it was started as | **without `--as` it writes as `channels[0].leader`, i.e. the alphabetically-first channel's leader** | `aimboard/cli.py:505` **[V]**, §4.5 |
-| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563`, in `channels/*` only, the five ledgers hold 358 rows and 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree those five files have grown to **379 rows / 299 refusals / 370 class-bearing, of which **203** wear `barrier` and only **167** of those are refusals** | measured **[V]**, §4.6 |
+| 17 | `ledger.jsonl` is a refusal ledger whose `class` is `barrier\|form\|unrecorded` | **at `7def563`, in `channels/*` only, the five ledgers hold 358 rows and 280 are refusals. 36 are the acts README §3 asks a `barrier` row to make findable, and 33 `push` rows carry a class that is not in the vocabulary** — see §4.6; at the working tree, re-derived at `2026-09-23T07:06:38Z` (this cell printed no instant, which is the failure §4.6 names one section up — every figure below moved inside the hour), those five files read **383 rows / 301 refusals / 374 class-bearing**, of which **205** wear `barrier`; the `barrier` **refusals** are **169** and the `barrier` **non-refusals** are **36** (`167` and `203` were that same pair four hours earlier, and the two are `barrier∩refusal` and `barrier` — different populations, which is why 203 − 167 is not a count of anything; the class-bearing − refusals gap is **73** = 37 `record` + 36 `barrier` non-refusal), with `form` 130, `record` **37** and `unrecorded` 2 | measured **[V]**, §4.6 |
 
 ## 4.1 Row 11 is the master key, and it is measured end to end
 
@@ -2391,7 +2391,7 @@ measurement, and this document has spent thirty pages on the difference.)*
 | 10 | **session** | a free-text field | register ⇄ register `--force`, no liveness check | any name | `bin/aim:979` reads `registry.json` and nothing else | **ABSENT** |
 | 11 | **event vocabulary** | the `event` field of a **task** row in `tasks.jsonl` | unenforced; the vocabulary lives in one declared list nothing reads | any writer | declared as `TASK_EVENTS` `:127` and **read by nothing**; the fold has branches for eight names and its stray-name counter (`fold.py:120`, `unknown += 1`) is keyed on the *card* and not on the name — it fires when an event arrives whose `created` was never seen, and never when the name is one it does not know | **PROSE — and the one writer outside the eight drops silently** |
 | 12 | **closure** (was the work done?) — not a competing machine but *the condition row 2's `review -> done` edge never reads* | `accept` on the card's `created` row — the line carrying the key, `bin/aim:1982` (`:1969` is the bare `ev = {` opener) | unenforced by the tool — **no tool *evaluates* it, which is not the same as nothing reading it**: `a2a.py:867-869` carries `task.get("accept")` into the A2A artifact and `:880` onto the task object, and `exporters.py:155` and `:174` render it (iCal `DESCRIPTION`, the report's `acceptance:` line) | — nothing reads it — | `--accept` is *"the sentence that makes this verifiable"* (`:4570`), and it is stored (`:1696`), folded (`aimboard/fold.py:77` via `PLAN_FIELDS`, `const.py:16`), exported (`exporters.py:174`), rendered (`components.py:33-35`) and **searched** (`:4158`) — and never *evaluated* **by the tool**. Of the three gates on `review -> done`, two are about identity (`:2141` keeps the **owner** out of `-> done` unless `actor_exempt` at `:2126`; `:2128` is the mirror — it keeps the **bystander** out of `-> review`) and the third asks *what* the card depends on (`:2156` refuses while any `blocked_by` card is not `done`, and that gate is **not** exempt for a `human` — reproduced with the leader as caller). **None of the three reads `accept`.** On the live root **64 cards carry a non-empty `accept` line and a recorded `moved`→`done`**, and **2** of the 65 recorded closes has a comment at or after the move (`T-0199`, `T-0219`); the vocabulary a task event can carry has **no** `evidence`, `verified` or `proof` field at all (28 keys, measured) | **PROSE — and the prose is written by the closer** |
-| **13** | **push notification config** (the doorbell) — **added by a falsifier who found the table was one short, and it is the strictest machine in the set after the phase machine** | `channels/<ch>/push.jsonl` — a **chained store**, listed in `VERIFY_CHAIN` (`bin/aim:3992`) | **three** edges **in the store** — `doorbell_created` `:3162` → `doorbell_rotated` `:3199` → **`deleted` `:3222`** — folded by `_push_config_recs:3058`, whose fold has exactly three branches for those three names (`deleted` pops the id, a rotation supersedes it, newest state per id wins), **plus a fourth request that is not an edge and writes nothing**: a second create on the same `configId` returns before `append_chained` (`:3152-3159`), so it is a refusal-shaped no-op rather than a transition. *(This cell said "four edges" and §IV-c.2's own note says three; a request that writes nothing cannot be a branch of a function that folds the file.)* | **any identity that can load the task, and any `kind == "human"` whether or not it can** — `_load_task_or_die:2073`, loaded at `:3122` — **in `create` alone**; `list` `:3171`, `rotate` `:3190` and `delete` `:3213` take the channel manifest and nothing else, so the task gate this cell cites is the one `create` passes through and the other three stand in front of no task at all — whose `:2079` refusal is `if not _visible_to(t, who, m["barrier"]["phase"]) and kind != "human"`: `_visible_to` ends at `:1785` on `task.get("owner") == who or task.get("created_by") == who`, so a non-owner of an owned draft in a divergence phase is refused, and a caller that typed `human` is not; no leader rule and no `actor_exempt` — the human exemption in the loader is spelled as `kind`, not as the flag | `validate_push_config` (`aimboard/a2a.py:1065`) — **ENFORCED**, and a **shape check** rather than a precondition: an unregistered field, a missing token, a remote `http://`, or `credentials ≠ token` are each refused, and the *field list is checked first* so a typo is reported as a typo — every one of those four refusals evaluates the `config` object alone, which is why this is the same predicate IV-c.1 calls a *pure shape check over the config object*; the verb that calls it is what supplies the world (`:3104`, `:3122`). Shared by both surfaces — `bin/aim:3131` and `/rpc` via `a2a.py:1231`, which turns the same problems into `-32602` + `fieldViolations` | **ENFORCED** |
+| **13** | **push notification config** (the doorbell) — **added by a falsifier who found the table was one short, and it is the strictest machine in the set after the phase machine** | `channels/<ch>/push.jsonl` — a **chained store**, listed in `VERIFY_CHAIN` (`bin/aim:3992`) | **three** edges **in the store** (every `:NNN` in this cell is at the document's base `e2bb1b0`; on the working tree the four sub-verb heads are `:3287`/`:3338`/`:3357`/`:3380`) — `doorbell_created` `:3162` → `doorbell_rotated` `:3199` → **`deleted` `:3222`** — folded by `_push_config_recs:3058`, whose fold has exactly three branches for those three names (`deleted` pops the id, a rotation supersedes it, newest state per id wins), **plus a fourth request that is not an edge and writes nothing**: a second create on the same `configId` returns before `append_chained` (`:3152-3159`), so it is a no-op that writes nothing — **not** a refused transition: it exits 0, prints, and leaves no `refusal` row and no `record` row anywhere (reproduced on a throwaway root — two creates, one row in `push.jsonl`, no ledger row at all), which is the distinction §4.6 counts; *(the sentence first called it "refusal-shaped", and a refusal that is not in the ledger is a word the ledger cannot confirm)* *(This cell said "four edges" and §IV-c.2's own note says three; a request that writes nothing cannot be a branch of a function that folds the file.)* | **any identity that can load the task, and any `kind == "human"` whether or not it can** — `_load_task_or_die:2073`, loaded at `:3122` — **in `create` alone**; `list` `:3171`, `rotate` `:3190` and `delete` `:3213` take the channel manifest and nothing else, so the task gate this cell cites is the one `create` passes through and the other three stand in front of no task at all — whose `:2079` refusal is `if not _visible_to(t, who, m["barrier"]["phase"]) and kind != "human"`: `_visible_to` ends at `:1785` on `task.get("owner") == who or task.get("created_by") == who`, so a non-owner of an owned draft in a divergence phase is refused, and a caller that typed `human` is not; no leader rule and no `actor_exempt` — the human exemption in the loader is spelled as `kind`, not as the flag | `validate_push_config` (`aimboard/a2a.py:1065`) — **ENFORCED**, and a **shape check** rather than a precondition: an unregistered field, a missing token, a remote `http://`, or `credentials ≠ token` are each refused, and the *field list is checked first* so a typo is reported as a typo — every one of those four refusals evaluates the `config` object alone, which is why this is the same predicate IV-c.1 calls a *pure shape check over the config object*; the verb that calls it is what supplies the world (`:3104`, `:3122`). Shared by both surfaces — `bin/aim:3131` and `/rpc` via `a2a.py:1231`, which turns the same problems into `-32602` + `fieldViolations` | **ENFORCED** |
 
 **Row 6 is enforced, and its enforcement has a failure mode that lands on the
 wrong person.** `_room_author:2687` returns `""` when a room has more than one
@@ -3410,14 +3410,20 @@ left no refusal row while doing it.
 **The single highest-value fix after that is not a feature: it is to make the
 three marks the contract.** Every step in Parts I and II already carries one.
 Where a step reads **PROSE** and the leader believes it is **ENFORCED**, that is
-the defect — and there are **three** such marks above, each with a line number
-and a command you can re-run: §1.1 step 1 (the `PATH` install), and machines 8 and
-11 in Part IV-c (the channel lifecycle, computed and dropped by the payload
-projection; the event vocabulary, declared in `TASK_EVENTS` and read by nobody).
+the defect — and there are **five** such cells above, each with a line number
+and a command you can re-run: §1.1 step 1 (the `PATH` install), §1.1 step 8 (the
+seal that the tool enforces and whose *meaning* nothing reads), and machines 8, 11
+and 12 in Part IV-c (the channel lifecycle, computed and dropped by the payload
+projection; the event vocabulary, declared in `TASK_EVENTS` and read by nobody;
+the `accept` line, rendered and never evaluated).
 
-*(This sentence said "seventeen", and a falsifier counted the tokens: four uses
-of `PROSE` as a mark, one of which is the hybrid in step 8, and two of which are
-machine rows rather than steps. "Seventeen" was the count of the **ranked Part IV
+*(This sentence has said "seventeen", then "three": seventeen is the size of the
+**ranked Part IV table** and was a number attached to the wrong object, and three
+was right only if step 8's hybrid is excluded *and* machine 12's `PROSE` cell is
+not counted at all. The cells whose mark word is `PROSE` above this paragraph are
+five — `:150`, `:157`, `:2389`, `:2392`, `:2393` — while this note's own text lists
+four uses of the token, one of which it then excludes and one of which it calls a
+machine row: the sentence and its note were counting different sets. "Seventeen" was the count of the **ranked Part IV
 table**, carried into a sentence about a different table — the same
 table-drift that produced "Seventeen rows" over the 15-row objects table in
 Part IV-b. The document has two tables that count things and one habit of
@@ -3550,7 +3556,7 @@ reads a board it is not in), and **in `channels/` not one channel that held work
 a phase where the barrier is open** — five channels, every one of them
 `≤ COMMIT` or at `SYNTHESIS`, **the two that hold any tasks** (`barrier-v0` and
 `hello`) at the divergence phases `SEALED_DIVERGENT`/`COMMIT`/`SYNTHESIS`, and
-only one (`hello`) at `COMMIT` with a substantial store (**498** task rows on the
+only one (`hello`) at `COMMIT` with a substantial store (**499** task rows on the
 working tree; 495 at HEAD, 487 at `7def563` — a store this section has now quoted
 at three bases in three places).
 *(This paragraph said "150 of them" — a number that matches no class and no
@@ -3789,8 +3795,10 @@ to work is enforced in `bin/aim`; everything that is *convenient* is a read in
 `--allow-write` (`cli.py:440`, see §6.2), so "convenient is a read" is the design
 intent and not the reachable surface; and `POST /rpc` is a **second serving
 surface that reaches no writer at all** — `aimboard/cli.py:674` dispatches it
-*before* the allow-write branch at `:680`, so the A2A endpoint answers four of the
-eleven A2A operations from `aimboard/` with no `bin/aim` behind them, and the one
+*before* the allow-write branch at `:680`, so the A2A endpoint answers **seven** of the
+eleven A2A operations from `aimboard/` with no `bin/aim` behind them (`OPERATIONS`
+`a2a.py:307` lists eleven, `UNSUPPORTED` `:1329` holds four, `BACKED_BY` `:1348`
+seven, and `cli.py:663` — nine lines above this sentence — says the same thing), and the one
 rule it must enforce (who may read a draft) it enforces with its own copy. *The
 board's rendering* is a read; `/rpc` is not. And the five-layer diagram is not a
 false
