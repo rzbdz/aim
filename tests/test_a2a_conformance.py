@@ -624,17 +624,14 @@ def main():
               as_gamma_cli.returncode == 2 and mapped == "TaskNotFoundError",
               f"rc={as_gamma_cli.returncode} mapped={mapped}")
 
-        # The divergence, measured rather than assumed, and this is the `created_by`
-        # gap landing on a second surface. `alpha` created T-0001 and handed it to
-        # `beta`; the CLI lets alpha configure a doorbell for it (its fold carries
-        # `created_by`), and the module answers alpha `-32001` (the renderer's fold
-        # does not). Both are the same access rule reading the same task.
-        #
-        # The check is written *as a divergence* rather than as an expectation of
-        # either answer, so that fixing `aimboard/fold.py` turns it red and someone
-        # updates it on purpose. A check that asserted the module's answer would
-        # freeze the bug; one that asserted the CLI's would be red today for a
-        # reason this suite cannot fix from here.
+        # This check was written *as a divergence* rather than as an expectation of
+        # either answer, so that fixing `aimboard/fold.py` would turn it red and
+        # someone would update it on purpose. That is what happened: T-0250 gave
+        # the renderer's fold the `created_by` it was missing, and the divergence
+        # is gone. The agreement is now the thing to freeze, so the check is
+        # inverted rather than deleted -- a regression that drops `created_by`
+        # again fails here, and it fails as a *disagreement* rather than as a
+        # changed constant, which is what this whole block is about.
         #
         # T-0001 and not the published T-0002, which is the mistake the first
         # version made: a published task is visible to everyone under every rule,
@@ -648,9 +645,10 @@ def main():
             "T-0001", "r5", config={"url": "https://x.invalid/gate", "token": "t"},
             tasks=bell_state["tasks"], viewer="alpha",
             channels=bell_state["channels"], registry=bell_state["registry"])
-        check("the two folds disagree for the creator of a handed-over task, and only there",
+        check("the two folds agree for the creator of a handed-over task, and one rule "
+              "answers on both surfaces",
               cli_wrote.returncode == 0
-              and (mod_says.get("error") or {}).get("code") == -32001,
+              and (mod_says.get("error") or {}).get("code") != -32001,
               f"cli_rc={cli_wrote.returncode} module={json.dumps(mod_says)[:160]}")
 
         # (7) The secret, on the read shapes. §13.2 calls the token something to

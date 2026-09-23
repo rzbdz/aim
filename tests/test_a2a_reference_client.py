@@ -307,14 +307,22 @@ class ReferenceA2AClientTest(unittest.TestCase):
                       'registry=state.get("registry", {})', 'configs=self._public_configs(),'):
             self.assertIn(kwarg, source, f"cli.py no longer passes {kwarg} to handle_rpc")
         self.assertIn('if path == "/rpc":', source)
-        # The server serves /rpc while the card says the opposite; that
-        # contradiction is asserted so it stays visible rather than ageing into
-        # a lie nobody reads. The sentence lives in `card_facts` in
-        # `aimboard/a2a.py`, which is outside this lane's write scope: the fix is
-        # reported, not made here. design/16 section 3 already records it as
-        # false -- the contradiction is real and this assertion is the alarm.
-        self.assertIn("no network endpoint served yet",
-                      json.dumps(self._card_facts()))
+        # This assertion was written as an alarm, and the alarm has now fired.
+        # Its first form asserted that the card said *"no network endpoint served
+        # yet"* -- true when the card was written, false the moment `cli.py`
+        # answered `POST /rpc`. The docstring above says what to do when that
+        # happened: "this test has to be updated with it rather than quietly
+        # testing a shape the server no longer has." `card_facts` was corrected in
+        # T-0229, so the alarm is re-armed on the *new* truth, and it is a
+        # stronger one -- the card must now admit the endpoint exists AND say why
+        # it may exist (no credential, so loopback only). A card that went back to
+        # denying the endpoint, or that dropped the reason it is safe, fails here.
+        card = json.dumps(self._card_facts())
+        self.assertNotIn("no network endpoint served yet", card,
+                         "the card denies an endpoint cli.py serves")
+        self.assertIn("/rpc", card, "the card no longer names the endpoint it serves")
+        self.assertIn("localhost-only", card,
+                      "the card stopped saying why an unauthenticated endpoint may exist")
 
     # -- fixtures ------------------------------------------------------------
     def _sdk_shaped_card(self, url, binding="JSONRPC"):
