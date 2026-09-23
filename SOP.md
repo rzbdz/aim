@@ -3522,7 +3522,7 @@ the wrong table and "sixteen" of the right one, in two different edits), which i
 what makes the mistake look like a measurement: the number was correct and the
 object was wrong. Three was right only if step 8's hybrid is excluded *and*
 machine 12's `PROSE` cell is not counted at all. The cells whose mark word is
-`PROSE` above this paragraph are five — `:180`, `:187`, `:2455`, `:2458`, `:2459` —
+`PROSE` above this paragraph are five — `:211`, `:218`, `:2486`, `:2489`, `:2490` —
 while this note's earlier text listed four uses of the token, one of
 which it then excluded and one of which it called a machine row: the sentence and
 its note were counting different sets. *(These are the five cells the paragraph
@@ -3541,7 +3541,29 @@ the named mark word. That last-cell rule is the whole distinction — the glossa
 carries its mark word in its *first* cell, because it is defining the word, while
 a row the word is a verdict on carries it last — and it is what excludes the
 glossary row that a draft of this note cited as an instance. These five were
-recomputed from the finished file rather than carried forward.)* The document has two tables that count
+recomputed from the finished file rather than carried forward — **and the
+recomputation is itself the fifth instance of the thing this note is about.**
+Tracked across the four commits that touched this file, the list and the rows it
+names moved in lockstep exactly once, at `19fa9f4`, which is the bracket that
+wrote "These five were recomputed from the finished file rather than carried
+forward":
+
+| revision | the note's list | the rows that carry `PROSE` |
+|---|---|---|
+| `19fa9f4` | `166 173 2409 2412 2413` | `166 173 2409 2412 2413` ✓ |
+| `0526c3d` | `166 173 2441 2444 2445` | `166 173 2441 2444 2445` ✓ |
+| `04d0d96` | `180 187 2455 2458 2459` | `180 187 2455 2458 2459` ✓ |
+| `025e969` | `180 187 2455 2458 2459` | `211 218 2486 2489 2490` ✗ |
+
+`025e969` inserted 31 lines above the tables and recomputed nothing, so from that
+commit the sentence named five lines that no longer carried the word, and it
+stayed that way through `b3765b0`. Nothing in the tree could see it: the check
+that resolves this shape — `mark_claim_failures` in `tests/test_sop_citations.py`
+— shipped in `b72af3a`, *before* `19fa9f4` is even in this file's history, and it
+was red from `025e969` until the line above was rewritten. A checker that exists
+and is not run is the same defect as a mark word with no checker. The numbers in
+the table above are the only ones in this bracket re-derived by running the check
+that owns them, and the row that says ✗ is the one to look at.)* The document has two tables that count
 things and one habit of quoting the wrong one, and this note quoted the correct
 one into a paragraph about the other.)*
 
